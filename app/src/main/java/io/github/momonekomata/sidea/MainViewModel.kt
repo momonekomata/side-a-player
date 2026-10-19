@@ -8,6 +8,9 @@ import androidx.lifecycle.viewModelScope
 import io.github.momonekomata.sidea.audio.Player
 import io.github.momonekomata.sidea.sources.Browser
 import io.github.momonekomata.sidea.sources.Entry
+import io.github.momonekomata.sidea.sources.Favorite
+import io.github.momonekomata.sidea.sources.Playlist
+import io.github.momonekomata.sidea.sources.PlaylistStore
 import io.github.momonekomata.sidea.sources.FtpsBrowser
 import io.github.momonekomata.sidea.sources.LocalBrowser
 import io.github.momonekomata.sidea.sources.NasKind
@@ -75,6 +78,9 @@ data class BrowseState(
     val currentPath get() = path.last().second
     val currentName get() = path.last().first
 }
+
+/** The long-press menu for a song; [playlistId]/[index] when it was opened inside a playlist. */
+data class SongMenu(val track: io.github.momonekomata.sidea.sources.Track, val playlistId: String? = null, val index: Int = -1)
 
 data class CertPrompt(val server: NasServer, val sha256: String, val subject: String)
 
@@ -394,22 +400,88 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleFavorite(t: io.github.momonekomata.sidea.sources.Track) {
         val list = _favorites.value
-        val next = if (list.any { it.id == t.id }) {
-            list.filterNot { it.id == t.id }
-        } else {
-            val tags = TagStore.tags.value
-            listOf(io.github.momonekomata.sidea.sources.Favorite(t.id, t.displayTitle(tags), t.displayArtist(tags), t.displayAlbum(tags), t.sizeBytes)) + list
-        }
+        val next = if (list.any { it.id == t.id }) list.filterNot { it.id == t.id } else listOf(saved(t)) + list
         _favorites.value = next
         favoriteStore.save(next)
     }
 
-    fun playFavorites(index: Int) {
-        val ctx = getApplication<Application>()
+    /** What's kept of a song to show it and find it again (favourites, playlists). */
+    private fun saved(t: io.github.momonekomata.sidea.sources.Track): Favorite {
+        val tags = TagStore.tags.value
+        return Favorite(t.id, t.displayTitle(tags), t.displayArtist(tags), t.displayAlbum(tags), t.sizeBytes)
+    }
+
+    private fun resolve(f: Favorite) =
+        io.github.momonekomata.sidea.sources.TrackResolver.resolve(getApplication(), f, nasStore.all())
+
+    /** Plays [songs] (favourites or a playlist) from the one at [index]. */
+    private fun playSaved(songs: List<Favorite>, index: Int) {
         val servers = nasStore.all()
-        val tracks = _favorites.value.mapNotNull { io.github.momonekomata.sidea.sources.TrackResolver.resolve(ctx, it, servers) }
-        val want = _favorites.value.getOrNull(index)?.id
-        if (tracks.isNotEmpty()) Player.playQueue(tracks, tracks.indexOfFirst { it.id == want }.coerceAtLeast(0))
+        val ctx = getApplication<Application>()
+        val tracks = songs.mapNotNull { io.github.momonekomata.sidea.sources.TrackResolver.resolve(ctx, it, servers) }
+        // Songs whose server was removed drop out; start from the one tapped, wherever it ended up.
+        val start = songs.take(index).count { f -> tracks.any { it.id == f.id } }.coerceAtMost(tracks.size - 1)
+        if (tracks.isNotEmpty()) Player.playQueue(tracks, start)
+    }
+
+    fun playFavorites(index: Int) = playSaved(_favorites.value, index)
+
+    // ---- long-press menu: queue, playlists ----
+
+    private val _songMenu = MutableStateFlow<SongMenu?>(null)
+    val songMenu = _songMenu.asStateFlow()
+
+    fun openSongMenu(t: io.github.momonekomata.sidea.sources.Track, playlistId: String? = null, index: Int = -1) {
+        _songMenu.value = SongMenu(t, playlistId, index)
+    }
+
+    fun openSongMenu(f: Favorite, playlistId: String? = null, index: Int = -1) {
+        val t = resolve(f) ?: run {
+            android.widget.Toast.makeText(getApplication(), "That song's NAS server was removed", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        openSongMenu(t, playlistId, index)
+    }
+
+    fun closeSongMenu() { _songMenu.value = null }
+
+    fun playNext(t: io.github.momonekomata.sidea.sources.Track) = Player.playNext(t)
+    fun addToQueue(t: io.github.momonekomata.sidea.sources.Track) = Player.addToQueue(t)
+
+    private val playlistStore = PlaylistStore(app)
+    private val _playlists = MutableStateFlow(playlistStore.all())
+    val playlists = _playlists.asStateFlow()
+
+    /** The playlist open in the Favourites card; null shows the list. */
+    private val _openPlaylist = MutableStateFlow<String?>(null)
+    val openPlaylist = _openPlaylist.asStateFlow()
+
+    fun showPlaylist(id: String?) { _openPlaylist.value = id }
+
+    private fun savePlaylists(list: List<Playlist>) {
+        _playlists.value = list
+        playlistStore.save(list)
+    }
+
+    fun addToPlaylist(id: String, t: io.github.momonekomata.sidea.sources.Track) =
+        savePlaylists(_playlists.value.map { if (it.id == id) it.copy(songs = it.songs + saved(t)) else it })
+
+    /** A new playlist, with [first] in it if given. */
+    fun newPlaylist(name: String, first: io.github.momonekomata.sidea.sources.Track?) {
+        val p = Playlist(java.util.UUID.randomUUID().toString(), name.trim().ifEmpty { "Playlist" }, listOfNotNull(first?.let(::saved)))
+        savePlaylists(_playlists.value + p)
+    }
+
+    fun removeFromPlaylist(id: String, index: Int) =
+        savePlaylists(_playlists.value.map { p -> if (p.id == id) p.copy(songs = p.songs.filterIndexed { i, _ -> i != index }) else p })
+
+    fun deletePlaylist(id: String) {
+        if (_openPlaylist.value == id) _openPlaylist.value = null
+        savePlaylists(_playlists.value.filterNot { it.id == id })
+    }
+
+    fun playPlaylist(id: String, index: Int) {
+        _playlists.value.firstOrNull { it.id == id }?.let { playSaved(it.songs, index) }
     }
 
     // ---- scroll memory ----

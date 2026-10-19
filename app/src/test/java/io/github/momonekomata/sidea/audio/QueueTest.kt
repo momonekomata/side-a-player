@@ -21,4 +21,23 @@ class QueueTest {
         assertEquals(1, QueueState(tracks, 1, repeat = RepeatMode.ONE).nextIndex(auto = true))
         assertEquals(2, QueueState(tracks, 1, repeat = RepeatMode.ONE).nextIndex(auto = false))
     }
+
+    @Test
+    fun `play next goes after the current song, in shuffle order and folder order`() {
+        val extra = Track(id = "x", title = "X", opener = { PlayableSource.File("/x") })
+        val shuffled = QueueState(listOf(tracks[2], tracks[0], tracks[1]), 0, shuffle = true, original = tracks)
+        val q = shuffled.withNext(extra)
+        assertEquals(listOf("t3", "x", "t1", "t2"), q.tracks.map { it.id })
+        assertEquals(listOf("t1", "t2", "t3", "x"), q.original.map { it.id })
+        assertEquals(0, q.index)
+    }
+
+    @Test
+    fun `add to queue appends, and starts a queue when there is none`() {
+        val extra = Track(id = "x", title = "X", opener = { PlayableSource.File("/x") })
+        assertEquals(listOf("t1", "t2", "t3", "x"), QueueState(tracks, 1).withAdded(extra).tracks.map { it.id })
+        val fresh = QueueState().withAdded(extra)
+        assertEquals(0, fresh.index)
+        assertEquals("x", fresh.current?.id)
+    }
 }

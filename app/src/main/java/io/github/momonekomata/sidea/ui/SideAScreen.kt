@@ -66,6 +66,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import io.github.momonekomata.sidea.LyricsState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import io.github.momonekomata.sidea.MainViewModel
 import io.github.momonekomata.sidea.Settings
@@ -195,6 +196,8 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         }
     }
 
+    val songMenu by vm.songMenu.collectAsStateWithLifecycle()
+    songMenu?.let { SongMenuDialog(vm, it) }
     ui.certPrompt?.let { CertificateDialog(it, onTrust = { vm.trustCertificate(it) }, onDismiss = vm::dismissCertPrompt) }
     if (eqOpen) EqScreen(prefs.eq, onChange = { c -> Settings.update { it.copy(eq = c) } }, onDismiss = { eqOpen = false })
     if (settingsOpen) {
@@ -621,7 +624,7 @@ private fun BrowserCard(
                             item {
                                 val t = tags[e.track.id]
                                 val detail = listOfNotNull(t?.artist, t?.album).joinToString(" · ").ifEmpty { e.name }
-                                JCardRow(t?.trackNumber?.let { "%02d".format(it) } ?: number, e.track.displayTitle(tags), detail, current = queue.current?.id == e.track.id, onClick = { onSong(e) })
+                                JCardRow(t?.trackNumber?.let { "%02d".format(it) } ?: number, e.track.displayTitle(tags), detail, current = queue.current?.id == e.track.id, onLongClick = { vm.openSongMenu(e.track) }, onClick = { onSong(e) })
                             }
                         }
                     }
@@ -662,7 +665,7 @@ private fun SearchCard(vm: MainViewModel, s: SearchState, queue: QueueState, tag
                         is Entry.Song -> {
                             val t = tags[e.track.id]
                             val where = f.crumbs.drop(1).joinToString(" / ") { it.first }.ifEmpty { f.crumbs.first().first }
-                            JCardRow("♪", e.track.displayTitle(tags), listOfNotNull(t?.artist, where).joinToString(" · "), current = queue.current?.id == e.track.id, onClick = { vm.playFound(f) })
+                            JCardRow("♪", e.track.displayTitle(tags), listOfNotNull(t?.artist, where).joinToString(" · "), current = queue.current?.id == e.track.id, onLongClick = { vm.openSongMenu(e.track) }, onClick = { vm.playFound(f) })
                         }
                         is Entry.Folder -> JCardRow("▸", e.name, f.crumbs.dropLast(1).drop(1).joinToString(" / ") { it.first }.ifEmpty { "folder" }, onClick = { vm.openFound(f) })
                     }
@@ -672,18 +675,66 @@ private fun SearchCard(vm: MainViewModel, s: SearchState, queue: QueueState, tag
     }
 }
 
-/** Favourite songs from Local and the NAS, newest first. */
+/** Playlists, then favourite songs from Local and the NAS, newest first. A playlist opens in place. */
 @Composable
 private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifier) {
     val favorites by vm.favorites.collectAsStateWithLifecycle()
-    val letters = remember(favorites) { if (favorites.size < LETTERS_FROM) emptyList() else letterIndex(favorites.map { it.title }, 0) }
-    JCard("Favourites", "${favorites.size} songs", modifier, letters = letters) {
-        if (favorites.isEmpty()) item { JCardNote("Tap ♡ next to a song's title on the deck to keep it here.") }
+    val playlists by vm.playlists.collectAsStateWithLifecycle()
+    val openId by vm.openPlaylist.collectAsStateWithLifecycle()
+    var creating by remember { mutableStateOf(false) }
+    playlists.firstOrNull { it.id == openId }?.let { p ->
+        PlaylistCard(vm, p, queue, modifier)
+        return
+    }
+    val headerItems = playlists.size + 1
+    val letters = remember(favorites, headerItems) { if (favorites.size < LETTERS_FROM) emptyList() else letterIndex(favorites.map { it.title }, headerItems) }
+    JCard("Favourites", "${favorites.size} songs · ${playlists.size} playlists", modifier, letters = letters) {
+        playlists.forEach { p ->
+            item { JCardRow("▤", p.name, "playlist · ${p.songs.size} songs", onClick = { vm.showPlaylist(p.id) }) }
+        }
+        item { JCardRow("+", "New playlist", onClick = { creating = true }) }
+        if (favorites.isEmpty()) item { JCardNote("Tap ♡ on the deck, or long-press a song, to keep it here.") }
         favorites.forEachIndexed { i, f ->
             item {
-                JCardRow("%02d".format(i + 1), f.title, listOf(f.artist, f.album).filter { it.isNotBlank() }.joinToString(" · "), current = queue.current?.id == f.id, onClick = { vm.playFavorites(i) })
+                JCardRow(
+                    "%02d".format(i + 1), f.title, listOf(f.artist, f.album).filter { it.isNotBlank() }.joinToString(" · "),
+                    current = queue.current?.id == f.id,
+                    onLongClick = { vm.openSongMenu(f) },
+                    onClick = { vm.playFavorites(i) },
+                )
             }
         }
+    }
+    if (creating) PlaylistNameDialog(onCreate = { vm.newPlaylist(it, null); creating = false }, onDismiss = { creating = false })
+}
+
+@Composable
+private fun PlaylistCard(vm: MainViewModel, p: io.github.momonekomata.sidea.sources.Playlist, queue: QueueState, modifier: Modifier) {
+    BackHandler { vm.showPlaylist(null) }
+    var deleting by remember { mutableStateOf(false) }
+    JCard(p.name, "playlist · ${p.songs.size} songs", modifier) {
+        item { JCardRow("‹", "Back to Favourites", onClick = { vm.showPlaylist(null) }) }
+        if (p.songs.isEmpty()) item { JCardNote("Long-press a song anywhere and pick Add to playlist.") }
+        p.songs.forEachIndexed { i, f ->
+            item {
+                JCardRow(
+                    "%02d".format(i + 1), f.title, listOf(f.artist, f.album).filter { it.isNotBlank() }.joinToString(" · "),
+                    current = queue.current?.id == f.id,
+                    onLongClick = { vm.openSongMenu(f, p.id, i) },
+                    onClick = { vm.playPlaylist(p.id, i) },
+                )
+            }
+        }
+        item { JCardRow("✕", "Delete playlist", onClick = { deleting = true }) }
+    }
+    if (deleting) {
+        AlertDialog(
+            onDismissRequest = { deleting = false },
+            title = { Text("Delete “${p.name}”?") },
+            text = { Text("The songs stay where they are; only the list goes.") },
+            confirmButton = { TextButton({ vm.deletePlaylist(p.id); deleting = false }) { Text("Delete") } },
+            dismissButton = { TextButton({ deleting = false }) { Text("Cancel") } },
+        )
     }
 }
 

@@ -113,6 +113,11 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         _state.update { it.copy(isPlaying = true) }
     }
 
+    /** The queue changed: the song opened early for gapless may no longer be next. */
+    fun upNextChanged() {
+        session?.prefetchStale = true
+    }
+
     fun seekTo(ms: Long) {
         session?.seekUs?.set(ms * 1000)
         _state.update { it.copy(positionMs = ms) }
@@ -320,7 +325,14 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         }
 
         /** [decodedUs] is how far the decoder has got in [d], which runs a little ahead of the speaker. */
+        @Volatile var prefetchStale = false
+
         private fun maybePrefetch(d: PcmDecoder, decodedUs: Long) {
+            if (prefetchStale) {
+                // Let an open in progress finish, then drop it and look again.
+                if (prefetch?.isAlive == true) return
+                dropPrefetch()
+            }
             if (!gapless || prefetch != null || d.durationUs <= 0) return
             if (d.durationUs - decodedUs > PREFETCH_US) return
             prefetch = Thread({
@@ -355,8 +367,20 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             // The next song may still be opening (a slow NAS); waiting here is still gapless as
             // long as the track buffer holds out.
             while (p.isAlive && !cancelled) p.join(50)
+            if (prefetchStale) {
+                dropPrefetch()
+                return null
+            }
             prefetch = null
             return prefetched.also { prefetched = null }
+        }
+
+        private fun dropPrefetch() {
+            prefetchStale = false
+            prefetched?.second?.close()
+            prefetched = null
+            prefetch = null
+            handOverSource = null
         }
 
         /** The next song can share the track if nothing about the output would change or lose bits. */

@@ -2,7 +2,9 @@ package io.github.momonekomata.sidea.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -199,7 +201,8 @@ fun JCardFrame(
     }
 }
 
-/** One ruled line on the card. */
+/** One ruled line on the card; [onLongClick] opens a song's menu. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun JCardRow(
     number: String,
@@ -207,12 +210,13 @@ fun JCardRow(
     detail: String = "",
     current: Boolean = false,
     action: Pair<String, () -> Unit>? = null,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .background(if (current) Retro.Orange.copy(alpha = 0.18f) else Retro.Cream)
             .padding(horizontal = 18.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -45,6 +45,18 @@ data class QueueState(
         repeat != RepeatMode.OFF && tracks.isNotEmpty() -> 0
         else -> null
     }
+
+    /** [t] straight after the current song, in play order and in the folder order shuffle returns to. */
+    fun withNext(t: Track): QueueState {
+        val cur = current ?: return QueueState(listOf(t), 0, shuffle, repeat)
+        val at = original.indexOfFirst { it === cur }
+        val orig = if (at < 0) original + t else original.toMutableList().apply { add(at + 1, t) }
+        return copy(tracks = tracks.toMutableList().apply { add(index + 1, t) }, original = orig)
+    }
+
+    /** [t] at the end of the queue. */
+    fun withAdded(t: Track): QueueState =
+        if (current == null) QueueState(listOf(t), 0, shuffle, repeat) else copy(tracks = tracks + t, original = original + t)
 }
 
 /** The app-wide local player: a queue in front of [AudioEngine]. Shared by the UI and the service. */
@@ -71,7 +83,15 @@ object Player {
 
         override fun onAdvanced(tag: Any) {
             val slot = tag as Slot
-            if (_queue.value.tracks === slot.tracks) _queue.value = _queue.value.copy(index = slot.index)
+            val q = _queue.value
+            if (q.tracks === slot.tracks) {
+                _queue.value = q.copy(index = slot.index)
+            } else {
+                // The queue changed after the next song was opened: follow the song that plays.
+                val t = slot.tracks.getOrNull(slot.index) ?: return
+                val i = q.tracks.indices.firstOrNull { it > q.index && q.tracks[it] === t } ?: q.tracks.indexOfFirst { it === t }
+                if (i >= 0) _queue.value = q.copy(index = i)
+            }
         }
 
         override fun onCompleted() = next(auto = true)
@@ -239,6 +259,20 @@ object Player {
         startCurrent()
     }
 
+    // ---- editing the queue ----
+
+    /** Plays [t] after the current song; plays it now if nothing is queued. */
+    fun playNext(t: Track) = edit { it.withNext(t) }
+
+    /** Adds [t] to the end of the queue; plays it now if nothing is queued. */
+    fun addToQueue(t: Track) = edit { it.withAdded(t) }
+
+    private fun edit(change: (QueueState) -> QueueState) {
+        val q = _queue.value
+        _queue.value = change(q)
+        if (q.current == null) startCurrent() else engine.upNextChanged()
+    }
+
     // ---- shuffle, repeat ----
 
     private fun shuffled(q: QueueState): QueueState {
@@ -255,11 +289,13 @@ object Player {
         } else {
             shuffled(q)
         }
+        engine.upNextChanged()
     }
 
     fun cycleRepeat() {
         val q = _queue.value
         _queue.value = q.copy(repeat = RepeatMode.entries[(q.repeat.ordinal + 1) % RepeatMode.entries.size])
+        engine.upNextChanged()
     }
 
     // ---- skipping, speed ----
