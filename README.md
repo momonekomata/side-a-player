@@ -39,7 +39,8 @@ like USB Audio Player Pro (Settings → *Exclusive USB driver*, on by default):
 
 **Volume.** With Android bypassed, the phone's volume can't reach the DAC, so Side A applies its
 own volume (the phone's volume keys and a DAC's own buttons drive it). It starts at
-30 %. 100 % is bit-perfect. Anything lower is digital attenuation in 64-bit float into a 24-bit or
+100 %, which is bit-perfect (the badge says LOSSLESS straight away), so keep the DAC or amp's own
+volume sensible before the first song. Anything lower is digital attenuation in 64-bit float into a 24-bit or
 wider slot, and the badge says ENHANCED. DoP always plays at 100 %, so set the level on the DAC or amp.
 
 Other apps can't play through the DAC while Side A holds it (that's what exclusive means). Side A
@@ -113,7 +114,8 @@ add to / remove from favourites, play next, add to queue and add to playlist. Pl
 Favourites tab above the favourite songs. Swipe the deck left for the **queue**, one list like
 Apple Music's: the song playing in the middle, up next below it (tap to jump there, swipe left to
 take a song out, long-press and drag to move it), and the last 300 songs played above it; scroll
-up for older ones. Under the deck, the next few songs fill the space the controls leave.
+up for older ones. On the deck the transport keys sit at the bottom; between them
+and the cover are the song, its badge and the whole signal path, step by step.
 
 ## NAS playback
 

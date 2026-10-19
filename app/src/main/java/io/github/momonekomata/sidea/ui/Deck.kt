@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -115,16 +118,22 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
             }
         }
     } else {
-        // The square gets whatever height the controls leave, so the keys never fall off screen.
-        Column(panel, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            ArtSquare(
-                model,
-                Modifier
-                    .weight(1f, fill = false)
-                    .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                    .align(Alignment.CenterHorizontally),
-            )
-            Controls(model, compact = false) { showPath = true }
+        // Cover on top, the song and its whole signal path in the middle, the transport pinned to
+        // the bottom. The cover shrinks only when the screen is too short for all three.
+        BoxWithConstraints(panel) {
+            val art = minOf(maxWidth, maxHeight - 250.dp).coerceAtLeast(120.dp)
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ArtSquare(model, Modifier.size(art).align(Alignment.CenterHorizontally))
+                Column(
+                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SongInfo(model, compact = false) { showPath = true }
+                    model.path?.let { PathStages(it) }
+                }
+                SeekBar(model)
+                TransportPager(model, compact = false)
+            }
         }
     }
     val path = model.path
@@ -133,6 +142,14 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
 
 @Composable
 private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
+    SongInfo(model, compact, onPath)
+    SeekBar(model)
+    TransportPager(model, compact)
+}
+
+/** Title, artist and album, the heart, and the quality badge with the format beside it. */
+@Composable
+private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(
@@ -171,8 +188,22 @@ private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
     } else {
         StatusLine(model.status, model.statusColor)
     }
-    SeekBar(model)
-    TransportPager(model, compact)
+}
+
+/** Every step from the file to the DAC, each with its own grade; what the badge sums up. */
+@Composable
+private fun PathStages(path: SignalPath) {
+    Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        path.stages.forEach { stage ->
+            Row(verticalAlignment = Alignment.Top) {
+                Box(Modifier.padding(top = 5.dp).size(7.dp).clip(CircleShape).background(stage.quality.color()))
+                Column(Modifier.padding(start = 10.dp)) {
+                    Text(stage.title, color = Color(0xFFD0D0D0), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(stage.detail, color = Retro.Muted, fontSize = 11.sp)
+                }
+            }
+        }
+    }
 }
 
 /**

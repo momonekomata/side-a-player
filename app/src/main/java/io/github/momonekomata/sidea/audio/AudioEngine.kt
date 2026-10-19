@@ -86,7 +86,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     /** Use Side A's own USB driver when a DAC is connected and Android can't go bit-perfect. */
     @Volatile var exclusiveUsb = true
     /** Volume for the USB driver (0..1); Android's volume doesn't reach a DAC Side A drives. */
-    @Volatile var usbVolume = 0.3f
+    @Volatile var usbVolume = 1f
     /** The user hasn't granted USB access yet; Player asks and reopens the song. */
     @Volatile var onUsbPermissionNeeded: ((android.hardware.usb.UsbDevice) -> Unit)? = null
 

@@ -24,8 +24,8 @@ data class Prefs(
     val eq: EqConfig = EqConfig(),
     /** Drive USB DACs with Side A's own driver when Android can't go bit-perfect. */
     val exclusiveUsb: Boolean = true,
-    /** Volume while the USB driver drives the DAC (0..1). Starts low: it bypasses Android's volume. */
-    val usbVolume: Float = 0.3f,
+    /** Volume while the USB driver drives the DAC (0..1). 1 is bit-perfect; the volume keys turn it down. */
+    val usbVolume: Float = 1f,
 )
 
 object Settings {
@@ -45,7 +45,8 @@ object Settings {
             lyricsOvh = sp.getBoolean("lyricsOvh", true),
             musixmatchKey = sp.getString("musixmatchKey", "").orEmpty(),
             exclusiveUsb = sp.getBoolean("exclusiveUsb", true),
-            usbVolume = sp.getFloat("usbVolume", 0.3f),
+            // A new key, so everyone starts at 100 % (bit-perfect) once, whatever the old 30 % saved.
+            usbVolume = sp.getFloat("usbVolume100", 1f),
             eq = runCatching { sp.getString("eq", null)?.let { eqFromJson(JSONObject(it)) } }.getOrNull() ?: EqConfig(),
         )
     }
@@ -61,7 +62,7 @@ object Settings {
             .putBoolean("lyricsOvh", p.lyricsOvh)
             .putString("musixmatchKey", p.musixmatchKey)
             .putBoolean("exclusiveUsb", p.exclusiveUsb)
-            .putFloat("usbVolume", p.usbVolume)
+            .putFloat("usbVolume100", p.usbVolume)
             .putString("eq", eqToJson(p.eq).toString())
             .apply()
     }

@@ -189,7 +189,6 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     // The queue lives beside the deck (swipe left); only for Side A's own songs, as streaming
     // apps keep their queues in their cards.
     val queuePage: (@Composable (Modifier) -> Unit)? = if (app == null) { m -> QueueCard(vm, queue, tags, m) } else null
-    val upNext: (@Composable (Modifier) -> Unit)? = if (app == null) { m -> UpNextPeek(queue, tags, m) } else null
 
     Column(
         Modifier
@@ -204,7 +203,7 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
                     SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m)
                 }
             } else {
-                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage, upNext) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
+                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
             }
         }
     }
@@ -263,7 +262,6 @@ private fun PhoneLayout(
     lyrics: LyricsState,
     playing: Set<SourceTab>,
     queuePage: (@Composable (Modifier) -> Unit)?,
-    upNext: (@Composable (Modifier) -> Unit)?,
     card: @Composable (SourceTab, Modifier) -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -288,7 +286,7 @@ private fun PhoneLayout(
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
-            ExpandedDeck(deck, queuePage, upNext, onCollapse = { expanded = false })
+            ExpandedDeck(deck, queuePage, onCollapse = { expanded = false })
         }
     }
 }
@@ -350,7 +348,7 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
 
 /** The full deck over the cards. */
 @Composable
-private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> Unit)?, upNext: (@Composable (Modifier) -> Unit)?, onCollapse: () -> Unit) {
+private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> Unit)?, onCollapse: () -> Unit) {
     var drag by remember { mutableFloatStateOf(0f) }
     Column(
         Modifier
@@ -375,9 +373,8 @@ private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> 
             Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = Retro.Muted)
             Text("NOW PLAYING", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 3.sp)
         }
-        // The deck takes the height it needs (the cover shrinks if the screen is short); what's
-        // left shows what plays next. Swipe left for the whole queue.
-        NowPlayingPager(deck, Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), compact = false, queuePage = queuePage, below = upNext)
+        // Swipe left for the queue.
+        NowPlayingPager(deck, Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), compact = false, queuePage = queuePage)
     }
 }
 
@@ -725,8 +722,7 @@ private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifi
 }
 
 /**
- * The deck, and the queue a swipe left of it. [below] fills the height the deck leaves (the
- * next few songs) so the screen isn't half empty under the controls.
+ * The deck, and the queue a swipe left of it.
  */
 @Composable
 private fun NowPlayingPager(
@@ -734,7 +730,6 @@ private fun NowPlayingPager(
     modifier: Modifier,
     compact: Boolean,
     queuePage: (@Composable (Modifier) -> Unit)?,
-    below: (@Composable (Modifier) -> Unit)? = null,
 ) {
     val pages = if (queuePage != null) 2 else 1
     val pager = rememberPagerState { pages }
@@ -745,40 +740,13 @@ private fun NowPlayingPager(
             } else if (compact) {
                 Deck(deck, Modifier.fillMaxSize(), compact = true)
             } else {
-                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Measured first, so it gets the height it needs; the peek gets the rest.
-                    Deck(deck, Modifier.fillMaxWidth())
-                    below?.invoke(Modifier.weight(1f).fillMaxWidth())
-                }
+                Deck(deck, Modifier.fillMaxSize())
             }
         }
         if (pages > 1) {
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
                 listOf("DECK", "QUEUE").forEachIndexed { i, label ->
                     Text(label, color = if (pager.currentPage == i) Retro.Orange else Retro.Muted, fontFamily = Retro.Mono, fontSize = 10.sp, letterSpacing = 2.sp)
-                }
-            }
-        }
-    }
-}
-
-/** The next few songs under the deck; swipe left for the whole queue. */
-@Composable
-private fun UpNextPeek(queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
-    val next = if (queue.index >= 0) queue.tracks.drop(queue.index + 1) else emptyList()
-    if (next.isEmpty()) return
-    Column(
-        modifier.clip(RoundedCornerShape(10.dp)).background(Retro.Panel).padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text("UP NEXT · swipe left for the queue", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 10.sp, letterSpacing = 1.sp)
-        next.take(12).forEachIndexed { i, t ->
-            Row(Modifier.fillMaxWidth().clickable { Player.jumpTo(queue.index + 1 + i) }, verticalAlignment = Alignment.CenterVertically) {
-                Text("%02d".format(i + 1), color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, modifier = Modifier.width(28.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(t.displayTitle(tags), color = Color.White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val sub = t.displayArtist(tags)
-                    if (sub.isNotBlank()) Text(sub, color = Retro.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
