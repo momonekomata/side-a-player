@@ -7,14 +7,14 @@ lyrics), and a bit-perfect audio path. Laid out for phones and foldables. It has
 |---|---|---|
 | **Local** (any folder, SD card or USB drive) | Side A decodes the file itself | Native sample rate and bit depth. **Bit-perfect** to a USB DAC on Android 14+ |
 | **NAS** over WebDAV (http/https) or FTPS (explicit or implicit TLS) | WebDAV streams with range requests; FTPS downloads to cache and starts playing while it downloads | Same as Local |
-| **Spotify, Apple Music, TIDAL, YT Music** | Side A remote-controls the official app through its media session and shows it on the cassette | Whatever that app outputs (its own lossless/exclusive settings apply) |
+| **Spotify, Apple Music, TIDAL, YT Music** | Side A remote-controls the official app through its media session and shows it on the deck | Whatever that app outputs (its own lossless/exclusive settings apply) |
 
 ## Bit-perfect output
 
 Android normally mixes everything at 48 kHz. On **Android 14+ with a USB DAC**, Side A asks the
 platform for a bit-perfect mixer (`AudioManager.setPreferredMixerAttributes`,
 `MIXER_BEHAVIOR_BIT_PERFECT`) at the file's own rate, then writes samples in the DAC's integer
-format with no resampling, dithering or volume scaling. The status line under the cassette says
+format with no resampling, dithering or volume scaling. The status lines under the cover say
 what actually happened:
 
 * `● BIT-PERFECT · FLAC 96 kHz/24-bit · 24-bit · <DAC name>`: untouched samples at the native rate
@@ -70,8 +70,8 @@ Unplugging headphones or the DAC pauses instead of switching to the speaker.
 
 On a phone, the sources are cards: swipe between them or tap the tab row (all six fit, no
 scrolling, and a green dot marks what's playing). What's playing sits in a mini player at the bottom,
-showing cover, title, quality, play/pause and next. Tap it or swipe up for the full cassette deck with
-lyrics; swipe down or press Back to put it away. The now-playing card follows what's actually
+showing cover, title, quality, play/pause and next. Tap it or swipe up for the full deck (cover and
+lyrics); swipe down or press Back to put it away. The now-playing card follows what's actually
 playing, local or streaming, not just the tab you're on. Unfolded (≥600 dp wide), it's the
 two-page case layout. Turned sideways, Side A goes full screen: the system bars hide (swipe
 from an edge to peek), the title bar goes, and EQ and Settings move to the end of the tab row. On a
@@ -79,7 +79,7 @@ phone's short landscape screen it's three columns: cards, a compact deck, and ly
 
 ## Signal path and quality badge
 
-Like Roon's signal-path light, the badge under the cassette grades the whole path from the file to
+Like Roon's signal-path light, the badge under the cover grades the whole path from the file to
 your ears, as good as its weakest step. Tap it to see each step.
 
 | Badge | Meaning |
@@ -112,8 +112,8 @@ sung is lit and kept in view), and tap again for the cover. The choice sticks fr
 
 Covers come from the file (FLAC pictures, ID3 APIC, MP4 `covr`, DSF's ID3), else from the folder
 (`cover.jpg`, `folder.jpg`, `front.jpg`, `AlbumArt*.jpg`, or a lone image). Streaming apps
-supply their own. The cover shows on the cassette label, in the J-card header, on the lock screen
-and in the notification. Tap the cassette to see it full size.
+supply their own. The cover fills the deck, and shows in the J-card header, the mini player, on the lock screen
+and in the notification.
 
 ## Gapless playback
 
@@ -145,8 +145,8 @@ arrive, the file name is shown.
 
 ## Lyrics
 
-Lyrics appear by themselves under the cassette when a song has any, and the line being sung is lit. Tap them for the
-full sheet in place of the track list. Side A looks in this order:
+Tap the cover to see the lyrics in its place (tap again to go back); the line being sung is lit.
+Side A looks in this order:
 
 1. The file's tags (`LYRICS`/`UNSYNCEDLYRICS`, ID3 `USLT`, MP4 `©lyr`).
 2. A `.lrc` file with the same name in the same folder (local, WebDAV and FTPS).
@@ -167,7 +167,7 @@ Android lets an app control another app's playback only through media sessions, 
 lock screen and Android Auto use. To see them, Side A needs **notification access** (Settings → Notifications →
 Device & app notifications); it doesn't read any notification. Then:
 
-* Play/pause, next, previous and seek drive the streaming app; the cassette shows title, artist and progress.
+* Play/pause, next, previous and seek drive the streaming app; the deck shows title, artist, cover and progress.
 * If the app shares its queue (it varies), the J-card lists it and tapping a song jumps to it.
 * To pick a playlist, open the app (the J-card has a button); Side A follows what it plays.
 
