@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
@@ -109,31 +111,31 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
     val panel = modifier
         .clip(RoundedCornerShape(10.dp))
         .background(Retro.Panel)
-        .padding(if (compact) 8.dp else 12.dp)
     if (compact) {
-        Row(panel, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(panel.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             ArtSquare(model, Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true))
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
                 Controls(model, compact = true) { showPath = true }
             }
         }
     } else {
-        // Cover on top, the song and its whole signal path in the middle, the transport pinned to
-        // the bottom. The cover shrinks only when the screen is too short for all three.
+        // The cover edge to edge on top, the song and its badge under it (tap the badge for the
+        // signal path), the transport pinned to the bottom. The cover shrinks only when the
+        // screen is too short for all three.
         BoxWithConstraints(panel) {
-            // About 340 dp below the cover: title, badge, a few signal path steps, seek bar, keys.
-            val art = minOf(maxWidth, maxHeight - 340.dp).coerceAtLeast(120.dp)
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ArtSquare(model, Modifier.size(art).align(Alignment.CenterHorizontally))
+            val art = minOf(maxWidth, maxHeight - 250.dp).coerceAtLeast(120.dp)
+            Column(Modifier.fillMaxSize()) {
+                ArtSquare(model, Modifier.size(art).align(Alignment.CenterHorizontally), shape = RectangleShape)
                 Column(
-                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     SongInfo(model, compact = false) { showPath = true }
-                    model.path?.let { PathStages(it) }
                 }
-                SeekBar(model)
-                TransportPager(model, compact = false)
+                Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
+                    SeekBar(model)
+                    TransportPager(model, compact = false)
+                }
             }
         }
     }
@@ -192,22 +194,6 @@ private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
     }
 }
 
-/** Every step from the file to the DAC, each with its own grade; what the badge sums up. */
-@Composable
-private fun PathStages(path: SignalPath) {
-    Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        path.stages.forEach { stage ->
-            Row(verticalAlignment = Alignment.Top) {
-                Box(Modifier.padding(top = 5.dp).size(7.dp).clip(CircleShape).background(stage.quality.color()))
-                Column(Modifier.padding(start = 10.dp)) {
-                    Text(stage.title, color = Color(0xFFD0D0D0), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(stage.detail, color = Retro.Muted, fontSize = 11.sp)
-                }
-            }
-        }
-    }
-}
-
 /**
  * The transport keys; swipe them left for −10 −5 +5 +10. Two dots show which is up.
  */
@@ -259,10 +245,10 @@ private fun RepeatKey(model: DeckModel) {
 
 /** The cover, or the lyrics in its place; one tap swaps them. */
 @Composable
-private fun ArtSquare(model: DeckModel, modifier: Modifier) {
+private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
     Box(
         modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(shape)
             .background(Color(0xFF111111))
             .clickable(onClick = model.onToggleLyrics),
     ) {

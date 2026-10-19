@@ -353,8 +353,7 @@ private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> 
     Column(
         Modifier
             .fillMaxSize()
-            .background(Retro.Background)
-            .padding(horizontal = 12.dp),
+            .background(Retro.Background),
     ) {
         Row(
             Modifier
@@ -736,7 +735,7 @@ private fun NowPlayingPager(
     Column(modifier) {
         HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), pageSpacing = 12.dp) { page ->
             if (page == 1 && queuePage != null) {
-                queuePage(Modifier.fillMaxSize())
+                queuePage(Modifier.fillMaxSize().padding(horizontal = 12.dp))
             } else if (compact) {
                 Deck(deck, Modifier.fillMaxSize(), compact = true)
             } else {
