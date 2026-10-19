@@ -8,11 +8,19 @@ class RefillTest {
     private val mb = 1024L * 1024
 
     @Test
-    fun waitsTenSecondsAheadWhenTheDownloadKeepsUp() {
+    fun waitsThreeSecondsWhenTheDownloadIsWellAhead() {
         // DSD128 stereo: ~1.4 MB/s; the link does 5 MB/s.
         val rate = 1_411_200L
         val t = refillTarget(want = 50 * mb, size = 400 * mb, playRate = rate, written = 50 * mb, elapsedNs = 10_000_000_000L)
-        assertEquals(50 * mb + rate * 10, t)
+        assertEquals(50 * mb + rate * 3, t)
+    }
+
+    @Test
+    fun waitsTenSecondsWhenTheDownloadOnlyJustKeepsUp() {
+        val rate = 2_822_400L
+        // 3.0 MB/s against 2.8 needed.
+        val t = refillTarget(want = 30 * mb, size = 800 * mb, playRate = rate, written = 30_000_000, elapsedNs = 10_000_000_000L)
+        assertEquals(30 * mb + rate * 10, t)
     }
 
     @Test
@@ -32,9 +40,10 @@ class RefillTest {
     }
 
     @Test
-    fun guessesFromTheSizeBeforeTheRateIsKnown() {
+    fun startsQuicklyBeforeAnyRateIsKnown() {
+        // Guessed at 1 MB/s from the size: three seconds, three megabytes.
         val t = refillTarget(want = 4096, size = 240 * mb, playRate = 0, written = 0, elapsedNs = 0)
-        assertEquals(4096 + mb * 10, t)
+        assertEquals(4096 + mb * 3, t)
     }
 
     @Test

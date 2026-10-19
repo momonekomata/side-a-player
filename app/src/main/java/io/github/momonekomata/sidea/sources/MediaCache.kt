@@ -248,18 +248,22 @@ class GrowingFileDataSource(
 }
 
 private const val MIN_AHEAD = 2L * 1024 * 1024
+private const val QUICK_SECONDS = 3
 private const val AHEAD_SECONDS = 10
 
 /**
- * Bytes a downloading file should hold before playing on from [want]: [AHEAD_SECONDS] of
- * audio past it (a guess from the size until the engine knows the rate), or, if the download
- * runs slower than playback, enough that the rest arrives before playback gets there.
+ * Bytes a downloading file should hold before playing on from [want]. While the download
+ * is new or clearly outpaces playback, [QUICK_SECONDS] of audio: a song starts almost at once,
+ * even a DSD one, which needs several times the bytes of PCM for the same seconds. When it only
+ * just keeps up, [AHEAD_SECONDS]; slower than playback, enough that the rest arrives before
+ * playback gets there. The rate is a guess from the size until the engine knows it.
  */
 internal fun refillTarget(want: Long, size: Long, playRate: Long, written: Long, elapsedNs: Long): Long {
     // Before the engine knows the rate, assume a four-minute song.
     val rate = playRate.takeIf { it > 0 } ?: if (size > 0) size / 240 else 0
-    val ahead = want + maxOf(MIN_AHEAD, rate * AHEAD_SECONDS)
     val downloadRate = if (elapsedNs > 1_000_000_000L) (written * 1_000_000_000.0 / elapsedNs).toLong() else 0
+    val seconds = if (downloadRate == 0L || downloadRate >= rate * 6 / 5) QUICK_SECONDS else AHEAD_SECONDS
+    val ahead = want + maxOf(MIN_AHEAD, rate * seconds)
     if (size <= 0 || rate <= 0 || downloadRate <= 0 || downloadRate >= rate) return ahead
     val secondsLeft = (size - want).toDouble() / rate
     val inTime = size - (secondsLeft * downloadRate).toLong()

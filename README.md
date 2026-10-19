@@ -123,9 +123,12 @@ Songs from WebDAV and FTPS are downloaded in one continuous transfer into a cach
 least recently played dropped first), and play starts as soon as the beginning is in. Replays come
 from the phone. This keeps large hi-res files from stuttering the way reading them in pieces on demand did.
 
-If playback catches up with the download anyway (DSD256 is ~2.8 MB/s), it waits until ten seconds
-are ahead, or, on a link slower than the song, until enough is in that the rest arrives before
-playback gets there, and the deck says "Buffering". One clean pause instead of a stutter.
+A song starts once three seconds of it are in (DSD needs several times the bytes of PCM for the
+same seconds, so a fixed byte count made DSD slow to start). If playback catches up with the
+download (DSD256 is ~2.8 MB/s), it waits for three seconds ahead when the NAS is clearly faster
+than the song, ten when it only just keeps up, or, on a link slower than the song, until enough
+is in that the rest arrives before playback gets there, and the deck says "Buffering". One clean
+pause instead of a stutter.
 Downloads run one at a time, so the next song's early download for gapless never takes bandwidth
 from the song that's playing. While it waits, the line beside the quality badge reads like
 "Buffering 40% · NAS 1.9 MB/s, song 2.8": how far the refill has got, how fast the NAS sends,
