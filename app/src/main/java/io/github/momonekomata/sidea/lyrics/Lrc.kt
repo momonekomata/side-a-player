@@ -25,6 +25,21 @@ object Lrc {
     private val offsetTag = Regex("""^\[offset:\s*([+-]?\d+)\s*]""", RegexOption.IGNORE_CASE)
     private val metaTag = Regex("""^\[[a-zA-Z]+:.*]$""")
 
+    /** LRC text for [l]: `[mm:ss.xx]` stamps when it's timed, the plain lines when not. */
+    fun format(l: Lyrics, title: String, artist: String, album: String): String = buildString {
+        if (artist.isNotBlank()) append("[ar:").append(artist).append("]\n")
+        if (title.isNotBlank()) append("[ti:").append(title).append("]\n")
+        if (album.isNotBlank()) append("[al:").append(album).append("]\n")
+        append("[re:Side A · ").append(l.source).append("]\n")
+        for (line in l.lines) {
+            if (l.synced) {
+                val t = line.timeMs.coerceAtLeast(0)
+                append("[%02d:%02d.%02d]".format(t / 60_000, t / 1000 % 60, t % 1000 / 10))
+            }
+            append(line.text).append('\n')
+        }
+    }
+
     fun parse(text: String, source: String): Lyrics? {
         val raw = text.replace("\r\n", "\n").replace('\r', '\n').trim()
         if (raw.isEmpty()) return null

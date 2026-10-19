@@ -45,4 +45,22 @@ class LrcTest {
         assertEquals(listOf("First line", "", "Second line"), l.lines.map { it.text })
         assertEquals(-1, l.lineAt(5000))
     }
+
+    @Test
+    fun formattedLrcReadsBackTheSame() {
+        val l = Lrc.parse("[00:12.30]Hello\n[01:05.07]World\n[61:00.00]Late", "LRCLIB")!!
+        val text = Lrc.format(l, "Song", "Band", "Album")
+        assertTrue(text.startsWith("[ar:Band]\n[ti:Song]\n[al:Album]\n"))
+        val back = Lrc.parse(text, ".lrc file")!!
+        assertTrue(back.synced)
+        assertEquals(l.lines, back.lines)
+    }
+
+    @Test
+    fun plainLyricsStayPlain() {
+        val l = Lrc.parse("One\nTwo", "lyrics.ovh")!!
+        val back = Lrc.parse(Lrc.format(l, "", "", ""), ".lrc file")!!
+        assertFalse(back.synced)
+        assertEquals(listOf("One", "Two"), back.lines.map { it.text })
+    }
 }

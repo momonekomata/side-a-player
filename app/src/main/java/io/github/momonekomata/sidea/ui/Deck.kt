@@ -254,7 +254,7 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
     ) {
         Crossfade(model.showLyrics, label = "art-lyrics") { lyricsSide ->
             if (lyricsSide) {
-                LyricsSquare(model.lyrics, model.positionMs, model.onRetryLyrics, Modifier.fillMaxSize())
+                LyricsSquare(model.lyrics, model.positionMs, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize())
             } else {
                 val art = model.art
                 if (art != null) {
@@ -285,7 +285,9 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
                     .padding(8.dp)
                     .clip(RoundedCornerShape(50))
                     .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                    // Timed lyric lines take taps themselves (to jump), so the chip swaps back too.
+                    .clickable(onClick = model.onToggleLyrics)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
             )
         }
     }

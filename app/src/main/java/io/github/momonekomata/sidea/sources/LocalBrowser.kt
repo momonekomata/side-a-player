@@ -41,13 +41,7 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
             val lrcUri = lrc[lrcKey(r.name)]?.let { DocumentsContract.buildDocumentUriUsingTree(treeUri, it) }
             Entry.Song(
                 r.name,
-                Track(
-                    id = uri.toString(),
-                    title = titleFromFileName(r.name),
-                    album = path.substringAfterLast('/').substringAfterLast(':'),
-                    sizeBytes = r.size,
-                    opener = { PlayableSource.Content(uri) },
-                    tagSource = { ctx -> PlayableSource.Content(uri).openRandomAccess(ctx) },
+                track(uri, r.name, r.size, path, path.substringAfterLast('/').substringAfterLast(':')).copy(
                     lyricsFile = lrcUri?.let { u ->
                         { ctx -> ctx.contentResolver.openInputStream(u)!!.use { it.readBytes().toString(Charsets.UTF_8) } }
                     },
@@ -56,4 +50,26 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
             )
         }.sortedForBrowsing()
     }
+
+    private fun track(uri: Uri, name: String, size: Long, folder: String, album: String) = Track(
+        id = uri.toString(),
+        title = titleFromFileName(name),
+        album = album,
+        sizeBytes = size,
+        opener = { PlayableSource.Content(uri) },
+        tagSource = { ctx -> PlayableSource.Content(uri).openRandomAccess(ctx) },
+        lyricsWriter = { ctx, text -> writeLrc(ctx, folder, lrcName(name), text) },
+    )
+
+    /** Needs write access to the folder, which the system folder picker grants. */
+    private fun writeLrc(ctx: Context, folder: String, name: String, text: String) {
+        val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, folder)
+        // octet-stream, so the provider keeps ".lrc" instead of adding ".txt".
+        val doc = DocumentsContract.createDocument(ctx.contentResolver, parent, "application/octet-stream", name)
+            ?: throw java.io.IOException("Can't create $name")
+        ctx.contentResolver.openOutputStream(doc, "wt")!!.use { it.write(text.toByteArray()) }
+    }
+
+    override fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track =
+        track(Uri.parse(id), name, size, folderPath, folderName)
 }

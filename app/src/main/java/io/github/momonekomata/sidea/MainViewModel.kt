@@ -33,6 +33,9 @@ import io.github.momonekomata.sidea.sources.displayTitle
 import kotlinx.coroutines.delay
 import io.github.momonekomata.sidea.sources.guessArtistTitle
 import kotlinx.coroutines.Job
+import android.util.Log
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -65,6 +68,10 @@ data class SearchState(
     val indexing: Boolean = true,
     val foldersRead: Int = 0,
     val results: List<Found> = emptyList(),
+    /** The folder searched from. */
+    val scopeName: String = "",
+    /** When the index was made; 0 while it's being made. */
+    val indexedAt: Long = 0,
 )
 
 /** Where the J-card is in a folder tree: the browser, and the stack of folders opened. */
@@ -165,7 +172,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _search = MutableStateFlow<SearchState?>(null)
     val search = _search.asStateFlow()
-    private val indexes = mutableMapOf<String, List<Found>>()
+    private val indexes = mutableMapOf<String, SearchIndex>()
+    private val searchStore = SearchIndexStore(app)
+    /** What the open search looks through: the index, narrowed to the folder searched from. */
+    private var pool: List<Found> = emptyList()
     private var indexJob: Job? = null
 
     /** Where each folder was scrolled to, so going back up lands where you were. */
@@ -242,6 +252,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sources = LyricsSources(lrclib = p.lrclib, musixmatchKey = p.musixmatchKey, lyricsOvh = p.lyricsOvh)
         val found = lyricsRepo.find(q, online = p.onlineLyrics, sources = sources, force = force)
         if (current?.key == playing.key) _lyrics.value = LyricsState(key = playing.key, lyrics = found, missed = found == null, song = song)
+        if (found != null && playing is Playing.Local) saveLyrics(playing.track, found, q)
+    }
+
+    private val lyricsSaved = mutableSetOf<String>()
+    private var toldNoWrite = false
+
+    /**
+     * Lyrics found online go into a .lrc beside the song (timed when they are), which other
+     * players read too and which outlives the cache. Never over a .lrc that's already there, never
+     * into the audio file itself.
+     */
+    private suspend fun saveLyrics(t: io.github.momonekomata.sidea.sources.Track, l: io.github.momonekomata.sidea.lyrics.Lyrics, q: LyricsQuery) {
+        val write = t.lyricsWriter ?: return
+        if (!Settings.current.saveLyrics || t.lyricsFile != null || q.embedded != null || l.source == "file tags" || l.source == ".lrc file") return
+        if (!lyricsSaved.add(t.id)) return
+        val text = io.github.momonekomata.sidea.lyrics.Lrc.format(l, q.title, q.artist, q.album)
+        withContext(Dispatchers.IO) {
+            runCatching { write(getApplication(), text) }.onFailure { e ->
+                Log.w("SideA", "couldn't save lyrics for ${t.id}", e)
+                if (e is SecurityException && !toldNoWrite) {
+                    toldNoWrite = true
+                    launch(Dispatchers.Main) {
+                        android.widget.Toast.makeText(getApplication(), "To save lyrics beside your songs, choose the music folder again (Local → Change music folder)", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
 
     fun retryLyrics() {
@@ -287,7 +324,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openLocal(tree: Uri, remember: Boolean = true) {
         if (remember) {
-            getApplication<Application>().contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Write too, for saving found lyrics as .lrc files beside the songs.
+            val resolver = getApplication<Application>().contentResolver
+            runCatching { resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+                .onFailure { resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             prefs.edit().putString("localTree", tree.toString()).apply()
         }
         val b = LocalBrowser(getApplication(), tree)
@@ -494,16 +534,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- search ----
 
-    fun openSearch(isNas: Boolean) {
+    /**
+     * Searches the folder that's open and everything under it. An index saved for it (or for a
+     * folder above it) is used straight away; otherwise the folders are read once and the index
+     * is kept on the phone for next time. [rescan] reads them again.
+     */
+    fun openSearch(isNas: Boolean, rescan: Boolean = false) {
         val b = browse(isNas) ?: return
-        val key = indexKey(isNas, b)
-        _search.value = SearchState(isNas, indexing = indexes[key] == null)
-        if (indexes[key] != null) return
+        val here = b.path
+        val query = _search.value?.takeIf { it.isNas == isNas }?.query.orEmpty()
+        if (!rescan) {
+            for (i in here.indices.reversed()) {
+                val k = indexKey(isNas, b, here[i].second)
+                val idx = indexes[k] ?: searchStore.load(k, b.browser)?.also { indexes[k] = it } ?: continue
+                // An index made higher up: just what's under this folder (not the folder itself).
+                val cur = here.last().second
+                pool = if (i == here.lastIndex) idx.items else idx.items.filter { f ->
+                    f.crumbs.any { it.second == cur } && !(f.entry is Entry.Folder && f.crumbs.last().second == cur)
+                }
+                _search.value = SearchState(isNas, query, indexing = false, foldersRead = idx.folders, scopeName = here.last().first, indexedAt = idx.atMs)
+                setQuery(query)
+                return
+            }
+        }
+        val key = indexKey(isNas, b, here.last().second)
+        pool = emptyList()
+        _search.value = SearchState(isNas, query, indexing = true, scopeName = here.last().first)
         indexJob?.cancel()
         indexJob = viewModelScope.launch {
             val found = mutableListOf<Found>()
-            // Breadth-first over the whole tree; each folder is one listing, like opening it.
-            val queue = ArrayDeque(listOf(b.path.take(1)))
+            // Breadth-first from here; each folder is one listing, like opening it.
+            val queue = ArrayDeque(listOf(here))
             var read = 0
             while (queue.isNotEmpty()) {
                 val crumbs = queue.removeFirst()
@@ -521,13 +582,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (read % 10 == 0) _search.update { it?.copy(foldersRead = read) }
             }
-            indexes[key] = found
-            _search.update { it?.copy(indexing = false, foldersRead = read) }
+            val idx = SearchIndex(found, System.currentTimeMillis(), read)
+            indexes[key] = idx
+            pool = found
+            withContext(Dispatchers.IO) { searchStore.save(key, idx, TagStore.tags.value) }
+            _search.update { it?.copy(indexing = false, foldersRead = read, indexedAt = idx.atMs) }
             setQuery(_search.value?.query.orEmpty())
-            // Tags for the songs make titles and artists searchable too.
+            // Tags for the songs make titles and artists searchable too; saved with the index.
             val ctx = getApplication<Application>()
             found.mapNotNull { (it.entry as? Entry.Song)?.track }.forEach { TagStore.load(ctx, it) }
+            withContext(Dispatchers.IO) { searchStore.save(key, idx, TagStore.tags.value) }
         }
+    }
+
+    /** Reads the folders again, for files added since the index was made. */
+    fun rescanSearch() {
+        val s = _search.value ?: return
+        openSearch(s.isNas, rescan = true)
     }
 
     fun closeSearch() {
@@ -536,8 +607,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setQuery(q: String) {
         val s = _search.value ?: return
-        val b = browse(s.isNas) ?: return
-        val all = indexes[indexKey(s.isNas, b)]
+        val all = pool.takeIf { !s.indexing || it.isNotEmpty() }
         val words = q.lowercase().split(' ').filter { it.isNotBlank() }
         val tags = TagStore.tags.value
         val results = if (all == null || words.isEmpty()) emptyList() else all.filter { f ->
@@ -562,7 +632,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         load(isNas)
     }
 
-    private fun indexKey(isNas: Boolean, b: BrowseState) = (if (isNas) "nas:" else "local:") + b.browser.title + ":" + b.path.first().second
+    private fun indexKey(isNas: Boolean, b: BrowseState, folder: String) = (if (isNas) "nas:" else "local:") + b.browser.title + ":" + folder
 
     override fun onCleared() {
         streaming.stop()

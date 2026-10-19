@@ -138,7 +138,7 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Uni
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 LabeledSwitch("Exclusive USB driver", prefs.exclusiveUsb) { onChange(prefs.copy(exclusiveUsb = it)) }
-                Note("For phones whose Android can't send USB audio bit-perfect (most Samsungs): Side A drives the DAC itself, at each file's own rate, after you allow USB access. Other apps can't use the DAC while Side A holds it. Volume is then Side A's own (the deck shows a slider; the volume keys work too).")
+                Note("For phones whose Android can't send USB audio bit-perfect (most Samsungs): Side A drives the DAC itself, at each file's own rate, after you allow USB access. Other apps can't use the DAC while Side A holds it. Volume is then Side A's own: the volume keys drive it, and 100 % is bit-perfect.")
                 LabeledSwitch("Gapless playback", prefs.gapless) { onChange(prefs.copy(gapless = it)) }
                 Note("Opens the next song early and joins it to the current one with no gap, when both share a sample rate.")
                 LabeledSwitch("DSD as DoP to the USB DAC", prefs.dop) { onChange(prefs.copy(dop = it)) }
@@ -157,6 +157,8 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Uni
                     )
                     Note("Free key from developer.musixmatch.com. The free plan gives part of each song's lyrics; timed lyrics need a paid plan. Leave blank to skip Musixmatch.")
                     LabeledSwitch("lyrics.ovh · plain lyrics, open", prefs.lyricsOvh) { onChange(prefs.copy(lyricsOvh = it)) }
+                    LabeledSwitch("Save found lyrics beside the songs", prefs.saveLyrics) { onChange(prefs.copy(saveLyrics = it)) }
+                    Note("As a .lrc file with the song's name (timed when the lyrics are), in the same folder on the phone or the NAS. Most players read these. The audio files themselves are never changed. An existing .lrc is never overwritten.")
                 }
             }
         },

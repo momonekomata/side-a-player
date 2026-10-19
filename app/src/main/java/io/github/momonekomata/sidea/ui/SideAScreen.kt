@@ -620,7 +620,8 @@ private fun BrowserCard(
         value = firstSong?.let { ArtworkStore.load(context, it.track)?.asImageBitmap() }
     }
     JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier, art = cover, listState = list, letters = letters) {
-        item { JCardRow("⌕", "Search ${state.browser.title.lowercase()}…", onClick = { vm.openSearch(isNas) }) }
+        // Searches this folder and everything in it; open it in the music folder to skip the rest of the share.
+        item { JCardRow("⌕", if (state.path.size > 1) "Search ${state.currentName}…" else "Search ${state.browser.title.lowercase()}…", onClick = { vm.openSearch(isNas) }) }
         if (state.path.size > 1) item { JCardRow("‹", "Back to ${state.path[state.path.size - 2].first}", onClick = onUp) }
         when {
             state.loading -> item { JCardNote("Reading…") }
@@ -654,7 +655,8 @@ private fun SearchCard(vm: MainViewModel, s: SearchState, queue: QueueState, tag
     BackHandler { vm.closeSearch() }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
-    JCardFrame("Search", if (s.indexing) "reading folders… ${s.foldersRead}" else "${s.results.size} found", modifier) {
+    val subtitle = if (s.indexing) "reading ${s.scopeName}… ${s.foldersRead} folders" else "${s.results.size} found in ${s.scopeName} · indexed ${agoText(s.indexedAt)}"
+    JCardFrame("Search", subtitle, modifier) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp)) {
             OutlinedTextField(
                 value = s.query,
@@ -667,6 +669,7 @@ private fun SearchCard(vm: MainViewModel, s: SearchState, queue: QueueState, tag
                 ),
                 modifier = Modifier.weight(1f).focusRequester(focus),
             )
+            if (!s.indexing) TextButton(onClick = vm::rescanSearch) { Text("Rescan", color = Retro.InkFaint) }
             TextButton(onClick = vm::closeSearch) { Text("Close", color = Retro.Ink) }
         }
         LazyColumn(Modifier.fillMaxSize()) {
@@ -987,3 +990,14 @@ fun CardButton(text: String, onClick: () -> Unit) {
 
 /** Lists at least this long get the A–Z index down their edge. */
 private const val LETTERS_FROM = 20
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago". */
+private fun agoText(atMs: Long): String {
+    val m = (System.currentTimeMillis() - atMs) / 60_000
+    return when {
+        m < 1 -> "just now"
+        m < 60 -> "$m min ago"
+        m < 60 * 24 -> "${m / 60} h ago"
+        else -> "${m / (60 * 24)} days ago"
+    }
+}

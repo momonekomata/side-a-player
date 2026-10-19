@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Credentials
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -177,7 +178,22 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         },
         // Tags sit in the first few KB, so read them with small range requests.
         tagSource = { MediaDataSourceAccess(HttpRangeDataSource(client, url, auth, size, chunk = 64 * 1024)) },
+        lyricsWriter = { _, text -> put(url.newBuilder().removePathSegment(url.pathSize - 1).addPathSegment(lrcName(name)).build(), text) },
     )
+
+    /** Uploads a small text file (a .lrc next to a song). */
+    private fun put(url: HttpUrl, text: String) {
+        val req = Request.Builder().url(url)
+            .put(text.toByteArray().toRequestBody("application/octet-stream".toMediaType()))
+            .apply { auth?.let { header("Authorization", it) } }
+            .build()
+        client.newCall(req).execute().use { resp -> if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} saving $url") }
+    }
+
+    override fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track? {
+        val url = id.toHttpUrlOrNull() ?: return null
+        return trackFor(url, name, size, folderName)
+    }
 
     /** Whether [url] lives on this server. */
     fun owns(url: HttpUrl) = url.host == base.host && url.port == base.port && url.encodedPath.startsWith(base.encodedPath)

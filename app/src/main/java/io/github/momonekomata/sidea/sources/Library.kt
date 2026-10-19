@@ -17,7 +17,12 @@ data class Track(
     val lyricsFile: ((Context) -> String)? = null,
     /** Reads the folder's cover image (cover.jpg and the like), when there is one. Blocking. */
     val folderArt: ((Context) -> ByteArray)? = null,
+    /** Writes lyrics as a .lrc with the same name next to the file. Blocking; throws if it can't. */
+    val lyricsWriter: ((Context, String) -> Unit)? = null,
 )
+
+/** "Song.flac" → "Song.lrc". */
+fun lrcName(fileName: String) = fileName.substringBeforeLast('.') + ".lrc"
 
 typealias TrackOpener = suspend (Context) -> PlayableSource
 
@@ -33,6 +38,12 @@ interface Browser {
     val title: String
     val rootPath: String
     suspend fun list(path: String): List<Entry>
+
+    /**
+     * A song again from what a saved search index kept: its [id], file [name], size, and the
+     * folder it's in (that folder's path and name). Null if this browser can't place it.
+     */
+    fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track?
 }
 
 private val AUDIO_EXTENSIONS = setOf(

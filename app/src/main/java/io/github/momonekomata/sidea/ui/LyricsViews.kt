@@ -17,6 +17,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.DragInteraction
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,7 +38,7 @@ import io.github.momonekomata.sidea.Settings
  * untimed ones just scroll. With none, it says why and offers Retry.
  */
 @Composable
-fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, modifier: Modifier) {
+fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, onSeek: (Long) -> Unit, modifier: Modifier) {
     val lyrics = state.lyrics
     Box(modifier.background(Color(0xFF151515))) {
         if (lyrics == null) {
@@ -54,12 +60,20 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, modi
         }
         val current = lyrics.lineAt(positionMs)
         val list = rememberLazyListState()
-        LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem((current - 2).coerceAtLeast(0)) }
+        // Scroll freely; the lyrics follow the song again a few seconds after the finger lifts.
+        var touchedAt by remember { mutableLongStateOf(0L) }
+        LaunchedEffect(list) {
+            list.interactionSource.interactions.collect { if (it is DragInteraction.Start || it is DragInteraction.Stop) touchedAt = System.currentTimeMillis() }
+        }
+        LaunchedEffect(current, touchedAt) {
+            val idle = System.currentTimeMillis() - touchedAt
+            if (idle < FOLLOW_AFTER_MS) delay(FOLLOW_AFTER_MS - idle)
+            if (current >= 0 && !list.isScrollInProgress) list.animateScrollToItem((current - 2).coerceAtLeast(0))
+        }
         LazyColumn(
             state = list,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(vertical = 20.dp),
-            userScrollEnabled = !lyrics.synced,
         ) {
             itemsIndexed(lyrics.lines) { i, line ->
                 val lit = i == current
@@ -77,7 +91,11 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, modi
                     fontSize = if (lit) 21.sp else 18.sp,
                     fontWeight = if (lit) FontWeight.Bold else FontWeight.Medium,
                     textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // Timed: tap a line to play from there. Plain lyrics have no times to go to.
+                        .then(if (lyrics.synced && line.timeMs >= 0) Modifier.clickable { touchedAt = 0L; onSeek(line.timeMs) } else Modifier)
+                        .padding(horizontal = 18.dp, vertical = 5.dp),
                 )
             }
         }
@@ -90,3 +108,6 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, modi
         )
     }
 }
+
+/** How long after a scroll the lyrics wait before following the song again. */
+private const val FOLLOW_AFTER_MS = 4_000L

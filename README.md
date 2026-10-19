@@ -103,8 +103,10 @@ and YT Music Side A shows what can be observed and says so where it can't:
 Shuffle and repeat (all / one) beside the transport keys; hold ⏮/⏭ to rewind or fast-forward.
 Swipe the transport keys left for −10 / −5 / +5 / +10 s (on a phone held sideways, shuffle and
 repeat are there too). ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
-local and NAS songs. **Search** (top of a folder card) indexes the whole local folder or NAS share
-the first time and finds songs and folders by title, artist, album or name. Going back up a folder
+local and NAS songs. **Search** (top of a folder card) covers the folder you're in and everything
+under it, so open it in your music folder rather than at the top of the share. The first search
+reads those folders once; the index (with each song's title, artist and album) is kept on the phone,
+so later searches there, or in any folder inside it, start at once. **Rescan** picks up new files. Going back up a folder
 returns to where you were scrolled. Long lists (20 entries or more) get an A–Z index down the right
 edge: touch or slide along it to jump to a letter; digits file under #, and Thai, kana, kanji and
 hangul get a mark each after Z.
@@ -239,7 +241,9 @@ arrive, the file name is shown.
 
 ## Lyrics
 
-Tap the cover to see the lyrics in its place (tap again to go back); the line being sung is lit.
+Tap the cover to see the lyrics in its place (tap the COVER chip to go back); the line being sung is
+lit. Scroll them freely: they follow the song again four seconds after you let go. With timed
+lyrics, tap a line to play from there.
 Side A looks in this order:
 
 1. The file's tags (`LYRICS`/`UNSYNCEDLYRICS`, ID3 `USLT`, MP4 `©lyr`).
@@ -253,6 +257,14 @@ Side A looks in this order:
    Only the title, artist, album and length are sent. Results, including "not found", are cached
    on the phone. Sites without an API (AZLyrics, Genius pages) aren't scraped: their terms forbid
    it and they block it.
+
+Lyrics found online are saved as a `.lrc` with the song's name in the song's folder (on the phone
+or the NAS, over WebDAV or FTPS), timed when the lyrics are, so step 2 finds them next time and
+other players can use them too. Side A never writes into the audio files themselves: rewriting a
+multi-hundred-megabyte file over the network to add a few kilobytes risks the file for little gain,
+and DSD and WAV have no common lyrics tag anyway. An existing `.lrc` is never overwritten; Settings
+→ "Save found lyrics beside the songs" turns it off. For the local folder this needs write access,
+which the folder picker grants; a folder chosen with an older version may need choosing again.
 
 Lyrics work for the streaming apps too: they're looked up from what Spotify, Apple Music, TIDAL or YT
 Music report as playing, and follow that app's playback position. The apps' own lyrics (Spotify's,

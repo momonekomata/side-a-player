@@ -89,7 +89,19 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
         opener = { open(full, size) },
         // Tags only once the song is cached: FTPS can't fetch just the header cheaply.
         tagSource = { cachedFile(full, size)?.let(::openFileAccess) },
+        lyricsWriter = { _, text ->
+            val target = full.substringBeforeLast('/') + "/" + lrcName(full.substringAfterLast('/'))
+            withFtps { ftp ->
+                if (!ftp.storeFile(target, text.toByteArray().inputStream())) throw IOException("Can't save $target: ${ftp.replyString.trim()}")
+            }
+        },
     )
+
+    override fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track? {
+        val prefix = "ftps://${server.id}"
+        if (!id.startsWith(prefix)) return null
+        return trackFor(id.removePrefix(prefix), size)
+    }
 
     private fun cacheFile(path: String): File = MediaCache.file(context, "${server.id}$path", path.substringAfterLast('.', "bin"))
 
