@@ -11,6 +11,7 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import io.github.momonekomata.sidea.audio.SampleFormat
 import java.io.IOException
@@ -33,6 +34,7 @@ class ExclusiveOutput(
  * closing hands it back to Android.
  */
 object UsbExclusive {
+    private const val TAG = "SideA-usb"
     private const val ACTION_PERMISSION = "io.github.momonekomata.sidea.USB_PERMISSION"
 
     private lateinit var appContext: Context
@@ -179,7 +181,16 @@ object UsbExclusive {
             if (ac == null) { conn.close(); throw IOException("DAC control interface not found") }
             // force = true detaches Android's USB audio driver; that's the exclusive part.
             if (!conn.claimInterface(ac, true)) { conn.close(); throw IOException("Another app holds the DAC") }
-            Held(d, conn, desc, ac, mutableSetOf(desc.controlInterface)).also { held = it }
+            val claimed = linkedSetOf(desc.controlInterface)
+            // Every audio interface goes, not just the one we stream to: Linux keeps the sound
+            // card half-alive while any of them stays bound, and then can't bring it back for
+            // Android when Side A lets go.
+            for (i in 0 until d.interfaceCount) {
+                val intf = d.getInterface(i)
+                if (intf.alternateSetting != 0 || intf.interfaceClass != UsbConstants.USB_CLASS_AUDIO || intf.id in claimed) continue
+                if (conn.claimInterface(intf, true)) claimed += intf.id
+            }
+            Held(d, conn, desc, ac, claimed).also { held = it }
         }
         val conn = h.conn
         val asAlt = findInterface(d, alt.interfaceNumber, alt.alternate)
@@ -231,9 +242,28 @@ object UsbExclusive {
                 h.conn.releaseInterface(intf)
             }
         }
-        for (id in h.claimed) UsbStream.nativeReattachKernel(fd, id)
+        // The control interface first: binding it rebuilds the whole sound card, streaming
+        // interfaces included. 1 means Android's driver took it, 0 that no driver would.
+        val bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
+        for (id in h.claimed) if (id != h.desc.controlInterface) UsbStream.nativeReattachKernel(fd, id)
+        handBack = if (bound > 0) {
+            "reattached"
+        } else {
+            // A USB reset makes Linux unbind and probe every interface afresh, as if replugged.
+            val r = UsbStream.nativeReset(fd)
+            Log.w(TAG, "kernel driver didn't rebind ($bound); USB reset: $r")
+            if (r == 0) "reset" else "failed ($bound, $r)"
+        }
         h.conn.close()
+        onReleased?.invoke()
     }
+
+    /** Called after Side A let go of a DAC it held. */
+    var onReleased: (() -> Unit)? = null
+
+    /** How the last hand-back went, for the check that Android really took the DAC back. */
+    @Volatile var handBack: String? = null
+        private set
 
     /** The DAC was unplugged: forget it without talking to it. */
     @Synchronized

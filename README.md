@@ -44,7 +44,11 @@ wider slot, and the badge says ENHANCED. DoP always plays at 100 %, so set the l
 
 Other apps can't play through the DAC while Side A holds it (that's what exclusive means). Side A
 gives it back as soon as another app starts playing, and half a minute into a pause. Play
-picks up from the same spot.
+picks up from the same spot. To give it back, Side A takes every audio interface of the DAC
+(Linux keeps the sound card half-alive while any one stays bound, and then won't rebuild it),
+returns them control interface first, and if Linux's USB audio driver still won't take the DAC,
+resets it over USB, which looks like a replug to Linux. If Android still doesn't list the DAC a few
+seconds later, Side A says so, and unplugging and replugging it is the way out.
 
 ### Android's bit-perfect mode
 
@@ -95,13 +99,21 @@ than 1× go through Android's time-stretch with the pitch kept, so they're never
 signal path says so). ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
 local and NAS songs. **Search** (top of a folder card) indexes the whole local folder or NAS share
 the first time and finds songs and folders by title, artist, album or name. Going back up a folder
-returns to where you were scrolled.
+returns to where you were scrolled. Long lists (20 entries or more) get an A–Z index down the right
+edge: touch or slide along it to jump to a letter; digits file under #, and Thai, kana, kanji and
+hangul get a mark each after Z.
 
 ## NAS playback
 
 Songs from WebDAV and FTPS are downloaded in one continuous transfer into a cache (up to 2 GB,
 least recently played dropped first), and play starts as soon as the beginning is in. Replays come
 from the phone. This keeps large hi-res files from stuttering the way reading them in pieces on demand did.
+
+If playback catches up with the download anyway (DSD256 is ~2.8 MB/s), it waits until ten seconds
+are ahead, or, on a link slower than the song, until enough is in that the rest arrives before
+playback gets there, and the deck says "Buffering". One clean pause instead of a stutter.
+Downloads run one at a time, so the next song's early download for gapless never takes bandwidth
+from the song that's playing.
 
 ## EQ on streaming apps
 

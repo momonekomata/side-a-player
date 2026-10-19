@@ -126,16 +126,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     val deckSource: StateFlow<StreamingApp?>
 
-    private fun deckSourceFlow() = combine(_ui.map { it.tab }.distinctUntilChanged(), Player.state.map { it.isPlaying }.distinctUntilChanged(), streaming.nowPlaying) { tab, localPlaying, remote ->
-        val playingApps = remote.values.filter { it.isPlaying }.map { it.app }
-        when {
-            localPlaying -> null
-            tab.app != null && tab.app in playingApps -> tab.app
-            playingApps.isNotEmpty() -> playingApps.first()
-            tab.app != null && remote[tab.app] != null && Player.queue.value.current == null -> tab.app
-            else -> if (Player.queue.value.current == null) tab.app else null
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    private fun deckSourceFlow(): StateFlow<StreamingApp?> {
+        // Whatever played last stays on the card when it pauses; only something else starting
+        // to play takes the card over (pausing Spotify mustn't flip it to Side A's own song).
+        var last: StreamingApp? = null
+        var lastKnown = false
+        return combine(_ui.map { it.tab }.distinctUntilChanged(), Player.state.map { it.isPlaying }.distinctUntilChanged(), streaming.nowPlaying) { tab, localPlaying, remote ->
+            val playingApps = remote.values.filter { it.isPlaying }.map { it.app }
+            val pick = when {
+                localPlaying -> null
+                tab.app != null && tab.app in playingApps -> tab.app
+                playingApps.isNotEmpty() -> playingApps.first()
+                lastKnown && (last == null || remote[last] != null) -> last
+                tab.app != null && remote[tab.app] != null && Player.queue.value.current == null -> tab.app
+                else -> if (Player.queue.value.current == null) tab.app else null
+            }
+            if (localPlaying || playingApps.isNotEmpty()) {
+                last = pick
+                lastKnown = true
+            }
+            pick
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }
 
     private val _nowArt = MutableStateFlow<Bitmap?>(null)
     /** Cover of the local song playing. */

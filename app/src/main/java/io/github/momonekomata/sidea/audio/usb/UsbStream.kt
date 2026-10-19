@@ -58,6 +58,7 @@ class UsbStream private constructor(private val handle: Long, val frameBytes: In
         @JvmStatic private external fun nativeStats(h: Long): LongArray
         @JvmStatic private external fun nativeClose(h: Long)
         @JvmStatic external fun nativeReattachKernel(fd: Int, iface: Int): Int
+        @JvmStatic external fun nativeReset(fd: Int): Int
         @JvmStatic external fun nativeSpeed(fd: Int): Int
     }
 }

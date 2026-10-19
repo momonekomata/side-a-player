@@ -337,7 +337,14 @@ JNIEXPORT void JNICALL FN(nativeClose)(JNIEnv *env, jclass cls, jlong h) {
 JNIEXPORT jint JNICALL FN(nativeReattachKernel)(JNIEnv *env, jclass cls, jint fd, jint iface) {
     (void) env; (void) cls;
     struct usbdevfs_ioctl cmd = { .ifno = iface, .ioctl_code = USBDEVFS_CONNECT, .data = NULL };
-    return ioctl(fd, USBDEVFS_IOCTL, &cmd) < 0 ? -errno : 0;
+    int r = ioctl(fd, USBDEVFS_IOCTL, &cmd);
+    return r < 0 ? -errno : r; /* 1: a driver bound, 0: none would */
+}
+
+/* Resets the DAC: Linux unbinds and probes every interface again, much like a replug. */
+JNIEXPORT jint JNICALL FN(nativeReset)(JNIEnv *env, jclass cls, jint fd) {
+    (void) env; (void) cls;
+    return ioctl(fd, USBDEVFS_RESET, NULL) < 0 ? -errno : 0;
 }
 
 /* USB_SPEED_* from the kernel: 1 low, 2 full, 3 high, 5 super. Negative if unknown. */

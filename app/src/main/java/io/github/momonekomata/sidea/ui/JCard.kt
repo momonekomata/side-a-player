@@ -33,6 +33,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.launch
 
 /** The paper insert of a cassette case: header with the tape's title, then a ruled track list. */
 @Composable
@@ -42,10 +54,104 @@ fun JCard(
     modifier: Modifier = Modifier,
     art: ImageBitmap? = null,
     listState: LazyListState? = null,
+    letters: List<Pair<Char, Int>> = emptyList(),
     content: LazyListScope.() -> Unit,
 ) {
     JCardFrame(title, subtitle, modifier, art) {
-        LazyColumn(Modifier.fillMaxSize(), state = listState ?: rememberLazyListState(), content = content)
+        val list = listState ?: rememberLazyListState()
+        var active by remember { mutableStateOf<Char?>(null) }
+        Box(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), state = list, content = content)
+            if (letters.size > 1) {
+                LetterIndex(letters, list, { active = it }, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 6.dp))
+            }
+            active?.let { c ->
+                Box(
+                    Modifier.align(Alignment.Center).size(64.dp).background(Retro.Orange, RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center,
+                ) { Text(c.toString(), color = Retro.Cream, fontFamily = Retro.Hand, fontWeight = FontWeight.Bold, fontSize = 34.sp) }
+            }
+        }
+    }
+}
+
+/** The index down the card's edge: touch or slide along it to jump to the first entry of a letter. */
+@Composable
+private fun LetterIndex(letters: List<Pair<Char, Int>>, list: LazyListState, onActive: (Char?) -> Unit, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    var height by remember { mutableIntStateOf(1) }
+    var active by remember { mutableStateOf<Char?>(null) }
+    fun touch(y: Float) {
+        val (c, item) = letters[(y / height * letters.size).toInt().coerceIn(0, letters.size - 1)]
+        if (c == active) return
+        active = c
+        onActive(c)
+        scope.launch { list.scrollToItem(item) }
+    }
+    Column(
+        modifier
+            .width(26.dp)
+            .onSizeChanged { height = it.height.coerceAtLeast(1) }
+            .pointerInput(letters) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    touch(down.position.y)
+                    do {
+                        val e = awaitPointerEvent()
+                        e.changes.forEach { if (it.pressed) { touch(it.position.y); it.consume() } }
+                    } while (e.changes.any { it.pressed })
+                    active = null
+                    onActive(null)
+                }
+            },
+        verticalArrangement = Arrangement.SpaceEvenly,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        letters.forEach { (c, _) ->
+            Text(
+                c.toString(),
+                color = if (c == active) Retro.Orange else Retro.InkFaint,
+                fontFamily = Retro.Mono,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
+            )
+        }
+    }
+}
+
+/**
+ * The letters for [LetterIndex]: for each initial among [labels], the list item (counted from
+ * [firstItem]) of its first entry. Digits and symbols file under #; scripts without an
+ * alphabet order of their own (Thai, kana, kanji, hangul) get one mark each, after Z.
+ */
+fun letterIndex(labels: List<String>, firstItem: Int): List<Pair<Char, Int>> {
+    val first = LinkedHashMap<Char, Int>()
+    labels.forEachIndexed { i, label -> first.getOrPut(initialOf(label)) { firstItem + i } }
+    fun rank(c: Char) = when {
+        c == '#' -> 0
+        c in 'A'..'Z' -> 1
+        else -> 2
+    }
+    return first.entries.sortedWith(compareBy({ rank(it.key) }, { it.key })).map { it.key to it.value }
+}
+
+internal fun initialOf(label: String): Char {
+    val text = label.trim().removePrefix("The ").removePrefix("the ").trimStart()
+    val cp = text.codePoints().filter { Character.isLetterOrDigit(it) }.findFirst().orElse(-1)
+    if (cp < 0 || Character.isDigit(cp)) return '#'
+    // Accents off: É files under E.
+    val plain = java.text.Normalizer.normalize(String(Character.toChars(cp)), java.text.Normalizer.Form.NFD)[0].uppercaseChar()
+    if (plain in 'A'..'Z') return plain
+    return when (Character.UnicodeScript.of(cp)) {
+        Character.UnicodeScript.THAI -> 'ก'
+        Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA -> 'あ'
+        Character.UnicodeScript.HAN -> '漢'
+        Character.UnicodeScript.HANGUL -> '한'
+        Character.UnicodeScript.CYRILLIC -> 'Я'
+        Character.UnicodeScript.GREEK -> 'Ω'
+        else -> '#'
     }
 }
 

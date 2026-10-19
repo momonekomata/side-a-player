@@ -25,6 +25,13 @@ sealed interface PlayableSource {
     class Stream(val dataSource: MediaDataSource) : PlayableSource
 }
 
+/** A stream that can run dry while it still downloads; the deck shows Buffering meanwhile. */
+interface Refilling {
+    /** How fast playback consumes the file, once the engine knows; 0 until then. */
+    var bytesPerSecond: Long
+    var onStall: ((Boolean) -> Unit)?
+}
+
 data class EngineState(
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
@@ -163,9 +170,13 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         private var prefetch: Thread? = null
         @Volatile private var prefetched: Pair<UpNext, PcmDecoder>? = null
 
+        /** The next song's source while it opens, so a cancel can stop its download too. */
+        @Volatile private var prefetchSource: PlayableSource? = null
+
         fun cancel() {
             cancelled = true
             synchronized(lock) { lock.notifyAll() }
+            (prefetchSource as? PlayableSource.Stream)?.let { runCatching { it.dataSource.close() } }
             sink?.let { runCatching { it.pause(); it.flush() } }
         }
 
@@ -199,6 +210,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             var dec: PcmDecoder? = null
             try {
                 dec = Decoders.open(appContext, source, dopPlanner)
+                watchRefill(source, dec)
                 if (startUs > 0) dec.seekTo(startUs)
                 val plan = planFor(dec)
                 val t = buildSink(plan, dec)
@@ -247,11 +259,14 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                         if (handOver != null && compatible(handOver.second, d, plan)) {
                             d.close()
                             dec = handOver.second
+                            handOverSource?.let { watchRefill(it, handOver.second) }
+                            handOverSource = null
                             decodedUs = 0
                             next = Segment(flushHead + written, handOver.first.tag, handOver.second.durationUs, facts(handOver.second, plan, t))
                             continue
                         }
                         handOver?.second?.close()
+                        handOverSource = null
                         drain(t, flushHead + written)
                         if (!cancelled) {
                             _state.update { it.copy(isPlaying = false, positionMs = it.durationMs) }
@@ -306,13 +321,27 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                 try {
                     val up = callbacks.upNext() ?: return@Thread
                     val src = up.open() ?: return@Thread
+                    prefetchSource = src
+                    if (cancelled) { (src as? PlayableSource.Stream)?.dataSource?.close(); return@Thread }
                     val nd = Decoders.open(appContext, src, dopPlanner)
+                    prefetchSource = null
+                    handOverSource = src
                     if (cancelled) nd.close() else prefetched = up to nd
                 } catch (e: Throwable) {
                     // Not fatal: the queue opens it again the ordinary way and shows any error.
                     Log.w(TAG, "couldn't open the next song early", e)
                 }
             }, "SideA-prefetch").also { it.start() }
+        }
+
+        @Volatile private var handOverSource: PlayableSource? = null
+
+        /** Tells a downloading source how fast it's played, and shows its refills as Buffering. */
+        private fun watchRefill(src: PlayableSource, d: PcmDecoder) {
+            val r = (src as? PlayableSource.Stream)?.dataSource as? Refilling ?: return
+            val size = runCatching { (src as PlayableSource.Stream).dataSource.size }.getOrDefault(-1L)
+            if (size > 0 && d.durationUs > 0) r.bytesPerSecond = (size * 1_000_000.0 / d.durationUs).toLong()
+            r.onStall = { stalled -> if (!cancelled) _state.update { it.copy(isBuffering = stalled) } }
         }
 
         private fun takePrefetched(): Pair<UpNext, PcmDecoder>? {

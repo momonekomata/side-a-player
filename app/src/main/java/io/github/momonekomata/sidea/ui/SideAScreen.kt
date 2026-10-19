@@ -449,6 +449,7 @@ private fun localDeck(
         t == null -> "Pick a song from Local or NAS"
         engine.error != null -> "ERROR · ${engine.error}"
         facts == null -> "Threading the tape…"
+        engine.isBuffering -> "Buffering from the NAS…"
         else -> summary(facts, engine.outputNote)
     }
     return DeckModel(
@@ -584,10 +585,19 @@ private fun BrowserCard(
     }
     // Each folder keeps its own scroll position, so going back up lands where you left off.
     val scrollKey = "${state.browser.title}:${state.currentPath}"
-    val list = remember(scrollKey) { vm.scrollFor(scrollKey).let { (i, o) -> LazyListState(i, o) } }
-    LaunchedEffect(list, scrollKey) {
+    // Restored only once the folder's listing is in: a list that's still "Reading…" is a few
+    // lines long and would clamp (and then save) the position as the top.
+    val ready = !state.loading && state.error == null
+    val list = remember(scrollKey, ready) { if (ready) vm.scrollFor(scrollKey).let { (i, o) -> LazyListState(i, o) } else LazyListState() }
+    LaunchedEffect(list, scrollKey, ready) {
+        if (!ready) return@LaunchedEffect
         snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }
             .collect { (i, o) -> vm.saveScroll(scrollKey, i, o) }
+    }
+    val headerItems = if (state.path.size > 1) 2 else 1
+    val letters = remember(state.entries, tags, ready) {
+        if (!ready || state.entries.size < LETTERS_FROM) emptyList()
+        else letterIndex(state.entries.map { e -> if (e is Entry.Song) e.track.displayTitle(tags) else e.name }, headerItems)
     }
     val songs = state.entries.count { it is Entry.Song }
     val folders = state.entries.size - songs
@@ -596,7 +606,7 @@ private fun BrowserCard(
     val cover by produceState<ImageBitmap?>(null, firstSong?.track?.id) {
         value = firstSong?.let { ArtworkStore.load(context, it.track)?.asImageBitmap() }
     }
-    JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier, art = cover, listState = list) {
+    JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier, art = cover, listState = list, letters = letters) {
         item { JCardRow("⌕", "Search ${state.browser.title.lowercase()}…", onClick = { vm.openSearch(isNas) }) }
         if (state.path.size > 1) item { JCardRow("‹", "Back to ${state.path[state.path.size - 2].first}", onClick = onUp) }
         when {
@@ -668,7 +678,8 @@ private fun SearchCard(vm: MainViewModel, s: SearchState, queue: QueueState, tag
 @Composable
 private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifier) {
     val favorites by vm.favorites.collectAsStateWithLifecycle()
-    JCard("Favourites", "${favorites.size} songs", modifier) {
+    val letters = remember(favorites) { if (favorites.size < LETTERS_FROM) emptyList() else letterIndex(favorites.map { it.title }, 0) }
+    JCard("Favourites", "${favorites.size} songs", modifier, letters = letters) {
         if (favorites.isEmpty()) item { JCardNote("Tap ♡ next to a song's title on the deck to keep it here.") }
         favorites.forEachIndexed { i, f ->
             item {
@@ -742,3 +753,6 @@ fun CardButton(text: String, onClick: () -> Unit) {
         border = androidx.compose.foundation.BorderStroke(1.dp, Retro.Ink),
     ) { Text(text) }
 }
+
+/** Lists at least this long get the A–Z index down their edge. */
+private const val LETTERS_FROM = 20

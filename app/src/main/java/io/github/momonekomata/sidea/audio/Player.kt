@@ -165,6 +165,19 @@ object Player {
 
     private var askedUsb: String? = null
 
+    /** Side A let go of the DAC: Android should list it as an output again by now. */
+    private fun checkHandBack() {
+        if (UsbExclusive.holding || UsbExclusive.audioDevice() == null) return
+        val back = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.isUsb() }
+        if (!back) {
+            android.widget.Toast.makeText(
+                appContext,
+                "Android hasn't taken the DAC back (${UsbExclusive.handBack}). Unplug and replug it for other apps.",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
     /** Volume while Side A's USB driver drives the DAC; Android's volume can't reach it then. */
     fun setUsbVolume(v: Float) = Settings.update { it.copy(usbVolume = v.coerceIn(0f, 1f)) }
 
@@ -182,6 +195,7 @@ object Player {
         audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
         UsbExclusive.init(appContext)
         UsbExclusive.onPermissionGranted = { main.post { reopenOnNewOutput() } }
+        UsbExclusive.onReleased = { main.postDelayed(::checkHandBack, 4_000) }
         UsbExclusive.onDetached = {
             main.post {
                 if (engine.state.value.output?.exclusive != null) {
