@@ -470,8 +470,9 @@ private fun localDeck(
     val status = when {
         t == null -> "Pick a song from Local or NAS"
         engine.error != null -> "ERROR · ${engine.error}"
+        // Before Threading: a NAS refill can be what's holding the song up.
+        engine.bufferNote != null -> engine.bufferNote!!
         facts == null -> "Threading the tape…"
-        engine.isBuffering -> "Buffering from the NAS…" + (engine.bufferNote?.let { "\n$it" } ?: "")
         else -> summary(facts, engine.outputNote)
     }
     return DeckModel(

@@ -32,6 +32,8 @@ interface Refilling {
     var onStall: ((Boolean) -> Unit)?
     /** How fast the download runs, 0 if not known yet. */
     val downloadBytesPerSecond: Long
+    /** How far the current refill has got, 0..1. */
+    val refillProgress: Float
 }
 
 data class EngineState(
@@ -216,6 +218,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         private fun run() {
             var dec: PcmDecoder? = null
             try {
+                // Watched from the start: the first refill happens while the file is opened.
+                watchRefill(source, null)
                 dec = Decoders.open(appContext, source, dopPlanner)
                 watchRefill(source, dec)
                 if (startUs > 0) dec.seekTo(startUs)
@@ -351,20 +355,25 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         @Volatile private var handOverSource: PlayableSource? = null
 
         /** Tells a downloading source how fast it's played, and shows its refills as Buffering. */
-        private fun watchRefill(src: PlayableSource, d: PcmDecoder) {
+        private fun watchRefill(src: PlayableSource, d: PcmDecoder?) {
             val r = (src as? PlayableSource.Stream)?.dataSource as? Refilling ?: return
             val size = runCatching { (src as PlayableSource.Stream).dataSource.size }.getOrDefault(-1L)
-            if (size > 0 && d.durationUs > 0) r.bytesPerSecond = (size * 1_000_000.0 / d.durationUs).toLong()
+            if (d != null && size > 0 && d.durationUs > 0) r.bytesPerSecond = (size * 1_000_000.0 / d.durationUs).toLong()
             r.onStall = { stalled ->
                 if (!cancelled) _state.update { it.copy(isBuffering = stalled, bufferNote = if (stalled) refillNote(r) else null) }
             }
         }
 
-        private fun refillNote(r: Refilling): String? {
-            val got = r.downloadBytesPerSecond
-            if (got <= 0) return null
+        /** One line for the deck: "Buffering 40% · NAS 1.9 MB/s, song 2.8". */
+        private fun refillNote(r: Refilling): String {
             fun mb(b: Long) = "%.1f".format(b / 1e6)
-            return if (r.bytesPerSecond > 0) "NAS sends ${mb(got)} MB/s, the song needs ${mb(r.bytesPerSecond)}" else "NAS sends ${mb(got)} MB/s"
+            val got = r.downloadBytesPerSecond
+            val rates = when {
+                got <= 0 -> ""
+                r.bytesPerSecond > 0 -> " · NAS ${mb(got)} MB/s, song ${mb(r.bytesPerSecond)}"
+                else -> " · NAS ${mb(got)} MB/s"
+            }
+            return "Buffering ${(r.refillProgress * 100).toInt()}%$rates"
         }
 
         private fun takePrefetched(): Pair<UpNext, PcmDecoder>? {

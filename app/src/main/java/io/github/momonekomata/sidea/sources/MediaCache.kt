@@ -187,6 +187,14 @@ class GrowingFileDataSource(
         errors.get()?.let { throw it }
     }
 
+    private var stallFrom = 0L
+    private var stallTarget = 0L
+
+    override val refillProgress: Float
+        get() = synchronized(lock) {
+            if (stallTarget <= stallFrom) 0f else ((written - stallFrom).toFloat() / (stallTarget - stallFrom)).coerceIn(0f, 1f)
+        }
+
     /** How fast the NAS delivers, for the Buffering line. */
     override val downloadBytesPerSecond: Long
         get() {
@@ -203,10 +211,17 @@ class GrowingFileDataSource(
         synchronized(lock) {
             if (written < want && !done && !closed) {
                 val target = minOf(end, refillTarget(want))
+                stallFrom = written
+                stallTarget = target
                 val listener = onStall
                 listener?.invoke(true)
                 try {
-                    while (!done && !closed && written < target) lock.wait(200)
+                    var ticks = 0
+                    while (!done && !closed && written < target) {
+                        lock.wait(200)
+                        // Once a second, so the Buffering line's numbers move.
+                        if (++ticks % 5 == 0) listener?.invoke(true)
+                    }
                 } finally {
                     listener?.invoke(false)
                 }

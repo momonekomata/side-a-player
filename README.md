@@ -125,8 +125,9 @@ If playback catches up with the download anyway (DSD256 is ~2.8 MB/s), it waits 
 are ahead, or, on a link slower than the song, until enough is in that the rest arrives before
 playback gets there, and the deck says "Buffering". One clean pause instead of a stutter.
 Downloads run one at a time, so the next song's early download for gapless never takes bandwidth
-from the song that's playing. The Buffering line says how fast the NAS sends against what the song
-needs.
+from the song that's playing. While it waits, the line beside the quality badge reads like
+"Buffering 40% · NAS 1.9 MB/s, song 2.8": how far the refill has got, how fast the NAS sends,
+and what the song needs.
 
 WebDAV downloads use four connections at once, each fetching the next 4 MB piece in order (servers
 that ignore range requests get one ordinary download). One HTTP connection often tops out well
