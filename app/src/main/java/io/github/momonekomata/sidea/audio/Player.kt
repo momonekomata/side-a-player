@@ -3,6 +3,8 @@ package io.github.momonekomata.sidea.audio
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Handler
@@ -102,6 +104,37 @@ object Player {
         focus?.let { audioManager.abandonAudioFocusRequest(it) }
     }
 
+    // ---- DAC plugged in or out ----
+
+    private val main = Handler(Looper.getMainLooper())
+    private var devicesReady = false
+
+    /**
+     * The output is chosen when a song opens, so a DAC plugged in mid-song would otherwise stay
+     * behind Android's mixer until the next one. Reopen the song where it was, on the new path.
+     * The short delay lets Android finish reading the DAC's formats.
+     */
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) {
+            if (devicesReady && added.any { it.isSink && it.isUsb() }) main.postDelayed({ reopenOnNewOutput() }, 800)
+            devicesReady = true // the first call just lists what's already there
+        }
+
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) {
+            // Unplugging pauses (becoming-noisy); reopen paused so Play goes to the new output.
+            if (removed.any { it.isSink && it.isUsb() }) main.postDelayed({ reopenOnNewOutput() }, 300)
+        }
+    }
+
+    private fun AudioDeviceInfo.isUsb() =
+        type == AudioDeviceInfo.TYPE_USB_DEVICE || type == AudioDeviceInfo.TYPE_USB_HEADSET
+
+    private fun reopenOnNewOutput() {
+        val s = engine.state.value
+        if (_queue.value.current == null || s.output == null) return
+        startCurrent(startMs = s.positionMs, paused = !s.isPlaying)
+    }
+
     /** Headphones or the DAC were unplugged: pause rather than blast the phone speaker. */
     fun pauseForNoisy() {
         resumeOnGain = false
@@ -112,6 +145,7 @@ object Player {
         if (::engine.isInitialized) return
         appContext = context.applicationContext
         audioManager = appContext.getSystemService(AudioManager::class.java)
+        audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
         Settings.init(appContext)
         engine = AudioEngine(appContext, callbacks)
         scope.launch {
@@ -177,12 +211,12 @@ object Player {
         abandonFocus()
     }
 
-    private fun startCurrent() {
+    private fun startCurrent(startMs: Long = 0, paused: Boolean = false) {
         val track = _queue.value.current ?: return
         openJob?.cancel()
         engine.stop()
         resumeOnGain = false
-        if (!requestFocus()) {
+        if (!paused && !requestFocus()) {
             engine.fail("Another app (a call?) has the audio right now")
             return
         }
@@ -190,7 +224,7 @@ object Player {
         openJob = scope.launch {
             try {
                 val source = withContext(Dispatchers.IO) { track.opener(appContext) }
-                engine.play(source)
+                engine.play(source, startMs, paused)
             } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 engine.fail(t.message ?: t.javaClass.simpleName)

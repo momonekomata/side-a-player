@@ -36,7 +36,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import io.github.momonekomata.sidea.LyricsState
 import io.github.momonekomata.sidea.audio.SignalPath
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -52,82 +56,131 @@ data class DeckModel(
     val playing: Boolean,
     val status: String,
     val statusColor: Color,
-    /** Local playback only: the graded signal path behind the quality badge. */
+    /** The graded signal path behind the quality badge. */
     val path: SignalPath? = null,
     val art: ImageBitmap? = null,
+    val lyrics: LyricsState = LyricsState(),
+    /** The square shows lyrics instead of the cover. */
+    val showLyrics: Boolean = false,
+    val onToggleLyrics: () -> Unit = {},
+    val onRetryLyrics: () -> Unit = {},
     val onToggle: () -> Unit,
     val onNext: () -> Unit,
     val onPrevious: () -> Unit,
     val onSeek: (Long) -> Unit,
 )
 
+/**
+ * Cover art, full size, with the lyrics in the same square: tap to swap. Below it the title,
+ * the quality badge with the signal path, the seek bar and the transport keys. [compact] lays the
+ * square beside the controls, for a phone on its side.
+ */
 @Composable
 fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = false) {
-    var showCover by remember { mutableStateOf(false) }
     var showPath by remember { mutableStateOf(false) }
-    Column(
-        modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Retro.Panel)
-            .padding(if (compact) 10.dp else 16.dp),
-        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 14.dp),
-    ) {
-        if (!compact) {
-            Text(
-                "STREAMING · CASSETTE · PLAYER",
-                color = Retro.Muted,
-                fontFamily = Retro.Mono,
-                fontSize = 10.sp,
-                letterSpacing = 3.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-        }
-        val progress = if (model.durationMs > 0) model.positionMs.toFloat() / model.durationMs else 0f
-        // Compact (landscape phone): the cassette is sized by height so the controls still fit.
-        val sizing = if (compact) Modifier.height(150.dp).align(Alignment.CenterHorizontally) else Modifier.fillMaxWidth()
-        val tapCover = sizing.clickable(enabled = model.art != null) { showCover = !showCover }
-        if (showCover && model.art != null) {
-            CoverView(model.art, tapCover)
-        } else {
-            Cassette(model.title, model.subtitle, progress, model.playing, tapCover, model.art)
-        }
-        val path = model.path
-        if (path != null) {
-            // Badge on its own line; source and output each get a full line below, wrapping if
-            // they must rather than being cut off.
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                QualityBadge(path.quality) { showPath = true }
-                model.status.lines().forEach { line ->
-                    Text(line, color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
-                }
+    val panel = modifier
+        .clip(RoundedCornerShape(10.dp))
+        .background(Retro.Panel)
+        .padding(if (compact) 10.dp else 14.dp)
+    if (compact) {
+        Row(panel, horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            ArtSquare(model, Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Controls(model, compact = true) { showPath = true }
             }
-        } else {
-            StatusLine(model.status, model.statusColor)
         }
-        SeekBar(model)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
-            val h = if (compact) 42.dp else 52.dp
-            DeckKey(Icons.Filled.SkipPrevious, "Previous", height = h, onClick = model.onPrevious)
-            DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", wide = true, lit = model.playing, height = h, onClick = model.onToggle)
-            DeckKey(Icons.Filled.SkipNext, "Next", height = h, onClick = model.onNext)
+    } else {
+        Column(panel, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ArtSquare(model, Modifier.fillMaxWidth().aspectRatio(1f))
+            Controls(model, compact = false) { showPath = true }
         }
     }
     val path = model.path
     if (showPath && path != null) SignalPathDialog(path, onDismiss = { showPath = false })
 }
 
-/** The cover in place of the cassette, framed like the front of the case. */
 @Composable
-private fun CoverView(art: ImageBitmap, modifier: Modifier) {
+private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
+    Column {
+        Text(
+            model.title.ifBlank { "Nothing playing" },
+            color = Color.White,
+            fontSize = if (compact) 17.sp else 20.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (model.subtitle.isNotBlank()) {
+            Text(model.subtitle, color = Retro.Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+    val path = model.path
+    if (path != null) {
+        // Badge on its own line; source and output each get a full line below, wrapping if
+        // they must rather than being cut off.
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            QualityBadge(path.quality, onPath)
+            model.status.lines().forEach { line ->
+                Text(line, color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
+            }
+        }
+    } else {
+        StatusLine(model.status, model.statusColor)
+    }
+    SeekBar(model)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
+        val h = if (compact) 42.dp else 52.dp
+        DeckKey(Icons.Filled.SkipPrevious, "Previous", height = h, onClick = model.onPrevious)
+        DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", wide = true, lit = model.playing, height = h, onClick = model.onToggle)
+        DeckKey(Icons.Filled.SkipNext, "Next", height = h, onClick = model.onNext)
+    }
+}
+
+/** The cover, or the lyrics in its place; one tap swaps them. */
+@Composable
+private fun ArtSquare(model: DeckModel, modifier: Modifier) {
     Box(
         modifier
-            .aspectRatio(1.58f)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF111111))
-            .border(2.dp, Retro.ShellEdge, RoundedCornerShape(10.dp)),
-        contentAlignment = Alignment.Center,
+            .clickable(onClick = model.onToggleLyrics),
     ) {
-        Image(art, "Cover", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxHeight().padding(10.dp).clip(RoundedCornerShape(4.dp)))
+        Crossfade(model.showLyrics, label = "art-lyrics") { lyricsSide ->
+            if (lyricsSide) {
+                LyricsSquare(model.lyrics, model.positionMs, model.onRetryLyrics, Modifier.fillMaxSize())
+            } else {
+                val art = model.art
+                if (art != null) {
+                    Image(art, "Cover", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else {
+                    Box(Modifier.fillMaxSize().background(Retro.Shell), contentAlignment = Alignment.Center) {
+                        Text("A", color = Retro.Orange, fontSize = 72.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+        }
+        // A hint for what a tap does, and that lyrics exist at all.
+        val hint = when {
+            model.showLyrics -> "COVER"
+            model.lyrics.lyrics != null -> "LYRICS"
+            model.lyrics.loading -> "LYRICS…"
+            else -> null
+        }
+        if (hint != null) {
+            Text(
+                hint,
+                color = Color.White,
+                fontFamily = Retro.Mono,
+                fontSize = 10.sp,
+                letterSpacing = 1.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
     }
 }
 

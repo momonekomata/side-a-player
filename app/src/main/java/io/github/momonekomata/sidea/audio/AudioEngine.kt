@@ -69,9 +69,11 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     /** Read for every chunk, so changes apply within a few milliseconds of audio. */
     @Volatile var eq = EqConfig()
 
-    fun play(source: PlayableSource, startMs: Long = 0) {
+    /** [paused] opens the song ready to play at [startMs] without starting it. */
+    fun play(source: PlayableSource, startMs: Long = 0, paused: Boolean = false) {
         stop()
         val s = Session(source, startMs * 1000)
+        s.paused = paused
         session = s
         _state.value = EngineState(isBuffering = true, positionMs = startMs)
         s.thread.start()
@@ -357,6 +359,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             device = device.kind(),
             deviceName = device.displayName(),
             mixerRate = if (plan.bitPerfect) null else router.mixerRate(),
+            usb = if (plan.bitPerfect) null else router.usbSupport(),
         )
     }
 

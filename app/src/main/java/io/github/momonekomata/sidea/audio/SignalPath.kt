@@ -56,7 +56,12 @@ data class StreamFacts(
     val deviceName: String?,
     /** The system mixer's rate, when the stream goes through it. */
     val mixerRate: Int?,
+    /** A USB DAC that's connected but not used bit-perfect, and what the phone offers for it. */
+    val usb: UsbSupport? = null,
 )
+
+/** What Android on this phone offers for a connected USB DAC. */
+data class UsbSupport(val name: String, val apiAvailable: Boolean, val bitPerfectRates: List<Int>)
 
 enum class DsdMode { DOP, PCM }
 
@@ -90,6 +95,14 @@ object SignalPaths {
                 val how = if (mixer != null && mixer != f.outputRate) "resampled to ${khz(mixer)}" else "mixed at ${khz(mixer ?: f.outputRate)}"
                 PathStage("Android mixer", "$how, system volume applied", Quality.HIGH_QUALITY)
             }
+        }
+        f.usb?.let { u ->
+            val why = when {
+                !u.apiAvailable -> "Connected, but bit-perfect output needs Android 14 or newer"
+                u.bitPerfectRates.isEmpty() -> "Connected, but this phone's audio system offers no bit-perfect mode for it, so Android's mixer stays in the path. Exclusive access on this phone needs an app with its own USB driver"
+                else -> "Bit-perfect is offered at ${u.bitPerfectRates.joinToString(", ") { khz(it) }}, not at this file's ${khz(f.outputRate)}"
+            }
+            stages += PathStage(u.name, why, Quality.HIGH_QUALITY)
         }
         if (f.device == DeviceKind.BLUETOOTH) {
             stages += PathStage("Bluetooth", "${f.deviceName ?: "Headphones"} · re-encoded by the Bluetooth codec", Quality.LOSSY)

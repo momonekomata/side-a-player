@@ -2,87 +2,91 @@ package io.github.momonekomata.sidea.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.momonekomata.sidea.lyrics.Lyrics
+import io.github.momonekomata.sidea.LyricsState
+import io.github.momonekomata.sidea.Settings
 
 /**
- * Lyrics on a strip of the J-card's paper. Synced lyrics keep the sung line centred and lit;
- * unsynced ones just scroll. Tapping it opens the full view.
+ * Lyrics where the cover was. Timed lyrics keep the sung line lit and a third of the way down;
+ * untimed ones just scroll. With none, it says why and offers Retry.
  */
 @Composable
-fun LyricsPanel(lyrics: Lyrics, positionMs: Long, modifier: Modifier = Modifier, compact: Boolean, onClick: () -> Unit) {
-    val current = lyrics.lineAt(positionMs)
-    val list = rememberLazyListState()
-    LaunchedEffect(current, compact) {
-        // Keep the current line in the middle: scroll so it sits one line below the top in the strip.
-        if (current >= 0) list.animateScrollToItem((current - if (compact) 1 else 2).coerceAtLeast(0))
-    }
-    Column(
-        modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(Retro.Cream)
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-    ) {
-        LazyColumn(state = list, modifier = Modifier.fillMaxWidth().weight(1f, fill = !compact), userScrollEnabled = !lyrics.synced) {
-            itemsIndexed(lyrics.lines) { i, line -> LyricText(line.text, i == current, compact) }
+fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, modifier: Modifier) {
+    val lyrics = state.lyrics
+    Box(modifier.background(Color(0xFF151515))) {
+        if (lyrics == null) {
+            Column(
+                Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                val text = when {
+                    state.key == null -> "Nothing playing"
+                    state.loading -> "Looking for lyrics…"
+                    !Settings.current.onlineLyrics -> "No lyrics in the file, and online lookup is off in Settings"
+                    else -> "No lyrics found for ${state.song}"
+                }
+                Text(text, color = Retro.Muted, fontSize = 14.sp, textAlign = TextAlign.Center)
+                if (state.missed) TextButton(onClick = onRetry) { Text("Retry", color = Retro.Orange) }
+            }
+            return@Box
+        }
+        val current = lyrics.lineAt(positionMs)
+        val list = rememberLazyListState()
+        LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem((current - 2).coerceAtLeast(0)) }
+        LazyColumn(
+            state = list,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 20.dp),
+            userScrollEnabled = !lyrics.synced,
+        ) {
+            itemsIndexed(lyrics.lines) { i, line ->
+                val lit = i == current
+                val color by animateColorAsState(
+                    when {
+                        lit -> Retro.Orange
+                        current >= 0 && i < current -> Color.White.copy(alpha = 0.35f)
+                        else -> Color.White.copy(alpha = 0.75f)
+                    },
+                    label = "lyric",
+                )
+                Text(
+                    line.text.ifBlank { "♪" },
+                    color = color,
+                    fontSize = if (lit) 21.sp else 18.sp,
+                    fontWeight = if (lit) FontWeight.Bold else FontWeight.Medium,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp),
+                )
+            }
         }
         Text(
             "lyrics · ${lyrics.source}",
-            color = Retro.InkFaint,
+            color = Retro.Muted,
             fontFamily = Retro.Mono,
             fontSize = 9.sp,
-            modifier = Modifier.align(Alignment.End).padding(end = 12.dp, top = 2.dp),
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
         )
-    }
-}
-
-@Composable
-private fun LyricText(text: String, lit: Boolean, compact: Boolean) {
-    val color by animateColorAsState(if (lit) Retro.Orange else Retro.Ink.copy(alpha = 0.55f), label = "lyric")
-    Text(
-        text.ifBlank { "♪" },
-        color = color,
-        fontSize = if (compact) 14.sp else 17.sp,
-        fontWeight = if (lit) FontWeight.Bold else FontWeight.Normal,
-        textAlign = TextAlign.Center,
-        maxLines = if (compact) 1 else 3,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = if (compact) 2.dp else 5.dp),
-    )
-}
-
-/** The whole lyric sheet in place of the track list, like the back of the J-card. */
-@Composable
-fun LyricsCard(title: String, lyrics: Lyrics, positionMs: Long, modifier: Modifier, onClose: () -> Unit) {
-    val current = lyrics.lineAt(positionMs)
-    val list = rememberLazyListState()
-    LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem((current - 3).coerceAtLeast(0)) }
-    JCardFrame(title, "lyrics · ${lyrics.source}", modifier) {
-        JCardRow("‹", "Back to the track list", onClick = onClose)
-        LazyColumn(state = list, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            itemsIndexed(lyrics.lines) { i, line -> LyricText(line.text, i == current, compact = false) }
-        }
     }
 }

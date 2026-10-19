@@ -90,6 +90,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -121,6 +122,8 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     val remoteOut by vm.streaming.output.seen.collectAsStateWithLifecycle()
     var settingsOpen by remember { mutableStateOf(false) }
     var eqOpen by remember { mutableStateOf(false) }
+    // Cover or lyrics in the square; kept across songs, so lyrics stay up once chosen.
+    var showLyrics by rememberSaveable { mutableStateOf(false) }
 
     // Drives the position readout and the reels; remote positions are extrapolated per frame.
     var tick by remember { mutableLongStateOf(0L) }
@@ -141,11 +144,15 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     val remoteBitmap = app?.let { remote[it]?.art }
     val remoteArt = remember(remoteBitmap) { remoteBitmap?.asImageBitmap() }
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
-    val deck = if (app != null) {
-        remoteDeck(vm, app, remote[app], tick, remoteArt, remoteOut)
-    } else {
-        localDeck(queue, engine, tags, prefs.eq, localImage)
-    }
+    val deck = (
+        if (app != null) remoteDeck(vm, app, remote[app], tick, remoteArt, remoteOut)
+        else localDeck(queue, engine, tags, prefs.eq, localImage)
+    ).copy(
+        lyrics = lyrics,
+        showLyrics = showLyrics,
+        onToggleLyrics = { showLyrics = !showLyrics },
+        onRetryLyrics = vm::retryLyrics,
+    )
     // A dot on the tab of whatever is playing, so it's easy to find again.
     val playing = buildSet {
         if (engine.isPlaying) queue.current?.let { add(if (ui.nas?.entries?.any { e -> e is Entry.Song && e.track.id == it.id } == true) SourceTab.NAS else SourceTab.LOCAL) }
@@ -169,7 +176,7 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         if (!landscape) Header(headerIcons)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
-                WideLayout(vm, ui.tab, deck, lyrics, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null) { m ->
+                WideLayout(vm, ui.tab, deck, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null) { m ->
                     SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m)
                 }
             } else {
@@ -185,56 +192,31 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 }
 
-/** Unfolded: J-card on the left page; deck and lyrics on the right, like the open case. */
+/**
+ * Wide screens. Unfolded: the card on the left page, the deck on the right, its square sized so
+ * the controls fit under it. A phone on its side: the card and a compact deck, square beside the
+ * controls.
+ */
 @Composable
 private fun WideLayout(
     vm: MainViewModel,
     tab: SourceTab,
     deck: DeckModel,
-    lyrics: LyricsState,
     playing: Set<SourceTab>,
     short: Boolean,
     trailing: (@Composable RowScope.() -> Unit)?,
     card: @Composable (Modifier) -> Unit,
 ) {
-    val sheet = lyrics.lyrics
-    if (short) {
-        // A phone on its side: three columns, the deck compact in the middle, lyrics on the right.
-        Column {
-            Row(Modifier.weight(1f).padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                card(Modifier.weight(1f).fillMaxHeight().padding(vertical = 4.dp))
-                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
-                    Deck(deck, compact = true)
-                }
-                Column(Modifier.weight(0.8f).fillMaxHeight().padding(vertical = 4.dp)) {
-                    if (sheet != null) {
-                        LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxSize(), compact = false) {}
-                    } else {
-                        LyricsStatus(lyrics, vm::retryLyrics)
-                    }
-                }
-            }
-            SourceTabs(tab, playing, vm::selectTab, trailing)
-        }
-        return
-    }
-    var lyricsOpen by remember { mutableStateOf(false) }
-    val showSheet = lyricsOpen && sheet != null
-    BackHandler(enabled = showSheet) { lyricsOpen = false }
     Column {
-        Row(Modifier.weight(1f).padding(horizontal = if (trailing != null) 8.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            val left = Modifier.weight(1f).fillMaxHeight().padding(vertical = 8.dp)
-            if (showSheet && sheet != null) {
-                LyricsCard(deck.title.ifBlank { "Lyrics" }, sheet, deck.positionMs, left, onClose = { lyricsOpen = false })
+        Row(Modifier.weight(1f).padding(horizontal = if (trailing != null) 6.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(if (short) 8.dp else 16.dp)) {
+            card(Modifier.weight(1f).fillMaxHeight().padding(vertical = if (short) 4.dp else 8.dp))
+            if (short) {
+                Deck(deck, Modifier.weight(1.4f).fillMaxHeight().padding(vertical = 4.dp), compact = true)
             } else {
-                card(left)
-            }
-            Column(Modifier.weight(1.15f).fillMaxHeight().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
-                Deck(deck)
-                if (sheet != null && !showSheet) {
-                    LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f), compact = false) { lyricsOpen = true }
-                } else if (sheet == null) {
-                    LyricsStatus(lyrics, vm::retryLyrics)
+                BoxWithConstraints(Modifier.weight(1.15f).fillMaxHeight().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    // Leave about 260 dp under the square for title, badge, seek bar and keys.
+                    val width = minOf(maxWidth, (maxHeight - 260.dp).coerceAtLeast(220.dp))
+                    Deck(deck, Modifier.width(width))
                 }
             }
         }
@@ -278,7 +260,7 @@ private fun PhoneLayout(
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
-            ExpandedDeck(deck, lyrics, onRetry = vm::retryLyrics, onCollapse = { expanded = false })
+            ExpandedDeck(deck, onCollapse = { expanded = false })
         }
     }
 }
@@ -338,10 +320,9 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
     }
 }
 
-/** The full deck over the cards, with lyrics filling what the deck leaves. */
+/** The full deck over the cards. */
 @Composable
-private fun ExpandedDeck(deck: DeckModel, lyrics: LyricsState, onRetry: () -> Unit, onCollapse: () -> Unit) {
-    val sheet = lyrics.lyrics
+private fun ExpandedDeck(deck: DeckModel, onCollapse: () -> Unit) {
     var drag by remember { mutableFloatStateOf(0f) }
     Column(
         Modifier
@@ -366,32 +347,10 @@ private fun ExpandedDeck(deck: DeckModel, lyrics: LyricsState, onRetry: () -> Un
             Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = Retro.Muted)
             Text("NOW PLAYING", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 3.sp)
         }
-        Deck(deck)
-        if (sheet != null) {
-            LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f).padding(vertical = 10.dp), compact = false) {}
-        } else {
-            LyricsStatus(lyrics, onRetry)
-            Spacer(Modifier.weight(1f))
+        // Scrolls only on phones too short for the square plus the controls.
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            Deck(deck)
         }
-    }
-}
-
-/** Says what happened when there are no lyrics to show, so a miss isn't a mystery. */
-@Composable
-private fun LyricsStatus(lyrics: LyricsState, onRetry: () -> Unit) {
-    if (lyrics.key == null) return
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 10.dp).clip(RoundedCornerShape(8.dp)).background(Retro.Panel).padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val text = when {
-            lyrics.loading -> "Looking for lyrics…"
-            !Settings.current.onlineLyrics -> "No lyrics in the file. Online lookup is off in Settings."
-            lyrics.missed -> "No lyrics found on LRCLIB for ${lyrics.song}"
-            else -> ""
-        }
-        Text(text, color = Retro.Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        if (lyrics.missed) TextButton(onClick = onRetry) { Text("Retry", color = Retro.Orange) }
     }
 }
 

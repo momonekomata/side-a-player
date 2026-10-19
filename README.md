@@ -1,7 +1,7 @@
 # Side A
 
-A retro cassette-deck music player for Android, laid out for foldables: the J-card track list on
-one page, the tape deck on the other. It has three kinds of source.
+A music player for Android with a retro J-card track list, full-size cover art (tap it for
+lyrics), and a bit-perfect audio path. Laid out for phones and foldables. It has three kinds of source.
 
 | Source | How it plays | Audio quality |
 |---|---|---|
@@ -20,6 +20,13 @@ what actually happened:
 * `● BIT-PERFECT · FLAC 96 kHz/24-bit · 24-bit · <DAC name>`: untouched samples at the native rate
 * `● MIXED · … `: Android's mixer is in the path, with the reason (no USB DAC, Android < 14, or the
   DAC/phone doesn't offer bit-perfect at that rate)
+
+No permission prompt is involved: Android's bit-perfect mode is a system feature, not a
+USB takeover. Whether it's available is the phone maker's call. If the DAC is connected but the
+phone offers no bit-perfect mode for it, the signal path says exactly that, listing the rates it
+does offer, if any. Plugging the DAC in (or out) mid-song reopens the song on the new path where it
+was. Apps that prompt for USB access (like UAPP) bypass Android with their own USB driver;
+that's what exclusive mode takes on phones without the bit-perfect feature.
 
 Notes:
 * Set the volume on the DAC or amp. In bit-perfect mode Android's own volume is bypassed, so start low.
@@ -95,6 +102,11 @@ bit-perfect, but carries your EQ'd signal in at least a 24-bit container (the ba
 ENHANCED). Auto preamp lowers the level by the biggest boost so nothing clips. A flat or switched-off EQ
 is fully bypassed. While the EQ is on, DSD is converted to PCM so it can be equalised (DoP can't
 be). The EQ applies to local and NAS playback; streaming apps' audio is theirs.
+
+## Now playing
+
+The deck shows the cover full size. Tap it to swap to the lyrics in the same square (the line being
+sung is lit and kept in view), and tap again for the cover. The choice sticks from song to song.
 
 ## Artwork
 

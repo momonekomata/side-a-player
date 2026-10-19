@@ -37,6 +37,19 @@ class OutputRouter(context: Context) {
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
 
+    /** What this phone offers for the connected USB DAC, or null when there's none. */
+    fun usbSupport(): UsbSupport? {
+        val d = usbDevice() ?: return null
+        val name = d.productName?.toString()?.takeIf { it.isNotBlank() } ?: "USB DAC"
+        if (Build.VERSION.SDK_INT < 34) return UsbSupport(name, apiAvailable = false, bitPerfectRates = emptyList())
+        val rates = am.getSupportedMixerAttributes(d)
+            .filter { it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT }
+            .map { it.format.sampleRate }
+            .distinct()
+            .sorted()
+        return UsbSupport(name, apiAvailable = true, bitPerfectRates = rates)
+    }
+
     /** The rate Android's mixer runs at for the default output. */
     fun mixerRate(): Int? = am.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
 
