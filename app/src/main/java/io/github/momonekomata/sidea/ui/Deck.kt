@@ -121,7 +121,8 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
         // Cover on top, the song and its whole signal path in the middle, the transport pinned to
         // the bottom. The cover shrinks only when the screen is too short for all three.
         BoxWithConstraints(panel) {
-            val art = minOf(maxWidth, maxHeight - 250.dp).coerceAtLeast(120.dp)
+            // About 340 dp below the cover: title, badge, a few signal path steps, seek bar, keys.
+            val art = minOf(maxWidth, maxHeight - 340.dp).coerceAtLeast(120.dp)
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ArtSquare(model, Modifier.size(art).align(Alignment.CenterHorizontally))
                 Column(
@@ -175,14 +176,15 @@ private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
         // The badge and the format; the rest of the signal path is a tap on the badge away.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             QualityBadge(path.quality, onPath)
+            // Two lines, so a long one (the Buffering speeds) wraps instead of being cut off.
             Text(
                 model.status.lines().first(),
                 color = Retro.Muted,
                 fontFamily = Retro.Mono,
                 fontSize = 11.sp,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable(onClick = onPath),
+                modifier = Modifier.weight(1f, fill = false).clickable(onClick = onPath),
             )
         }
     } else {
