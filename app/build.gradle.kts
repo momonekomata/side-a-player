@@ -14,8 +14,21 @@ android {
         applicationId = "io.github.momonekomata.sidea"
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        // Each CI build counts up, so a newer APK always installs over an older one.
+        versionCode = 100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        versionName = "0.4.${System.getenv("GITHUB_RUN_NUMBER") ?: "dev"}"
+    }
+
+    signingConfigs {
+        // One debug key in the repo for every build. CI used to make a fresh one per run, and
+        // Android refuses an update signed with a different key ("App not installed"). A debug
+        // key isn't a secret: it only proves the builds come from the same place.
+        getByName("debug") {
+            storeFile = file("side-a-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

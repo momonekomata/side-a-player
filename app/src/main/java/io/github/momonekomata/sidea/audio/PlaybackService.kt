@@ -150,7 +150,7 @@ class PlaybackService : Service() {
         val playing = Player.state.value.isPlaying
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(t?.displayTitle(tags) ?: "Side A")
             .setContentText(listOf(t?.displayArtist(tags), t?.displayAlbum(tags)).filter { !it.isNullOrBlank() }.joinToString(" · "))
             .setContentIntent(open)

@@ -260,12 +260,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Lyrics found online go into a .lrc beside the song (timed when they are), which other
-     * players read too and which outlives the cache. Never over a .lrc that's already there, never
-     * into the audio file itself.
+     * players read too and which outlives the cache. Timed lyrics replace a .lrc that only had plain
+     * ones (that's the only time an online lookup happens with a .lrc there); plain ones never
+     * replace anything. Never into the audio file itself.
      */
     private suspend fun saveLyrics(t: io.github.momonekomata.sidea.sources.Track, l: io.github.momonekomata.sidea.lyrics.Lyrics, q: LyricsQuery) {
         val write = t.lyricsWriter ?: return
-        if (!Settings.current.saveLyrics || t.lyricsFile != null || q.embedded != null || l.source == "file tags" || l.source == ".lrc file") return
+        if (!Settings.current.saveLyrics || l.source == "file tags" || l.source == ".lrc file") return
+        val hadLyrics = t.lyricsFile != null || q.embedded != null
+        if (hadLyrics && !l.synced) return
         if (!lyricsSaved.add(t.id)) return
         val text = io.github.momonekomata.sidea.lyrics.Lrc.format(l, q.title, q.artist, q.album)
         withContext(Dispatchers.IO) {

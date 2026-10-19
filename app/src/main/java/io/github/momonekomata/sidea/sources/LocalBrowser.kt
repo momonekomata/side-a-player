@@ -63,11 +63,25 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
 
     /** Needs write access to the folder, which the system folder picker grants. */
     private fun writeLrc(ctx: Context, folder: String, name: String, text: String) {
-        val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, folder)
-        // octet-stream, so the provider keeps ".lrc" instead of adding ".txt".
-        val doc = DocumentsContract.createDocument(ctx.contentResolver, parent, "application/octet-stream", name)
-            ?: throw java.io.IOException("Can't create $name")
+        // Replace a .lrc that's there (plain lyrics giving way to timed ones) rather than add "Song (1).lrc".
+        val doc = existingChild(ctx, folder, name) ?: run {
+            val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, folder)
+            // octet-stream, so the provider keeps ".lrc" instead of adding ".txt".
+            DocumentsContract.createDocument(ctx.contentResolver, parent, "application/octet-stream", name)
+                ?: throw java.io.IOException("Can't create $name")
+        }
         ctx.contentResolver.openOutputStream(doc, "wt")!!.use { it.write(text.toByteArray()) }
+    }
+
+    private fun existingChild(ctx: Context, folder: String, name: String): Uri? {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folder)
+        val cols = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+        ctx.contentResolver.query(children, cols, null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                if (c.getString(1).equals(name, ignoreCase = true)) return DocumentsContract.buildDocumentUriUsingTree(treeUri, c.getString(0))
+            }
+        }
+        return null
     }
 
     override fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track =

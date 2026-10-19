@@ -262,8 +262,9 @@ Lyrics found online are saved as a `.lrc` with the song's name in the song's fol
 or the NAS, over WebDAV or FTPS), timed when the lyrics are, so step 2 finds them next time and
 other players can use them too. Side A never writes into the audio files themselves: rewriting a
 multi-hundred-megabyte file over the network to add a few kilobytes risks the file for little gain,
-and DSD and WAV have no common lyrics tag anyway. An existing `.lrc` is never overwritten; Settings
-→ "Save found lyrics beside the songs" turns it off. For the local folder this needs write access,
+and DSD and WAV have no common lyrics tag anyway. When the file or its `.lrc` only has plain lyrics,
+Side A still looks online for timed ones, and if it finds them they replace the plain `.lrc` (plain
+lyrics never replace anything). Settings → "Save found lyrics beside the songs" turns it off. For the local folder this needs write access,
 which the folder picker grants; a folder chosen with an older version may need choosing again.
 
 Lyrics work for the streaming apps too: they're looked up from what Spotify, Apple Music, TIDAL or YT
@@ -303,4 +304,9 @@ remote-control only.
 
 GitHub Actions builds a debug APK on every push (Actions → latest run → `side-a-debug-apk`).
 Locally: open in Android Studio, or `./gradlew assembleDebug` with the Android SDK installed.
+
+Every build is signed with the debug key in `app/side-a-debug.keystore` and numbered from the CI
+run, so a newer APK installs over an older one without uninstalling. (Builds before this one were
+each signed with a throwaway key, which is why Android said "App not installed": uninstall once,
+then updates go over the top.)
 Min Android 10 (API 29); bit-perfect needs Android 14 (API 34).

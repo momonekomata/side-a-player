@@ -61,15 +61,20 @@ class LyricsRepository(context: Context) {
 
     /** [force] ignores a remembered "not found", for the Retry button. */
     suspend fun find(q: LyricsQuery, online: Boolean, sources: LyricsSources = LyricsSources(), force: Boolean = false): Lyrics? = withContext(Dispatchers.IO) {
-        q.embedded?.let { Lrc.parse(it, "file tags") }?.let { return@withContext it }
-        runCatching { q.sidecar?.invoke() }.getOrNull()?.let { Lrc.parse(it, ".lrc file") }?.let { return@withContext it }
+        val tags = q.embedded?.let { Lrc.parse(it, "file tags") }
+        val file = runCatching { q.sidecar?.invoke() }.getOrNull()?.let { Lrc.parse(it, ".lrc file") }
+        // Timed lyrics beat plain ones, wherever they are.
+        val local = listOfNotNull(tags, file).let { l -> l.firstOrNull { it.synced } ?: l.firstOrNull() }
+        if (local != null && (local.synced || !online || q.title.isBlank())) return@withContext local
         if (!online || q.title.isBlank()) return@withContext null
+        // Plain lyrics in the file or a .lrc: look for timed ones online, keep these if there aren't.
+        val wantTimed = local != null
         val cache = File(dir, sha1(q.key) + ".json")
         val legacy = File(dir, sha1(q.key) + ".lrc")
         // A miss depends on which sources were asked; switching one on asks again.
         val miss = File(dir, sha1(q.key + sources.signature) + ".none")
-        readCache(cache, legacy)?.let { return@withContext it }
-        if (!force && miss.exists() && System.currentTimeMillis() - miss.lastModified() < MISS_TTL_MS) return@withContext null
+        readCache(cache, legacy)?.let { if (!wantTimed || it.synced) return@withContext it }
+        if (!force && miss.exists() && System.currentTimeMillis() - miss.lastModified() < MISS_TTL_MS) return@withContext local
 
         var trouble = false
         for (p in providers(sources)) {
@@ -81,6 +86,7 @@ class LyricsRepository(context: Context) {
                 null
             } ?: continue
             val parsed = Lrc.parse(text, p.name) ?: continue
+            if (wantTimed && !parsed.synced) continue
             cache.writeText(JSONObject().put("source", p.name).put("text", text).toString())
             miss.delete()
             return@withContext parsed
@@ -88,7 +94,7 @@ class LyricsRepository(context: Context) {
         // Only remember a miss for complete metadata and a clean run; apps often send the
         // artist a moment later, and network trouble isn't "not found".
         if (!trouble && q.artist.isNotBlank() && q.durationMs > 0) miss.writeText("")
-        null
+        local
     }
 
     private fun readCache(cache: File, legacy: File): Lyrics? {
