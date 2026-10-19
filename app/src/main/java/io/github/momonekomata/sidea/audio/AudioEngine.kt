@@ -3,11 +3,10 @@ package io.github.momonekomata.sidea.audio
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.media.MediaCodec
 import android.media.MediaDataSource
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.util.concurrent.atomic.AtomicLong
 
-/** Something the extractor can open. */
+/** Something the decoders can open. */
 sealed interface PlayableSource {
     data class Content(val uri: Uri) : PlayableSource
     data class File(val path: String) : PlayableSource
@@ -41,18 +40,38 @@ data class EngineState(
     val error: String? = null,
 )
 
+/** The song after the current one, for gapless hand-over. [tag] comes back in onAdvanced. */
+class UpNext(val tag: Any, val open: () -> PlayableSource?)
+
+interface EngineCallbacks {
+    /** Called on a background thread near the end of a song; null if nothing follows. */
+    fun upNext(): UpNext?
+    /** The gapless hand-over reached the speaker: the song with [tag] is now playing. */
+    fun onAdvanced(tag: Any)
+    /** Playback ran out without a hand-over (end of queue, gapless off, or a format change). */
+    fun onCompleted()
+    fun dopAllowed(): Boolean
+}
+
 /**
- * Decodes with MediaExtractor/MediaCodec and writes PCM straight to an AudioTrack opened at the
- * file's own sample rate. No ExoPlayer: its sink converts to 16-bit or float on its own terms, and
- * bit-perfect output needs the exact container the DAC's mixer was opened with.
+ * Decodes and writes PCM straight to an AudioTrack opened at the file's own rate. No
+ * ExoPlayer: its sink converts to 16-bit or float on its own terms, and bit-perfect output
+ * needs the exact container the DAC's mixer was opened with.
+ *
+ * Gapless: about 15 s before a song ends the next one is opened and primed on a helper thread.
+ * At the end, if it has the same rate, channels and output format, its samples are appended to
+ * the same AudioTrack, so there is no gap and no click. A different format needs a new track
+ * (and a new bit-perfect mixer), which every player does with a short pause.
  */
-class AudioEngine(context: Context, private val onCompleted: () -> Unit) {
+class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     private val router = OutputRouter(context.applicationContext)
     private val appContext = context.applicationContext
+    private val main = Handler(Looper.getMainLooper())
     private val _state = MutableStateFlow(EngineState())
     val state: StateFlow<EngineState> = _state.asStateFlow()
 
     @Volatile private var session: Session? = null
+    @Volatile var gapless = true
 
     fun play(source: PlayableSource, startMs: Long = 0) {
         stop()
@@ -92,7 +111,7 @@ class AudioEngine(context: Context, private val onCompleted: () -> Unit) {
         _state.update { it.copy(isPlaying = false, isBuffering = false) }
     }
 
-    /** Polled by the UI clock; cheap. */
+    /** Polled by the UI clock; also where a gapless hand-over becomes visible. */
     fun refreshPosition() {
         val s = session ?: return
         val pos = s.positionUs() ?: return
@@ -109,6 +128,9 @@ class AudioEngine(context: Context, private val onCompleted: () -> Unit) {
         router.clear()
     }
 
+    /** A song queued on the AudioTrack behind the current one: when the head reaches [startHead] it's audible. */
+    private class Segment(val startHead: Long, val tag: Any, val durationUs: Long, val output: OutputInfo)
+
     private inner class Session(val source: PlayableSource, val startUs: Long) {
         val lock = Object()
         @Volatile var paused = false
@@ -117,11 +139,14 @@ class AudioEngine(context: Context, private val onCompleted: () -> Unit) {
         val seekUs = AtomicLong(-1)
         val thread = Thread({ run() }, "SideA-decoder")
 
-        // Position = time of the first sample written since the last flush + frames played since.
+        // Position = time of the first sample written since the last rebase + frames played since.
         @Volatile private var baseUs = startUs
         @Volatile private var headAtBase = 0L
         @Volatile private var rate = 44100
-        private var rebase = true
+        @Volatile private var next: Segment? = null
+
+        private var prefetch: Thread? = null
+        @Volatile private var prefetched: Pair<UpNext, PcmDecoder>? = null
 
         fun cancel() {
             cancelled = true
@@ -129,38 +154,45 @@ class AudioEngine(context: Context, private val onCompleted: () -> Unit) {
             track?.let { runCatching { it.pause(); it.flush() } }
         }
 
+        private fun head(t: AudioTrack) = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+
+        @Synchronized
         fun positionUs(): Long? {
             val t = track ?: return null
-            val head = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-            return baseUs + (head - headAtBase).coerceAtLeast(0) * 1_000_000 / rate
+            val h = head(t)
+            next?.let { seg ->
+                if (h >= seg.startHead) {
+                    next = null
+                    baseUs = 0
+                    headAtBase = seg.startHead
+                    _state.update { it.copy(durationMs = seg.durationUs / 1000, output = seg.output) }
+                    main.post { callbacks.onAdvanced(seg.tag) }
+                }
+            }
+            return baseUs + (h - headAtBase).coerceAtLeast(0) * 1_000_000 / rate
         }
 
-        private fun run() {
-            var extractor: MediaExtractor? = null
-            var codec: MediaCodec? = null
-            try {
-                val ex = openExtractor(source)
-                extractor = ex
-                val trackIndex = (0 until ex.trackCount).firstOrNull {
-                    ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-                } ?: error("No audio stream in this file")
-                val inFormat = ex.getTrackFormat(trackIndex)
-                ex.selectTrack(trackIndex)
-                val mime = inFormat.getString(MediaFormat.KEY_MIME)!!
-                val durationUs = if (inFormat.containsKey(MediaFormat.KEY_DURATION)) inFormat.getLong(MediaFormat.KEY_DURATION) else 0L
-                val sourceBits = sourceBitDepth(inFormat)
-                val dec = createDecoder(inFormat, wantFloat = sourceBits == null || sourceBits > 16)
-                codec = dec
-                dec.start()
-                if (startUs > 0) ex.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-                _state.update { it.copy(durationMs = durationUs / 1000) }
+        private val dopPlanner = DopPlanner { r, ch -> callbacks.dopAllowed() && router.canDop(r, ch) }
 
-                val info = MediaCodec.BufferInfo()
-                var inputDone = false
-                var decodedFormat: SampleFormat? = null
-                var plan: OutputPlan? = null
+        private fun run() {
+            var dec: PcmDecoder? = null
+            try {
+                dec = Decoders.open(appContext, source, dopPlanner)
+                if (startUs > 0) dec.seekTo(startUs)
+                val plan = planFor(dec)
+                val t = buildTrack(plan)
+                track = t
+                rate = dec.sampleRate
+                val info = outputInfo(dec, plan)
+                _state.update { it.copy(isBuffering = false, isPlaying = !paused, durationMs = dec!!.durationUs / 1000, output = info) }
+                if (!paused) t.play()
+
                 var scratch = ByteArray(0)
-                var framesWritten = 0L
+                // Head position the end of the written audio corresponds to; it only resets on a flush.
+                var flushHead = 0L
+                var written = 0L
+                var rebase = true
+                var decodedUs = startUs
 
                 while (!cancelled) {
                     synchronized(lock) { while (paused && !cancelled) lock.wait() }
@@ -168,151 +200,129 @@ class AudioEngine(context: Context, private val onCompleted: () -> Unit) {
 
                     val seek = seekUs.getAndSet(-1)
                     if (seek >= 0) {
-                        ex.seekTo(seek, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-                        dec.flush()
-                        track?.let { it.pause(); it.flush(); if (!paused) it.play() }
-                        inputDone = false
-                        framesWritten = 0
+                        // A seek always lands in the song on screen, which is the one being decoded
+                        // unless a hand-over is still queued in the track buffer; drop that.
+                        next = null
+                        dec!!.seekTo(seek)
+                        t.pause(); t.flush(); if (!paused) t.play()
+                        flushHead = head(t)
+                        written = 0
                         rebase = true
                     }
 
-                    if (!inputDone) {
-                        val inIdx = dec.dequeueInputBuffer(5_000)
-                        if (inIdx >= 0) {
-                            val buf = dec.getInputBuffer(inIdx)!!
-                            val n = ex.readSampleData(buf, 0)
-                            if (n < 0) {
-                                dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                inputDone = true
-                            } else {
-                                dec.queueInputBuffer(inIdx, 0, n, ex.sampleTime, 0)
-                                ex.advance()
-                            }
+                    val d = dec!!
+                    maybePrefetch(d, decodedUs)
+                    val chunk = d.read()
+                    if (chunk == null) {
+                        val handOver = takePrefetched()
+                        if (handOver != null && compatible(handOver.second, d, plan)) {
+                            d.close()
+                            dec = handOver.second
+                            decodedUs = 0
+                            next = Segment(flushHead + written, handOver.first.tag, handOver.second.durationUs, outputInfo(handOver.second, plan))
+                            continue
                         }
-                    }
-
-                    val outIdx = dec.dequeueOutputBuffer(info, 5_000)
-                    if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                        decodedFormat = null // re-read below with the next buffer
-                        continue
-                    }
-                    if (outIdx < 0) continue
-
-                    if (decodedFormat == null) {
-                        val of = dec.outputFormat
-                        decodedFormat = pcmEncoding(of)
-                        val sr = of.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                        val ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                        require(ch in 1..2) { "Only mono and stereo are supported (this file has $ch channels)" }
-                        val newPlan = router.plan(sr, ch, sourceBits, decodedFormat)
-                        if (newPlan != plan || track == null) {
-                            track?.release()
-                            track = buildTrack(newPlan)
-                            plan = newPlan
-                            rate = sr
-                            rebase = true
-                            if (!paused) track!!.play()
-                        }
-                        _state.update {
-                            it.copy(
-                                isBuffering = false,
-                                isPlaying = !paused,
-                                output = OutputInfo(
-                                    sourceRate = sr,
-                                    sourceBits = sourceBits,
-                                    codec = mime.removePrefix("audio/").uppercase(),
-                                    outputRate = newPlan.sampleRate,
-                                    outputFormat = newPlan.format,
-                                    bitPerfect = newPlan.bitPerfect,
-                                    note = newPlan.note,
-                                ),
-                            )
-                        }
-                    }
-
-                    val eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    if (info.size > 0) {
-                        val out = dec.getOutputBuffer(outIdx)!!
-                        out.position(info.offset).limit(info.offset + info.size)
-                        val p = plan!!
-                        val need = PcmConverter.outputSize(info.size, decodedFormat!!, p.format)
-                        if (scratch.size < need) scratch = ByteArray(need)
-                        PcmConverter.convert(out, decodedFormat, p.format, scratch)
-                        val t = track!!
-                        if (rebase) {
-                            baseUs = info.presentationTimeUs
-                            headAtBase = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                            rebase = false
-                        }
-                        var off = 0
-                        while (off < need && !cancelled && seekUs.get() < 0) {
-                            val w = t.write(scratch, off, need - off, AudioTrack.WRITE_BLOCKING)
-                            if (w < 0) error("AudioTrack write failed ($w)")
-                            if (w == 0) synchronized(lock) { if (paused) lock.wait(50) }
-                            off += w
-                        }
-                        framesWritten += need / (p.format.bytesPerSample * channelCount(p.channelMask))
-                    }
-                    dec.releaseOutputBuffer(outIdx, false)
-
-                    if (eos) {
-                        drain(framesWritten)
+                        handOver?.second?.close()
+                        drain(t, flushHead + written)
                         if (!cancelled) {
                             _state.update { it.copy(isPlaying = false, positionMs = it.durationMs) }
-                            onCompleted()
+                            main.post { callbacks.onCompleted() }
                         }
                         break
                     }
+
+                    val need = PcmConverter.outputSize(chunk.size, d.format, plan.format)
+                    if (scratch.size < need) scratch = ByteArray(need)
+                    PcmConverter.convert(java.nio.ByteBuffer.wrap(chunk.data, 0, chunk.size), d.format, plan.format, scratch)
+                    decodedUs = chunk.ptsUs
+                    if (rebase) {
+                        baseUs = chunk.ptsUs
+                        headAtBase = flushHead + written
+                        rebase = false
+                    }
+                    var off = 0
+                    while (off < need && !cancelled && seekUs.get() < 0) {
+                        val w = t.write(scratch, off, need - off, AudioTrack.WRITE_BLOCKING)
+                        if (w < 0) error("AudioTrack write failed ($w)")
+                        if (w == 0) synchronized(lock) { if (paused) lock.wait(50) }
+                        off += w
+                    }
+                    written += off / (plan.format.bytesPerSample * Integer.bitCount(plan.channelMask))
+                    // Notices a gapless hand-over even when no UI is polling (screen off, app closed).
+                    positionUs()
                 }
-            } catch (t: Throwable) {
+            } catch (e: Throwable) {
                 if (!cancelled) {
-                    Log.e(TAG, "playback failed", t)
-                    _state.update { it.copy(isPlaying = false, isBuffering = false, error = t.message ?: t.javaClass.simpleName) }
+                    Log.e(TAG, "playback failed", e)
+                    _state.update { it.copy(isPlaying = false, isBuffering = false, error = e.message ?: e.javaClass.simpleName) }
                 }
             } finally {
                 track?.let { runCatching { it.stop() }; it.release() }
                 track = null
-                runCatching { codec?.stop() }
-                codec?.release()
-                extractor?.release()
-                (source as? PlayableSource.Stream)?.dataSource?.close()
+                dec?.close()
+                prefetch?.join(2000)
+                prefetched?.second?.close()
+                prefetched = null
             }
         }
 
-        private fun drain(framesWritten: Long) {
-            val t = track ?: return
-            val target = headAtBase + framesWritten
+        /** [decodedUs] is how far the decoder has got in [d], which runs a little ahead of the speaker. */
+        private fun maybePrefetch(d: PcmDecoder, decodedUs: Long) {
+            if (!gapless || prefetch != null || d.durationUs <= 0) return
+            if (d.durationUs - decodedUs > PREFETCH_US) return
+            prefetch = Thread({
+                try {
+                    val up = callbacks.upNext() ?: return@Thread
+                    val src = up.open() ?: return@Thread
+                    val nd = Decoders.open(appContext, src, dopPlanner)
+                    if (cancelled) nd.close() else prefetched = up to nd
+                } catch (e: Throwable) {
+                    // Not fatal: the queue opens it again the ordinary way and shows any error.
+                    Log.w(TAG, "couldn't open the next song early", e)
+                }
+            }, "SideA-prefetch").also { it.start() }
+        }
+
+        private fun takePrefetched(): Pair<UpNext, PcmDecoder>? {
+            val p = prefetch ?: return null
+            // The next song may still be opening (a slow NAS); waiting here is still gapless as
+            // long as the track buffer holds out.
+            while (p.isAlive && !cancelled) p.join(50)
+            prefetch = null
+            return prefetched.also { prefetched = null }
+        }
+
+        /** The next song can share the track if nothing about the output would change or lose bits. */
+        private fun compatible(n: PcmDecoder, cur: PcmDecoder, plan: OutputPlan): Boolean =
+            n.sampleRate == cur.sampleRate && n.channels == cur.channels && n.isDop == cur.isDop &&
+                plan.format.exactBits() >= (n.sourceBits?.takeIf { it > 1 } ?: n.format.exactBits())
+
+        private fun drain(t: AudioTrack, target: Long) {
             val deadline = System.currentTimeMillis() + 10_000
             while (!cancelled && System.currentTimeMillis() < deadline) {
-                val head = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                if (head >= target) break
+                if (head(t) >= target) break
+                positionUs()
                 synchronized(lock) { lock.wait(20) }
             }
         }
     }
 
-    private fun openExtractor(source: PlayableSource) = MediaExtractor().apply {
-        when (source) {
-            is PlayableSource.Content -> setDataSource(appContext, source.uri, null)
-            is PlayableSource.File -> setDataSource(source.path)
-            is PlayableSource.Stream -> setDataSource(source.dataSource)
+    private fun planFor(dec: PcmDecoder): OutputPlan =
+        if (dec.isDop) {
+            router.planDop(dec.sampleRate, dec.channels) ?: error("The USB DAC stopped offering a bit-perfect path for DoP")
+        } else {
+            router.plan(dec.sampleRate, dec.channels, dec.sourceBits, dec.format)
         }
-    }
 
-    private fun createDecoder(format: MediaFormat, wantFloat: Boolean): MediaCodec {
-        val mime = format.getString(MediaFormat.KEY_MIME)!!
-        if (wantFloat) {
-            // Without this, most decoders hand back 16-bit and a 24-bit FLAC loses its low byte.
-            val codec = MediaCodec.createDecoderByType(mime)
-            val ok = runCatching {
-                val f = MediaFormat(format).apply { setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_FLOAT) }
-                codec.configure(f, null, null, 0)
-            }.isSuccess
-            if (ok) return codec
-            codec.release()
-        }
-        return MediaCodec.createDecoderByType(mime).apply { configure(format, null, null, 0) }
-    }
+    private fun outputInfo(dec: PcmDecoder, plan: OutputPlan) = OutputInfo(
+        sourceRate = dec.sampleRate,
+        sourceBits = dec.sourceBits,
+        codec = dec.codecName,
+        outputRate = plan.sampleRate,
+        outputFormat = plan.format,
+        bitPerfect = plan.bitPerfect,
+        note = plan.note,
+    )
 
     private fun buildTrack(plan: OutputPlan): AudioTrack {
         val fmt = AudioFormat.Builder()
@@ -331,32 +341,15 @@ class AudioEngine(context: Context, private val onCompleted: () -> Unit) {
         return track
     }
 
+    /** Bits a container carries without loss; float is exact up to 24. */
+    private fun SampleFormat.exactBits() = when (this) {
+        SampleFormat.S16 -> 16
+        SampleFormat.S24_PACKED, SampleFormat.FLOAT -> 24
+        SampleFormat.S32 -> 32
+    }
+
     companion object {
         private const val TAG = "SideA.Engine"
-
-        fun pcmEncoding(f: MediaFormat): SampleFormat {
-            val enc = if (f.containsKey(MediaFormat.KEY_PCM_ENCODING)) f.getInteger(MediaFormat.KEY_PCM_ENCODING) else AudioFormat.ENCODING_PCM_16BIT
-            return SampleFormat.fromAndroidEncoding(enc) ?: SampleFormat.S16
-        }
-
-        /** Bit depth the container declares, when it does (FLAC and WAV do). */
-        fun sourceBitDepth(f: MediaFormat): Int? {
-            if (f.containsKey("bits-per-sample")) return f.getInteger("bits-per-sample")
-            if (f.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-                return when (f.getInteger(MediaFormat.KEY_PCM_ENCODING)) {
-                    AudioFormat.ENCODING_PCM_16BIT -> 16
-                    AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
-                    AudioFormat.ENCODING_PCM_32BIT, AudioFormat.ENCODING_PCM_FLOAT -> 32
-                    else -> null
-                }
-            }
-            return when (f.getString(MediaFormat.KEY_MIME)) {
-                MediaFormat.MIMETYPE_AUDIO_MPEG, MediaFormat.MIMETYPE_AUDIO_AAC, MediaFormat.MIMETYPE_AUDIO_OPUS,
-                MediaFormat.MIMETYPE_AUDIO_VORBIS -> 16
-                else -> null
-            }
-        }
-
-        private fun channelCount(mask: Int) = Integer.bitCount(mask)
+        private const val PREFETCH_US = 15_000_000L
     }
 }

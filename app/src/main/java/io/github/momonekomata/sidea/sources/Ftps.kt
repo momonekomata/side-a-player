@@ -59,6 +59,8 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
             if (!FTPReply.isPositiveCompletion(ftp.replyCode) && files.isEmpty()) {
                 throw IOException("Listing $path failed: ${ftp.replyString.trim()}")
             }
+            val lrc = files.filter { it.isFile && isLrcFile(it.name) }
+                .associate { lrcKey(it.name) to path.trimEnd('/') + "/" + it.name }
             files.filter { it.name != "." && it.name != ".." }.mapNotNull { f ->
                 val full = path.trimEnd('/') + "/" + f.name
                 when {
@@ -71,6 +73,9 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
                             album = path.trimEnd('/').substringAfterLast('/'),
                             sizeBytes = f.size,
                             opener = { open(full, f.size) },
+                            // Tags only once the song is cached: FTPS can't fetch just the header cheaply.
+                            tagSource = { cachedFile(full, f.size)?.let(::openFileAccess) },
+                            lyricsFile = lrc[lrcKey(f.name)]?.let { lrcPath -> { fetchText(lrcPath) } },
                         ),
                     )
                     else -> null
@@ -81,16 +86,38 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
         }
     }
 
-    private fun open(path: String, size: Long): PlayableSource {
-        val dir = File(context.cacheDir, "ftps").apply { mkdirs() }
+    private val cacheDir get() = File(context.cacheDir, "ftps").apply { mkdirs() }
+
+    private fun cacheFile(path: String): File {
         val key = MessageDigest.getInstance("SHA-1").digest("${server.id}$path".toByteArray())
             .joinToString("") { "%02x".format(it) }
-        val file = File(dir, key + "." + path.substringAfterLast('.', "bin"))
+        return File(cacheDir, key + "." + path.substringAfterLast('.', "bin"))
+    }
+
+    private fun cachedFile(path: String, size: Long) = cacheFile(path).takeIf { size > 0 && it.length() == size }
+
+    private fun fetchText(path: String): String = withFtps { ftp ->
+        val out = java.io.ByteArrayOutputStream()
+        if (!ftp.retrieveFile(path, out)) throw IOException("Can't read $path: ${ftp.replyString.trim()}")
+        out.toString(Charsets.UTF_8.name())
+    }
+
+    private inline fun <T> withFtps(block: (FTPSClient) -> T): T {
+        val ftp = server.connectFtps()
+        try {
+            return block(ftp)
+        } finally {
+            ftp.disconnectQuietly()
+        }
+    }
+
+    private fun open(path: String, size: Long): PlayableSource {
+        val file = cacheFile(path)
         if (file.length() == size && size > 0) {
             file.setLastModified(System.currentTimeMillis())
             return PlayableSource.File(file.path)
         }
-        trimCache(dir, keep = file)
+        trimCache(cacheDir, keep = file)
         return PlayableSource.Stream(GrowingFileDataSource(file, size) { sink -> download(path, sink) })
     }
 

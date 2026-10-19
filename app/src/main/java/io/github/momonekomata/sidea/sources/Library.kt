@@ -11,6 +11,10 @@ data class Track(
     val album: String = "",
     val sizeBytes: Long = -1,
     val opener: TrackOpener,
+    /** Opens the file for tag reading; null when that would mean downloading it (FTPS). Blocking. */
+    val tagSource: ((Context) -> RandomAccess?)? = null,
+    /** Reads the .lrc with the same name next to the file, when the folder has one. Blocking. */
+    val lyricsFile: ((Context) -> String)? = null,
 )
 
 typealias TrackOpener = suspend (Context) -> PlayableSource
@@ -30,10 +34,15 @@ interface Browser {
 }
 
 private val AUDIO_EXTENSIONS = setOf(
-    "flac", "wav", "wave", "aif", "aiff", "alac", "m4a", "mp3", "ogg", "oga", "opus", "aac",
+    "flac", "wav", "wave", "aif", "aiff", "alac", "m4a", "mp3", "ogg", "oga", "opus", "aac", "dsf", "dff",
 )
 
 fun isAudioFile(name: String) = name.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS
+
+fun isLrcFile(name: String) = name.endsWith(".lrc", ignoreCase = true)
+
+/** "Song.flac" and "Song.lrc" pair up; case doesn't matter. */
+fun lrcKey(name: String) = name.substringBeforeLast('.').lowercase()
 
 /** "03 - Artist - Title.flac" → "Title"-ish; good enough until tags are read. */
 fun titleFromFileName(name: String): String {

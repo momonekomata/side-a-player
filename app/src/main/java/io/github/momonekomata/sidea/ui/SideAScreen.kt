@@ -11,12 +11,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.momonekomata.sidea.BrowseState
 import io.github.momonekomata.sidea.MainViewModel
+import io.github.momonekomata.sidea.Settings
 import io.github.momonekomata.sidea.SourceTab
 import io.github.momonekomata.sidea.audio.EngineState
 import io.github.momonekomata.sidea.audio.OutputInfo
@@ -40,6 +46,11 @@ import io.github.momonekomata.sidea.audio.Player
 import io.github.momonekomata.sidea.audio.QueueState
 import io.github.momonekomata.sidea.sources.Entry
 import io.github.momonekomata.sidea.sources.NasServer
+import io.github.momonekomata.sidea.sources.Tags
+import io.github.momonekomata.sidea.sources.TagStore
+import io.github.momonekomata.sidea.sources.displayAlbum
+import io.github.momonekomata.sidea.sources.displayArtist
+import io.github.momonekomata.sidea.sources.displayTitle
 import io.github.momonekomata.sidea.streaming.RemoteNowPlaying
 import io.github.momonekomata.sidea.streaming.StreamingApp
 import kotlinx.coroutines.delay
@@ -50,6 +61,10 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     val queue by Player.queue.collectAsStateWithLifecycle()
     val engine by Player.state.collectAsStateWithLifecycle()
     val remote by vm.streaming.nowPlaying.collectAsStateWithLifecycle()
+    val tags by TagStore.tags.collectAsStateWithLifecycle()
+    val lyrics by vm.lyrics.collectAsStateWithLifecycle()
+    var lyricsOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
 
     // Drives the position readout and the reels; remote positions are extrapolated per frame.
     var tick by remember { mutableLongStateOf(0L) }
@@ -62,12 +77,15 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 
     val isNas = ui.tab == SourceTab.NAS
-    BackHandler(enabled = (ui.tab == SourceTab.LOCAL && (ui.local?.path?.size ?: 0) > 1) || (isNas && ui.nas != null)) {
+    BackHandler(enabled = !(lyricsOpen && lyrics.lyrics != null) && ((ui.tab == SourceTab.LOCAL && (ui.local?.path?.size ?: 0) > 1) || (isNas && ui.nas != null))) {
         vm.up(isNas)
     }
+    BackHandler(enabled = lyricsOpen && lyrics.lyrics != null) { lyricsOpen = false }
 
     val app = ui.tab.app
-    val deck = if (app != null) remoteDeck(vm, app, remote[app], tick) else localDeck(queue, engine)
+    val deck = if (app != null) remoteDeck(vm, app, remote[app], tick) else localDeck(queue, engine, tags)
+    val sheet = lyrics.lyrics
+    val showSheet = lyricsOpen && sheet != null
 
     Column(
         Modifier
@@ -75,20 +93,32 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
             .background(Retro.Background)
             .safeDrawingPadding(),
     ) {
-        Header()
+        Header(onSettings = { settingsOpen = true })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)) {
-            val card: @Composable (Modifier) -> Unit = { m -> SourceCard(vm, ui.tab, queue, remote, pickFolder, m) }
+            val card: @Composable (Modifier) -> Unit = { m ->
+                if (showSheet && sheet != null) {
+                    LyricsCard(deck.title.ifBlank { "Lyrics" }, sheet, deck.positionMs, m, onClose = { lyricsOpen = false })
+                } else {
+                    SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m)
+                }
+            }
             if (maxWidth >= 600.dp) {
-                // Unfolded: J-card on the left page, deck on the right, like the open case.
+                // Unfolded: J-card on the left page; deck and lyrics on the right, like the open case.
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     card(Modifier.weight(1f).fillMaxHeight().padding(vertical = 8.dp))
-                    Column(Modifier.weight(1.15f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
+                    Column(Modifier.weight(1.15f).fillMaxHeight().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
                         Deck(deck)
+                        if (sheet != null && !showSheet) {
+                            LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f), compact = false) { lyricsOpen = true }
+                        }
                     }
                 }
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Deck(deck)
+                    if (sheet != null && !showSheet) {
+                        LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().height(84.dp), compact = true) { lyricsOpen = true }
+                    }
                     card(Modifier.weight(1f).fillMaxWidth())
                 }
             }
@@ -97,13 +127,19 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 
     ui.certPrompt?.let { CertificateDialog(it, onTrust = { vm.trustCertificate(it) }, onDismiss = vm::dismissCertPrompt) }
+    if (settingsOpen) {
+        val prefs by Settings.prefs.collectAsStateWithLifecycle()
+        SettingsDialog(prefs, onChange = { p -> Settings.update { p } }, onDismiss = { settingsOpen = false })
+    }
 }
 
 @Composable
-private fun Header() {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.Top) {
+private fun Header(onSettings: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.Top) {
         Text("Side A", color = androidx.compose.ui.graphics.Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
         Text("+", color = Retro.Orange, fontSize = 18.sp, fontWeight = FontWeight.Black)
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = Retro.Muted) }
     }
 }
 
@@ -135,7 +171,7 @@ private fun SourceTabs(selected: SourceTab, onSelect: (SourceTab) -> Unit) {
 
 // ---- Deck models ----
 
-private fun localDeck(queue: QueueState, engine: EngineState): DeckModel {
+private fun localDeck(queue: QueueState, engine: EngineState, tags: Map<String, Tags>): DeckModel {
     val t = queue.current
     val (status, color) = when {
         t == null -> "Pick a song from Local or NAS" to Retro.Muted
@@ -144,8 +180,8 @@ private fun localDeck(queue: QueueState, engine: EngineState): DeckModel {
         else -> describe(engine.output)
     }
     return DeckModel(
-        title = t?.title.orEmpty(),
-        subtitle = listOf(t?.artist, t?.album).filter { !it.isNullOrBlank() }.joinToString(" · "),
+        title = t?.displayTitle(tags).orEmpty(),
+        subtitle = listOf(t?.displayArtist(tags), t?.displayAlbum(tags)).filter { !it.isNullOrBlank() }.joinToString(" · "),
         positionMs = engine.positionMs,
         durationMs = engine.durationMs,
         playing = engine.isPlaying,
@@ -195,6 +231,7 @@ private fun SourceCard(
     tab: SourceTab,
     queue: QueueState,
     remote: Map<StreamingApp, RemoteNowPlaying>,
+    tags: Map<String, Tags>,
     pickFolder: () -> Unit,
     modifier: Modifier,
 ) {
@@ -211,12 +248,12 @@ private fun SourceCard(
                     }
                 }
             } else {
-                BrowserCard(local, queue, modifier, onUp = { vm.up(false) }, onFolder = { vm.openFolder(false, it) }, onSong = { vm.play(false, it) }, onRetry = { vm.retry(false) }) {
+                BrowserCard(local, queue, tags, modifier, onUp = { vm.up(false) }, onFolder = { vm.openFolder(false, it) }, onSong = { vm.play(false, it) }, onRetry = { vm.retry(false) }) {
                     item { JCardRow("", "Change music folder…", onClick = pickFolder) }
                 }
             }
         }
-        SourceTab.NAS -> NasCard(vm, ui.nas, ui.nasServers, queue, modifier)
+        SourceTab.NAS -> NasCard(vm, ui.nas, ui.nasServers, queue, tags, modifier)
         else -> {
             val app = tab.app!!
             StreamingCard(vm, app, remote[app], ui.streamingAccess, modifier)
@@ -228,6 +265,7 @@ private fun SourceCard(
 private fun BrowserCard(
     state: BrowseState,
     queue: QueueState,
+    tags: Map<String, Tags>,
     modifier: Modifier,
     onUp: () -> Unit,
     onFolder: (Entry.Folder) -> Unit,
@@ -251,7 +289,9 @@ private fun BrowserCard(
                             n++
                             val number = "%02d".format(n)
                             item {
-                                JCardRow(number, e.track.title, e.name, current = queue.current?.id == e.track.id, onClick = { onSong(e) })
+                                val t = tags[e.track.id]
+                                val detail = listOfNotNull(t?.artist, t?.album).joinToString(" · ").ifEmpty { e.name }
+                                JCardRow(t?.trackNumber?.let { "%02d".format(it) } ?: number, e.track.displayTitle(tags), detail, current = queue.current?.id == e.track.id, onClick = { onSong(e) })
                             }
                         }
                     }
@@ -264,11 +304,11 @@ private fun BrowserCard(
 }
 
 @Composable
-private fun NasCard(vm: MainViewModel, nas: BrowseState?, servers: List<NasServer>, queue: QueueState, modifier: Modifier) {
+private fun NasCard(vm: MainViewModel, nas: BrowseState?, servers: List<NasServer>, queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
     var editing by remember { mutableStateOf<NasServer?>(null) }
     var adding by remember { mutableStateOf(false) }
     if (nas != null) {
-        BrowserCard(nas, queue, modifier, onUp = { vm.up(true) }, onFolder = { vm.openFolder(true, it) }, onSong = { vm.play(true, it) }, onRetry = { vm.retry(true) }) {
+        BrowserCard(nas, queue, tags, modifier, onUp = { vm.up(true) }, onFolder = { vm.openFolder(true, it) }, onSong = { vm.play(true, it) }, onRetry = { vm.retry(true) }) {
             item { JCardRow("⏏", "Disconnect", onClick = vm::closeServer) }
         }
     } else {

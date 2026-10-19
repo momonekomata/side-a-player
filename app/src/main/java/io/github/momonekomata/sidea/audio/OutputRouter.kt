@@ -56,18 +56,37 @@ class OutputRouter(context: Context) {
         return OutputPlan(sampleRate, fmt, mask, usb, bitPerfect = false, note = why)
     }
 
+    /** Whether DoP can go out bit-perfect right now. Queries only; changes nothing. */
+    fun canDop(rate: Int, channels: Int): Boolean {
+        val usb = usbDevice() ?: return false
+        return Build.VERSION.SDK_INT >= 34 && bitPerfectChoice(usb, rate, channels, bits = 24, integerOnly = true) != null
+    }
+
+    /** A bit-perfect plan for DoP, or null; DoP must never be sent through the mixer. */
+    fun planDop(rate: Int, channels: Int): OutputPlan? {
+        val usb = usbDevice() ?: return null
+        if (Build.VERSION.SDK_INT < 34) return null
+        return planBitPerfect(usb, rate, channels, bits = 24, integerOnly = true)
+    }
+
     @RequiresApi(34)
-    private fun planBitPerfect(device: AudioDeviceInfo, rate: Int, channels: Int, bits: Int): OutputPlan? {
+    private fun bitPerfectChoice(device: AudioDeviceInfo, rate: Int, channels: Int, bits: Int, integerOnly: Boolean): AudioMixerAttributes? {
         val candidates = am.getSupportedMixerAttributes(device).filter {
+            val f = SampleFormat.fromAndroidEncoding(it.format.encoding)
             it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT &&
                 it.format.sampleRate == rate &&
                 it.format.channelCount == channels &&
-                SampleFormat.fromAndroidEncoding(it.format.encoding) != null
+                f != null &&
+                (!integerOnly || (f != SampleFormat.FLOAT && f.bytesPerSample * 8 >= bits))
         }
         // Prefer the narrowest integer container that holds the source, so the DAC sees the
         // original samples; float is the last resort because not every DAC accepts it.
-        val ranked = candidates.sortedBy { rank(SampleFormat.fromAndroidEncoding(it.format.encoding)!!, bits) }
-        val chosen = ranked.firstOrNull() ?: return null
+        return candidates.minByOrNull { rank(SampleFormat.fromAndroidEncoding(it.format.encoding)!!, bits) }
+    }
+
+    @RequiresApi(34)
+    private fun planBitPerfect(device: AudioDeviceInfo, rate: Int, channels: Int, bits: Int, integerOnly: Boolean = false): OutputPlan? {
+        val chosen = bitPerfectChoice(device, rate, channels, bits, integerOnly) ?: return null
         val current = activeMixer
         if (current == null || current.first.id != device.id || current.second != chosen) {
             clear()

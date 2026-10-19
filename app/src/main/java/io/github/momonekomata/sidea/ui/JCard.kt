@@ -36,6 +36,19 @@ fun JCard(
     modifier: Modifier = Modifier,
     content: LazyListScope.() -> Unit,
 ) {
+    JCardFrame(title, subtitle, modifier) {
+        LazyColumn(Modifier.fillMaxSize(), content = content)
+    }
+}
+
+/** The card's paper and header, with free-form content below. */
+@Composable
+fun JCardFrame(
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Column(
         modifier
             .shadow(8.dp, RoundedCornerShape(6.dp))
@@ -56,7 +69,7 @@ fun JCard(
             Text(subtitle, color = Retro.InkFaint, fontFamily = Retro.Mono, fontSize = 11.sp, maxLines = 1)
         }
         HorizontalDivider(color = Retro.Ink.copy(alpha = 0.6f), thickness = 1.5.dp)
-        LazyColumn(Modifier.fillMaxSize(), content = content)
+        content()
     }
 }
 

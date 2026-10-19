@@ -14,6 +14,11 @@ import android.media.session.PlaybackState
 import android.os.IBinder
 import io.github.momonekomata.sidea.MainActivity
 import io.github.momonekomata.sidea.R
+import io.github.momonekomata.sidea.sources.TagStore
+import io.github.momonekomata.sidea.sources.Track
+import io.github.momonekomata.sidea.sources.displayAlbum
+import io.github.momonekomata.sidea.sources.displayArtist
+import io.github.momonekomata.sidea.sources.displayTitle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,16 +54,17 @@ class PlaybackService : Service() {
         }
         startForeground(ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         scope.launch {
-            // Position ticks are left out on purpose: the session extrapolates them itself.
-            combine(Player.queue, Player.state) { q, s -> Triple(q.current, s.isPlaying, s.durationMs) }
+            combine(Player.queue, Player.state, TagStore.tags) { q, s, tags -> Shown(q.current, s.isPlaying, s.durationMs, q.current?.let { tags[it.id] }) }
                 .distinctUntilChanged()
-                .collect { (t, _, _) ->
+                .collect { shown ->
+                    val t = shown.track
                     val s = Player.state.value
+                    val tags = TagStore.tags.value
                     session.setMetadata(
                         MediaMetadata.Builder()
-                            .putString(MediaMetadata.METADATA_KEY_TITLE, t?.title.orEmpty())
-                            .putString(MediaMetadata.METADATA_KEY_ARTIST, t?.artist.orEmpty())
-                            .putString(MediaMetadata.METADATA_KEY_ALBUM, t?.album.orEmpty())
+                            .putString(MediaMetadata.METADATA_KEY_TITLE, t?.displayTitle(tags).orEmpty())
+                            .putString(MediaMetadata.METADATA_KEY_ARTIST, t?.displayArtist(tags).orEmpty())
+                            .putString(MediaMetadata.METADATA_KEY_ALBUM, t?.displayAlbum(tags).orEmpty())
                             .putLong(MediaMetadata.METADATA_KEY_DURATION, s.durationMs)
                             .build(),
                     )
@@ -98,12 +104,13 @@ class PlaybackService : Service() {
 
     private fun buildNotification(): Notification {
         val t = Player.queue.value.current
+        val tags = TagStore.tags.value
         val playing = Player.state.value.isPlaying
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle(t?.title ?: "Side A")
-            .setContentText(listOf(t?.artist, t?.album).filter { !it.isNullOrBlank() }.joinToString(" · "))
+            .setContentTitle(t?.displayTitle(tags) ?: "Side A")
+            .setContentText(listOf(t?.displayArtist(tags), t?.displayAlbum(tags)).filter { !it.isNullOrBlank() }.joinToString(" · "))
             .setContentIntent(open)
             .setOngoing(playing)
             .addAction(action(android.R.drawable.ic_media_previous, "Previous", ACTION_PREV))
@@ -123,6 +130,9 @@ class PlaybackService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /** What the notification depends on; position ticks are left out, the session extrapolates them. */
+    private data class Shown(val track: Track?, val playing: Boolean, val durationMs: Long, val tags: Any?)
 
     companion object {
         private const val CHANNEL = "playback"

@@ -28,7 +28,49 @@ Notes:
 * High-res files are decoded to float (exact for 24-bit) and converted back to the DAC's integer
   format, so nothing is truncated. `PcmConverterTest` checks that round trip.
 * What isn't done yet: a UAPP-style user-space USB driver for phones without Android 14 bit-perfect
-  support, gapless playback, DSD, multichannel, and tag reading (titles come from file names).
+  support, multichannel, DST-compressed DFF, and DSD at 48 kHz-family rates.
+
+## Gapless playback
+
+About 15 s before a song ends, the next one in the folder is opened and decoded on a helper
+thread. If it has the same sample rate and channel count, its samples are appended to the same
+audio stream, so live albums and DJ mixes run straight through. MP3 and AAC encoder delay and padding
+(the silence encoders add) are trimmed. When the sample rate changes (say, a 44.1 kHz track
+followed by a 96 kHz one), the output has to be reopened at the new rate, which costs a short pause;
+that is what keeps the bit-perfect path honest. Settings → Gapless playback turns it off.
+
+## Tags
+
+Titles, artists, albums and track numbers come from the files' own tags, read by Side A's own
+parser: FLAC/Ogg/Opus Vorbis comments, ID3v2.2–2.4 (MP3, AIFF, WAV, DSF), MP4/M4A atoms, WAV INFO
+and DSDIFF. Only the few kilobytes that hold the tags are read, which keeps NAS folders quick
+(WebDAV uses small range requests; FTPS songs get their tags once cached). Until a file's tags
+arrive, the file name is shown.
+
+## DSD (.dsf, .dff)
+
+* **DoP (native DSD)**: with Settings → *DSD as DoP* on and a bit-perfect USB path at the DoP
+  rate (176.4 kHz for DSD64, 352.8 kHz for DSD128), the DSD bits are sent to the DAC inside 24-bit
+  PCM frames with the standard 0x05/0xFA markers. Your DAC should show DSD. DoP is never sent
+  through Android's mixer, where it would be noise; without the bit-perfect path Side A converts instead.
+* **DSD → PCM** (default): a 384-tap (DSD64) linear-phase low-pass filter, decimated to
+  176.4 kHz float. It's flat to about 25 kHz, and DSD's ultrasonic noise is filtered out above
+  ~64 kHz. Level is unity, so 0 dB SACD lands at −6 dBFS, leaving headroom.
+* DSD64/128/256 are supported; DST-compressed DFF is not.
+
+## Lyrics
+
+Lyrics appear by themselves under the cassette when a song has any, and the line being sung is lit. Tap them for the
+full sheet in place of the track list. Side A looks in this order:
+
+1. The file's tags (`LYRICS`/`UNSYNCEDLYRICS`, ID3 `USLT`, MP4 `©lyr`).
+2. A `.lrc` file with the same name in the same folder (local, WebDAV and FTPS).
+3. [LRCLIB](https://lrclib.net), a free, open lyrics database with timed lyrics. Only the title,
+   artist, album and length are sent. Results, including "not found", are cached on the phone.
+   Settings → *Find lyrics online* turns this off.
+
+Lyrics work for the streaming apps too: they're looked up from what Spotify, Apple Music, TIDAL or YT
+Music report as playing, and follow that app's playback position.
 
 ## Streaming apps
 

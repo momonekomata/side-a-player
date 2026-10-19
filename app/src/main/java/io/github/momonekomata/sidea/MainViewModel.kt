@@ -17,9 +17,18 @@ import io.github.momonekomata.sidea.sources.WebDavBrowser
 import io.github.momonekomata.sidea.sources.findUnpinned
 import io.github.momonekomata.sidea.streaming.StreamingApp
 import io.github.momonekomata.sidea.streaming.StreamingController
+import io.github.momonekomata.sidea.lyrics.Lyrics
+import io.github.momonekomata.sidea.lyrics.LyricsQuery
+import io.github.momonekomata.sidea.lyrics.LyricsRepository
+import io.github.momonekomata.sidea.sources.TagStore
+import io.github.momonekomata.sidea.sources.guessArtistTitle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -46,6 +55,20 @@ data class BrowseState(
 
 data class CertPrompt(val server: NasServer, val sha256: String, val subject: String)
 
+/** Lyrics for whatever the deck is showing. [key] identifies the song they belong to. */
+data class LyricsState(val key: String? = null, val lyrics: Lyrics? = null, val loading: Boolean = false)
+
+/** The song lyrics are wanted for, reduced to what identifies it. */
+private sealed interface Playing {
+    val key: String
+    data class Local(val track: io.github.momonekomata.sidea.sources.Track, val durationMs: Long) : Playing {
+        override val key get() = "local:${track.id}"
+    }
+    data class Remote(val app: StreamingApp, val title: String, val artist: String, val album: String, val durationMs: Long) : Playing {
+        override val key get() = "remote:${app.name}:$artist:$title"
+    }
+}
+
 data class UiState(
     val tab: SourceTab = SourceTab.LOCAL,
     val local: BrowseState? = null,
@@ -64,6 +87,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(UiState())
     val ui = _ui.asStateFlow()
     private var loadJob: Job? = null
+    private var tagJob: Job? = null
+
+    private val lyricsRepo = LyricsRepository(app)
+    private val _lyrics = MutableStateFlow(LyricsState())
+    val lyrics = _lyrics.asStateFlow()
 
     init {
         Player.init(app)
@@ -75,6 +103,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         prefs.getString("localTree", null)?.let { openLocal(Uri.parse(it), remember = false) }
         onResume()
+        followLyrics()
+    }
+
+    /**
+     * Looks lyrics up for the song on the deck: the local queue, or the streaming app on the
+     * selected tab. Waits for the duration so the online match can use it.
+     */
+    private fun followLyrics() = viewModelScope.launch {
+        combine(
+            _ui.map { it.tab }.distinctUntilChanged(),
+            Player.queue,
+            Player.state.map { it.durationMs }.distinctUntilChanged(),
+            streaming.nowPlaying,
+        ) { tab, queue, duration, remote ->
+            val app = tab.app
+            if (app != null) {
+                remote[app]?.takeIf { it.title.isNotBlank() }?.let { Playing.Remote(app, it.title, it.artist, it.album, it.durationMs) }
+            } else {
+                queue.current?.takeIf { duration > 0 }?.let { Playing.Local(it, duration) }
+            }
+        }
+            .distinctUntilChanged { a, b -> a?.key == b?.key }
+            .collectLatest { playing ->
+                if (playing == null) {
+                    _lyrics.value = LyricsState()
+                    return@collectLatest
+                }
+                _lyrics.value = LyricsState(key = playing.key, loading = true)
+                val found = lyricsRepo.find(query(playing), online = Settings.current.onlineLyrics)
+                _lyrics.value = LyricsState(key = playing.key, lyrics = found)
+            }
+    }
+
+    private suspend fun query(p: Playing): LyricsQuery = when (p) {
+        is Playing.Remote -> LyricsQuery(p.title, p.artist, p.album, p.durationMs)
+        is Playing.Local -> {
+            val ctx = getApplication<Application>()
+            val tags = TagStore.load(ctx, p.track)
+            val (guessArtist, guessTitle) = guessArtistTitle(p.track.title)
+            LyricsQuery(
+                title = tags?.title ?: guessTitle,
+                artist = tags?.artist ?: tags?.albumArtist ?: guessArtist,
+                album = tags?.album.orEmpty(),
+                durationMs = p.durationMs,
+                embedded = tags?.lyrics,
+                sidecar = p.track.lyricsFile?.let { read -> { read(ctx) } },
+            )
+        }
     }
 
     /** Notification access is granted in system settings, so re-check whenever we come back. */
@@ -183,11 +259,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val entries = b.browser.list(path)
                 updateBrowse(isNas) { if (it.currentPath == path) it.copy(entries = entries, loading = false) else it }
+                readTags(entries)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 updateBrowse(isNas) { it.copy(loading = false, error = e.findUnpinned()?.let { "Certificate not trusted yet" } ?: e.message ?: e.javaClass.simpleName) }
                 if (isNas) _ui.value.nasServer?.let { failNas(it, e) }
             }
+        }
+    }
+
+    /** Fills in titles from tags for the folder on screen, top to bottom. */
+    private fun readTags(entries: List<Entry>) {
+        tagJob?.cancel()
+        tagJob = viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            entries.filterIsInstance<Entry.Song>().forEach { TagStore.load(ctx, it.track) }
         }
     }
 

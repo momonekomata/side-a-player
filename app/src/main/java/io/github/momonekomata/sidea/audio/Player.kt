@@ -2,6 +2,7 @@ package io.github.momonekomata.sidea.audio
 
 import android.content.Context
 import android.content.Intent
+import io.github.momonekomata.sidea.Settings
 import io.github.momonekomata.sidea.sources.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 data class QueueState(val tracks: List<Track> = emptyList(), val index: Int = -1) {
@@ -28,10 +30,33 @@ object Player {
     val queue: StateFlow<QueueState> = _queue.asStateFlow()
     val state: StateFlow<EngineState> get() = engine.state
 
+    /** Identifies one queue + position, so a late gapless hand-over can't land on a new queue. */
+    private class Slot(val tracks: List<Track>, val index: Int)
+
+    private val callbacks = object : EngineCallbacks {
+        override fun upNext(): UpNext? {
+            val q = _queue.value
+            val i = q.index + 1
+            val t = q.tracks.getOrNull(i) ?: return null
+            return UpNext(Slot(q.tracks, i)) { runBlocking(Dispatchers.IO) { t.opener(appContext) } }
+        }
+
+        override fun onAdvanced(tag: Any) {
+            val slot = tag as Slot
+            if (_queue.value.tracks === slot.tracks) _queue.value = QueueState(slot.tracks, slot.index)
+        }
+
+        override fun onCompleted() = next(auto = true)
+
+        override fun dopAllowed() = Settings.current.dop
+    }
+
     fun init(context: Context) {
         if (::engine.isInitialized) return
         appContext = context.applicationContext
-        engine = AudioEngine(appContext) { scope.launch { next(auto = true) } }
+        Settings.init(appContext)
+        engine = AudioEngine(appContext, callbacks)
+        scope.launch { Settings.prefs.collect { engine.gapless = it.gapless } }
     }
 
     fun playQueue(tracks: List<Track>, index: Int) {

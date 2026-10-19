@@ -24,29 +24,31 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_SIZE,
         )
-        val out = mutableListOf<Entry>()
+        data class Row(val id: String, val name: String, val mime: String?, val size: Long)
+        val rows = mutableListOf<Row>()
         context.contentResolver.query(children, cols, null, null, null)?.use { c ->
-            while (c.moveToNext()) {
-                val id = c.getString(0)
-                val name = c.getString(1) ?: continue
-                val mime = c.getString(2)
-                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    out += Entry.Folder(name, id)
-                } else if (isAudioFile(name) || mime?.startsWith("audio/") == true) {
-                    val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
-                    out += Entry.Song(
-                        name,
-                        Track(
-                            id = uri.toString(),
-                            title = titleFromFileName(name),
-                            album = path.substringAfterLast('/'),
-                            sizeBytes = c.getLong(3),
-                            opener = { PlayableSource.Content(uri) },
-                        ),
-                    )
-                }
-            }
+            while (c.moveToNext()) rows += Row(c.getString(0), c.getString(1) ?: continue, c.getString(2), c.getLong(3))
         }
-        out.sortedForBrowsing()
+        val lrc = rows.filter { isLrcFile(it.name) }.associate { lrcKey(it.name) to it.id }
+        rows.mapNotNull { r ->
+            if (r.mime == DocumentsContract.Document.MIME_TYPE_DIR) return@mapNotNull Entry.Folder(r.name, r.id)
+            if (!isAudioFile(r.name) && r.mime?.startsWith("audio/") != true) return@mapNotNull null
+            val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, r.id)
+            val lrcUri = lrc[lrcKey(r.name)]?.let { DocumentsContract.buildDocumentUriUsingTree(treeUri, it) }
+            Entry.Song(
+                r.name,
+                Track(
+                    id = uri.toString(),
+                    title = titleFromFileName(r.name),
+                    album = path.substringAfterLast('/').substringAfterLast(':'),
+                    sizeBytes = r.size,
+                    opener = { PlayableSource.Content(uri) },
+                    tagSource = { ctx -> PlayableSource.Content(uri).openRandomAccess(ctx) },
+                    lyricsFile = lrcUri?.let { u ->
+                        { ctx -> ctx.contentResolver.openInputStream(u)!!.use { it.readBytes().toString(Charsets.UTF_8) } }
+                    },
+                ),
+            )
+        }.sortedForBrowsing()
     }
 }

@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.momonekomata.sidea.CertPrompt
+import io.github.momonekomata.sidea.Prefs
 import io.github.momonekomata.sidea.sources.NasKind
 import io.github.momonekomata.sidea.sources.NasServer
 
@@ -128,6 +129,28 @@ fun NasServerDialog(
         },
     )
 }
+
+@Composable
+fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settings") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LabeledSwitch("Gapless playback", prefs.gapless) { onChange(prefs.copy(gapless = it)) }
+                Note("Opens the next song early and joins it to the current one with no gap, when both share a sample rate.")
+                LabeledSwitch("DSD as DoP to the USB DAC", prefs.dop) { onChange(prefs.copy(dop = it)) }
+                Note("Native DSD for DACs that understand DoP. Only used when the bit-perfect path is available; otherwise DSD is converted to 176.4 kHz PCM. Turn off if your DAC plays DSD as noise.")
+                LabeledSwitch("Find lyrics online", prefs.onlineLyrics) { onChange(prefs.copy(onlineLyrics = it)) }
+                Note("When a song has no lyrics in its tags or a .lrc file beside it, its title, artist and length are sent to lrclib.net.")
+            }
+        },
+        confirmButton = { TextButton(onDismiss) { Text("Done") } },
+    )
+}
+
+@Composable
+private fun Note(text: String) = Text(text, fontSize = 12.sp, color = Retro.Muted)
 
 @Composable
 private fun LabeledSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {

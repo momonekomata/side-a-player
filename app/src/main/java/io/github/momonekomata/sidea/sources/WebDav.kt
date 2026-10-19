@@ -68,7 +68,7 @@ class WebDavBrowser(private val server: NasServer) : Browser {
             setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
             setInput(stream, null)
         }
-        val out = mutableListOf<Entry>()
+        val out = mutableListOf<DavItem>()
         var href: String? = null
         var name: String? = null
         var isDir = false
@@ -90,22 +90,38 @@ class WebDavBrowser(private val server: NasServer) : Browser {
                     "displayname" -> name = text.toString().trim().ifEmpty { null }
                     "getcontentlength" -> size = text.toString().trim().toLongOrNull() ?: -1
                     "getcontenttype" -> mime = text.toString().trim()
-                    "response" -> entryFor(href, name, isDir, size, mime, requestPath)?.let { out += it }
+                    "response" -> href?.let { out += DavItem(it, name, isDir, size, mime) }
                 }
             }
         }
-        return out.sortedForBrowsing()
+        val lrc = out.filter { !it.isDir && isLrcFile(it.displayName()) }
+            .associate { lrcKey(it.displayName()) to it.path() }
+        return out.mapNotNull { entryFor(it, requestPath, lrc) }.sortedForBrowsing()
     }
 
-    private fun entryFor(rawHref: String?, displayName: String?, isDir: Boolean, size: Long, mime: String?, requestPath: String): Entry? {
-        rawHref ?: return null
+    private fun getText(url: HttpUrl): String {
+        val req = Request.Builder().url(url).apply { auth?.let { header("Authorization", it) } }.build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} reading $url")
+            return resp.body!!.string()
+        }
+    }
+
+    private class DavItem(val href: String, val name: String?, val isDir: Boolean, val size: Long, val mime: String?) {
         // Some servers return absolute URLs in href; keep only the path.
-        val path = if (rawHref.startsWith("http")) rawHref.toHttpUrl().encodedPath else rawHref
+        fun path() = if (href.startsWith("http")) href.toHttpUrl().encodedPath else href
+        fun displayName() = name ?: URLDecoder.decode(path().trimEnd('/').substringAfterLast('/'), "UTF-8")
+    }
+
+    private fun entryFor(item: DavItem, requestPath: String, lrc: Map<String, String>): Entry? {
+        val path = item.path()
         if (path.trimEnd('/') == requestPath.trimEnd('/')) return null
-        val name = displayName ?: URLDecoder.decode(path.trimEnd('/').substringAfterLast('/'), "UTF-8")
-        if (isDir) return Entry.Folder(name, path.trimEnd('/') + "/")
-        if (!isAudioFile(name) && mime?.startsWith("audio/") != true) return null
+        val name = item.displayName()
+        if (item.isDir) return Entry.Folder(name, path.trimEnd('/') + "/")
+        if (!isAudioFile(name) && item.mime?.startsWith("audio/") != true) return null
+        val size = item.size
         val url = base.newBuilder().encodedPath(path).build()
+        val lrcUrl = lrc[lrcKey(name)]?.let { base.newBuilder().encodedPath(it).build() }
         val folder = URLDecoder.decode(requestPath.trimEnd('/').substringAfterLast('/'), "UTF-8")
         return Entry.Song(
             name,
@@ -115,6 +131,9 @@ class WebDavBrowser(private val server: NasServer) : Browser {
                 album = folder,
                 sizeBytes = size,
                 opener = { PlayableSource.Stream(HttpRangeDataSource(client, url, auth, size)) },
+                // Tags sit in the first few KB, so read them with small range requests.
+                tagSource = { MediaDataSourceAccess(HttpRangeDataSource(client, url, auth, size, chunk = 64 * 1024)) },
+                lyricsFile = lrcUrl?.let { u -> { getText(u) } },
             ),
         )
     }
@@ -130,6 +149,7 @@ class HttpRangeDataSource(
     private val url: HttpUrl,
     private val auth: String?,
     knownSize: Long,
+    private val chunk: Int = 2 * 1024 * 1024,
 ) : MediaDataSource() {
     private var total = knownSize
     private var winStart = 0L
@@ -157,7 +177,7 @@ class HttpRangeDataSource(
     }
 
     private fun fill(position: Long) {
-        val end = position + CHUNK - 1
+        val end = position + chunk - 1
         val req = Request.Builder().url(url)
             .header("Range", "bytes=$position-$end")
             .apply { auth?.let { header("Authorization", it) } }
@@ -177,7 +197,7 @@ class HttpRangeDataSource(
                         if (s <= 0) throw IOException("Server doesn't support seeking")
                         skipped += s
                     }
-                    window = body.readNBytesCompat(CHUNK)
+                    window = body.readNBytesCompat(chunk)
                     winStart = position
                 }
                 else -> throw IOException("HTTP ${resp.code} reading $url")
@@ -196,9 +216,5 @@ class HttpRangeDataSource(
             off += r
         }
         return buf.copyOf(off)
-    }
-
-    companion object {
-        private const val CHUNK = 2 * 1024 * 1024
     }
 }
