@@ -17,7 +17,12 @@ data class OutputPlan(
     val device: AudioDeviceInfo?,
     val bitPerfect: Boolean,
     val note: String,
+    /** Set when Side A's own USB driver carries the stream. */
+    val exclusive: ExclusiveTarget? = null,
 )
+
+/** Where the USB driver will stream: the device, its alternate setting and container. */
+data class ExclusiveTarget(val device: android.hardware.usb.UsbDevice, val alt: io.github.momonekomata.sidea.audio.usb.UsbAltSetting)
 
 /**
  * Picks the output path for a source. With a USB DAC on Android 14+ it asks the platform for a
@@ -68,7 +73,9 @@ class OutputRouter(context: Context) {
         val why = when {
             usb == null -> "Android mixer${mixerRate?.let { " · ${it / 1000.0} kHz".replace(".0 ", " ") } ?: ""}"
             Build.VERSION.SDK_INT < 34 -> "Android mixer (bit-perfect needs Android 14)"
-            else -> "Android mixer (${usb.productName} has no bit-perfect ${sampleRate / 1000.0} kHz)".replace(".0 kHz", " kHz")
+            // The phone's limit, not the DAC's: say so.
+            usbSupport()?.bitPerfectRates.isNullOrEmpty() -> "Android mixer (this phone has no bit-perfect USB mode)"
+            else -> "Android mixer (no bit-perfect ${sampleRate / 1000.0} kHz on this phone)".replace(".0 kHz", " kHz")
         }
         // Float keeps hi-res material intact up to the system mixer.
         val fmt = if (decoded == SampleFormat.S16) SampleFormat.S16 else SampleFormat.FLOAT

@@ -137,6 +137,8 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Uni
         title = { Text("Settings") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LabeledSwitch("Exclusive USB driver", prefs.exclusiveUsb) { onChange(prefs.copy(exclusiveUsb = it)) }
+                Note("For phones whose Android can't send USB audio bit-perfect (most Samsungs): Side A drives the DAC itself, at each file's own rate, after you allow USB access. Other apps can't use the DAC while Side A holds it. Volume is then Side A's own (the deck shows a slider; the volume keys work too).")
                 LabeledSwitch("Gapless playback", prefs.gapless) { onChange(prefs.copy(gapless = it)) }
                 Note("Opens the next song early and joins it to the current one with no gap, when both share a sample rate.")
                 LabeledSwitch("DSD as DoP to the USB DAC", prefs.dop) { onChange(prefs.copy(dop = it)) }

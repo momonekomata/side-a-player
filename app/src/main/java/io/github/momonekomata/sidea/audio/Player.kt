@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import io.github.momonekomata.sidea.Settings
+import io.github.momonekomata.sidea.audio.usb.UsbExclusive
 import io.github.momonekomata.sidea.sources.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -116,13 +117,13 @@ object Player {
      */
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) {
-            if (devicesReady && added.any { it.isSink && it.isUsb() }) main.postDelayed({ reopenOnNewOutput() }, 800)
+            if (devicesReady && !usbDriverBusy() && added.any { it.isSink && it.isUsb() }) main.postDelayed({ reopenOnNewOutput() }, 800)
             devicesReady = true // the first call just lists what's already there
         }
 
         override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) {
             // Unplugging pauses (becoming-noisy); reopen paused so Play goes to the new output.
-            if (removed.any { it.isSink && it.isUsb() }) main.postDelayed({ reopenOnNewOutput() }, 300)
+            if (!usbDriverBusy() && removed.any { it.isSink && it.isUsb() }) main.postDelayed({ reopenOnNewOutput() }, 300)
         }
     }
 
@@ -135,8 +136,20 @@ object Player {
         startCurrent(startMs = s.positionMs, paused = !s.isPlaying)
     }
 
+    /**
+     * Side A's USB driver taking the DAC from Android (or handing it back) makes the DAC
+     * vanish from Android's view for a moment. That isn't an unplug.
+     */
+    private fun usbDriverBusy() = UsbExclusive.holding || System.currentTimeMillis() < UsbExclusive.busyUntil
+
+    private var askedUsb: String? = null
+
+    /** Volume while Side A's USB driver drives the DAC; Android's volume can't reach it then. */
+    fun setUsbVolume(v: Float) = Settings.update { it.copy(usbVolume = v.coerceIn(0f, 1f)) }
+
     /** Headphones or the DAC were unplugged: pause rather than blast the phone speaker. */
     fun pauseForNoisy() {
+        if (usbDriverBusy()) return
         resumeOnGain = false
         if (engine.state.value.isPlaying) engine.pause()
     }
@@ -146,12 +159,37 @@ object Player {
         appContext = context.applicationContext
         audioManager = appContext.getSystemService(AudioManager::class.java)
         audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
+        UsbExclusive.init(appContext)
+        UsbExclusive.onPermissionGranted = { main.post { reopenOnNewOutput() } }
+        UsbExclusive.onDetached = {
+            main.post {
+                if (engine.state.value.output?.exclusive != null) {
+                    resumeOnGain = false
+                    engine.pause()
+                    main.postDelayed({ reopenOnNewOutput() }, 300)
+                }
+            }
+        }
         Settings.init(appContext)
         engine = AudioEngine(appContext, callbacks)
+        // Asked once per DAC per run; the song plays through Android until the user says yes.
+        engine.onUsbPermissionNeeded = { d ->
+            main.post {
+                if (askedUsb != d.deviceName) {
+                    askedUsb = d.deviceName
+                    UsbExclusive.requestPermission(d)
+                }
+            }
+        }
         scope.launch {
             Settings.prefs.collect {
                 engine.gapless = it.gapless
                 engine.eq = it.eq
+                engine.usbVolume = it.usbVolume
+                if (engine.exclusiveUsb != it.exclusiveUsb) {
+                    engine.exclusiveUsb = it.exclusiveUsb
+                    reopenOnNewOutput()
+                }
             }
         }
     }

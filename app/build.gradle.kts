@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.momonekomata.sidea"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -34,6 +34,11 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"

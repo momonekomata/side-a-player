@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -64,6 +65,9 @@ data class DeckModel(
     val showLyrics: Boolean = false,
     val onToggleLyrics: () -> Unit = {},
     val onRetryLyrics: () -> Unit = {},
+    /** Side A's volume, shown only while its USB driver drives the DAC (null otherwise). */
+    val volume: Float? = null,
+    val onVolume: (Float) -> Unit = {},
     val onToggle: () -> Unit,
     val onNext: () -> Unit,
     val onPrevious: () -> Unit,
@@ -128,6 +132,7 @@ private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
         StatusLine(model.status, model.statusColor)
     }
     SeekBar(model)
+    model.volume?.let { v -> VolumeBar(v, model.onVolume) }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
         val h = if (compact) 42.dp else 52.dp
         DeckKey(Icons.Filled.SkipPrevious, "Previous", height = h, onClick = model.onPrevious)
@@ -181,6 +186,21 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier) {
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
+    }
+}
+
+/** Shown while Side A drives the DAC itself: the phone's volume doesn't reach it then. */
+@Composable
+private fun VolumeBar(value: Float, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Filled.VolumeUp, "Volume", tint = Retro.Muted, modifier = Modifier.size(18.dp))
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Retro.ShellEdge),
+        )
+        Text("${(value * 100).toInt()}%", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
     }
 }
 

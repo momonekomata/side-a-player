@@ -22,6 +22,10 @@ data class Prefs(
     /** The user's own key from developer.musixmatch.com; blank leaves Musixmatch out. */
     val musixmatchKey: String = "",
     val eq: EqConfig = EqConfig(),
+    /** Drive USB DACs with Side A's own driver when Android can't go bit-perfect. */
+    val exclusiveUsb: Boolean = true,
+    /** Volume while the USB driver drives the DAC (0..1). Starts low: it bypasses Android's volume. */
+    val usbVolume: Float = 0.3f,
 )
 
 object Settings {
@@ -40,6 +44,8 @@ object Settings {
             lrclib = sp.getBoolean("lrclib", true),
             lyricsOvh = sp.getBoolean("lyricsOvh", true),
             musixmatchKey = sp.getString("musixmatchKey", "").orEmpty(),
+            exclusiveUsb = sp.getBoolean("exclusiveUsb", true),
+            usbVolume = sp.getFloat("usbVolume", 0.3f),
             eq = runCatching { sp.getString("eq", null)?.let { eqFromJson(JSONObject(it)) } }.getOrNull() ?: EqConfig(),
         )
     }
@@ -54,6 +60,8 @@ object Settings {
             .putBoolean("lrclib", p.lrclib)
             .putBoolean("lyricsOvh", p.lyricsOvh)
             .putString("musixmatchKey", p.musixmatchKey)
+            .putBoolean("exclusiveUsb", p.exclusiveUsb)
+            .putFloat("usbVolume", p.usbVolume)
             .putString("eq", eqToJson(p.eq).toString())
             .apply()
     }

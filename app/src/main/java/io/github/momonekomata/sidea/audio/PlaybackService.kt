@@ -9,7 +9,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.VolumeProvider
+import io.github.momonekomata.sidea.Settings
+import kotlinx.coroutines.flow.map
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.media.MediaMetadata
@@ -40,6 +44,13 @@ class PlaybackService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var session: MediaSession
 
+    private val volume = object : VolumeProvider(VOLUME_CONTROL_ABSOLUTE, 100, 30) {
+        override fun onSetVolumeTo(volume: Int) = Player.setUsbVolume(volume / 100f)
+        override fun onAdjustVolume(direction: Int) {
+            if (direction != 0) Player.setUsbVolume(Settings.current.usbVolume + direction * 0.02f)
+        }
+    }
+
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) Player.pauseForNoisy()
@@ -65,6 +76,22 @@ class PlaybackService : Service() {
             isActive = true
         }
         startForeground(ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        // While Side A's USB driver holds the DAC, Android's volume can't reach it. Taking the
+        // volume keys (and a DAC's own volume buttons, which arrive as the same keys) over for
+        // the session keeps them working: they set Side A's volume instead.
+        scope.launch {
+            Player.state.map { s -> s.output?.let { o -> o.exclusive != null && o.dsd != DsdMode.DOP } == true }.distinctUntilChanged().collect { exclusive ->
+                if (exclusive) {
+                    session.setPlaybackToRemote(volume)
+                    volume.currentVolume = (Settings.current.usbVolume * 100).toInt()
+                } else {
+                    session.setPlaybackToLocal(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                }
+            }
+        }
+        scope.launch {
+            Settings.prefs.map { it.usbVolume }.distinctUntilChanged().collect { volume.currentVolume = (it * 100).toInt() }
+        }
         scope.launch {
             combine(Player.queue, Player.state, TagStore.tags, ArtworkStore.loaded) { q, s, tags, art ->
                 Shown(q.current, s.isPlaying, s.durationMs, q.current?.let { tags[it.id] }, art)

@@ -58,7 +58,12 @@ data class StreamFacts(
     val mixerRate: Int?,
     /** A USB DAC that's connected but not used bit-perfect, and what the phone offers for it. */
     val usb: UsbSupport? = null,
+    /** Set when Side A's own USB driver streams to the DAC. */
+    val exclusive: ExclusiveFacts? = null,
 )
+
+/** [volumePercent] is Side A's volume for the DAC; null for DoP, which always plays at 100. */
+data class ExclusiveFacts(val dacBits: Int, val volumePercent: Int?)
 
 /** What Android on this phone offers for a connected USB DAC. */
 data class UsbSupport(val name: String, val apiAvailable: Boolean, val bitPerfectRates: List<Int>)
@@ -84,7 +89,16 @@ object SignalPaths {
             val n = eq.activeBands.size
             stages += PathStage("Parametric EQ", "$n band${if (n == 1) "" else "s"} · preamp ${signed(eq.effectivePreampDb)} dB", Quality.ENHANCED)
         }
+        val vol = f.exclusive?.volumePercent
+        if (vol != null && vol < 100) {
+            stages += PathStage("Volume", "$vol% in Side A (the DAC is driven directly, so this is where volume happens)", Quality.ENHANCED)
+        }
         stages += when {
+            f.exclusive != null -> PathStage(
+                "Output",
+                "${f.deviceName ?: "USB DAC"} · Side A USB driver, exclusive · ${khz(f.outputRate)} ${f.exclusive.dacBits}-bit",
+                Quality.LOSSLESS,
+            )
             f.bitPerfect -> PathStage(
                 "Output",
                 "${f.deviceName ?: f.device.label} · bit-perfect ${khz(f.outputRate)} ${f.outputFormat.label}",
@@ -99,7 +113,7 @@ object SignalPaths {
         f.usb?.let { u ->
             val why = when {
                 !u.apiAvailable -> "Connected, but bit-perfect output needs Android 14 or newer"
-                u.bitPerfectRates.isEmpty() -> "Connected, but this phone's audio system offers no bit-perfect mode for it, so Android's mixer stays in the path. Exclusive access on this phone needs an app with its own USB driver"
+                u.bitPerfectRates.isEmpty() -> "Connected, but this phone's Android offers no bit-perfect USB mode (a limit of the phone, not the DAC), so Android's mixer is in the path. Turn on Settings → Exclusive USB driver for Side A to drive the DAC itself"
                 else -> "Bit-perfect is offered at ${u.bitPerfectRates.joinToString(", ") { khz(it) }}, not at this file's ${khz(f.outputRate)}"
             }
             stages += PathStage(u.name, why, Quality.HIGH_QUALITY)

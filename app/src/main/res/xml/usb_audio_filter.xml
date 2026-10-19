@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Any USB Audio Class device: Android offers to open Side A when one is plugged in, which
+     also grants it USB access. -->
+<resources>
+    <usb-device class="1" />
+</resources>

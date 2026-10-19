@@ -7,6 +7,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import io.github.momonekomata.sidea.sources.openRandomAccess
 import io.github.momonekomata.sidea.sources.readUpTo
+import java.io.IOException
 
 /** One file's worth of PCM, whatever it was encoded as. */
 interface PcmDecoder {
@@ -40,14 +41,24 @@ fun interface DopPlanner {
 object Decoders {
     fun open(context: Context, source: PlayableSource, dop: DopPlanner?): PcmDecoder {
         val ra = source.openRandomAccess(context)
-        val head = ra.readUpTo(0, 12)
+        var head = ra.readUpTo(0, 12)
+        // Why the in-app MP4 reader passed, for the error if MediaCodec can't do it either.
+        var mp4Note: String? = null
         try {
-            when {
-                DsdStream.isDsd(head) -> return DsdDecoder(DsdStream.open(ra), dop)
-                PcmFileStream.sniff(head) -> return StreamDecoder.pcm(PcmFileStream(ra))
-                FlacStream.sniff(head) -> runCatching { FlacStream(ra) }.getOrNull()?.let { return StreamDecoder.flac(it) }
-                // M4A: ALAC here; AAC (and anything else) falls through to MediaCodec.
-                AlacStream.sniff(head) -> runCatching { AlacStream(ra) }.getOrNull()?.let { return StreamDecoder.alac(it) }
+            if (DsdStream.isDsd(head)) return DsdDecoder(DsdStream.open(ra), dop)
+            if (PcmFileStream.sniff(head)) return StreamDecoder.pcm(PcmFileStream(ra))
+            if (FlacStream.sniff(head)) runCatching { FlacStream(ra) }.getOrNull()?.let { return StreamDecoder.flac(it) }
+            // An ID3 tag in front of an MP4 (some taggers do this) hides its 'ftyp'.
+            val skip = id3Length(head, ra)
+            if (skip > 0) head = ra.readUpTo(skip, 12)
+            if (AlacStream.sniff(head)) {
+                try {
+                    return StreamDecoder.alac(AlacStream(if (skip > 0) OffsetAccess(ra, skip) else ra))
+                } catch (e: NotAlacException) {
+                    mp4Note = e.fourcc // AAC and friends: MediaCodec's job
+                } catch (e: IOException) {
+                    mp4Note = "alac: ${e.message}"
+                }
             }
         } catch (e: Exception) {
             ra.close()
@@ -55,7 +66,26 @@ object Decoders {
         }
         // Content and file sources reopen cleanly; a stream must stay open for the extractor.
         if (source !is PlayableSource.Stream) ra.close()
-        return MediaCodecDecoder(context, source)
+        return try {
+            MediaCodecDecoder(context, source)
+        } catch (e: IOException) {
+            throw if (mp4Note != null) IOException("Can't decode this .m4a (audio is $mp4Note)", e) else e
+        }
+    }
+
+    private fun id3Length(head: ByteArray, ra: io.github.momonekomata.sidea.sources.RandomAccess): Long {
+        if (head.size < 10 || head[0] != 'I'.code.toByte() || head[1] != 'D'.code.toByte() || head[2] != '3'.code.toByte()) return 0
+        val h = ra.readUpTo(0, 10)
+        if (h.size < 10) return 0
+        val size = ((h[6].toInt() and 0x7F) shl 21) or ((h[7].toInt() and 0x7F) shl 14) or ((h[8].toInt() and 0x7F) shl 7) or (h[9].toInt() and 0x7F)
+        return 10L + size + (if (h[5].toInt() and 0x10 != 0) 10 else 0)
+    }
+
+    /** A view of [ra] that starts [offset] bytes in, for an MP4 behind an ID3 tag. */
+    private class OffsetAccess(private val ra: io.github.momonekomata.sidea.sources.RandomAccess, private val offset: Long) : io.github.momonekomata.sidea.sources.RandomAccess {
+        override val size get() = if (ra.size < 0) -1L else ra.size - offset
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int) = ra.readAt(position + this.offset, buffer, offset, length)
+        override fun close() = ra.close()
     }
 }
 

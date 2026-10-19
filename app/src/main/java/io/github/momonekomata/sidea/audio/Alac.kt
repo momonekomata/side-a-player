@@ -14,6 +14,9 @@ import java.io.IOException
  * open-source reference (adaptive Golomb residuals, adaptive FIR prediction, stereo
  * matrixing, shifted low bytes) and gives the exact integer samples back.
  */
+/** The MP4's audio isn't ALAC; [fourcc] says what it is (mp4a = AAC, fLaC, Opus, ...). */
+class NotAlacException(val fourcc: String) : IOException("Not ALAC ($fourcc)")
+
 class AlacStream(private val ra: RandomAccess) {
     val sampleRate: Int
     val channels: Int
@@ -58,11 +61,19 @@ class AlacStream(private val ra: RandomAccess) {
         // stsd → 'alac' sample entry → 'alac' config box.
         val stsd = child(table.first, table.second, "stsd") ?: throw IOException("No sample description")
         val entry = ra.readFully(stsd.first + 8, 8)
-        if (entry.ascii(4, 4) != "alac") throw IOException("Not ALAC (${entry.ascii(4, 4)})")
+        val fourcc = entry.ascii(4, 4)
+        if (fourcc != "alac") throw NotAlacException(fourcc.trim())
         val entryStart = stsd.first + 8
-        val entryEnd = entryStart + entry.u32be(0)
-        val cfgBox = child(entryStart + 36, entryEnd, "alac") ?: throw IOException("ALAC config missing")
-        val c = ra.readFully(cfgBox.first + 4, 24) // skip version/flags
+        val entryLen = entry.u32be(0).toInt().coerceIn(36, 4096)
+        // The config box sits after the sound sample entry, whose length depends on its version
+        // (0, 1 or 2, and some writers wrap it in 'wave'), so look for it rather than assume.
+        val body = ra.readFully(entryStart, entryLen)
+        var at = -1
+        for (i in 28..body.size - 36) {
+            if (body.ascii(i + 4, 4) == "alac" && body.u32be(i) >= 36) { at = i; break }
+        }
+        if (at < 0) throw IOException("ALAC config missing")
+        val c = body.copyOfRange(at + 12, at + 36) // past size, type, version/flags
         frameLength = c.u32be(0).toInt()
         bitDepth = c[5].toInt() and 0xFF
         pb = c[6].toInt() and 0xFF

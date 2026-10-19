@@ -5,6 +5,8 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRouting
 import android.media.AudioTrack
+import io.github.momonekomata.sidea.audio.usb.ExclusiveOutput
+import io.github.momonekomata.sidea.audio.usb.UsbExclusive
 import android.media.MediaDataSource
 import android.net.Uri
 import android.os.Handler
@@ -68,10 +70,16 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     @Volatile var gapless = true
     /** Read for every chunk, so changes apply within a few milliseconds of audio. */
     @Volatile var eq = EqConfig()
+    /** Use Side A's own USB driver when a DAC is connected and Android can't go bit-perfect. */
+    @Volatile var exclusiveUsb = true
+    /** Volume for the USB driver (0..1); Android's volume doesn't reach a DAC Side A drives. */
+    @Volatile var usbVolume = 0.3f
+    /** The user hasn't granted USB access yet; Player asks and reopens the song. */
+    @Volatile var onUsbPermissionNeeded: ((android.hardware.usb.UsbDevice) -> Unit)? = null
 
     /** [paused] opens the song ready to play at [startMs] without starting it. */
     fun play(source: PlayableSource, startMs: Long = 0, paused: Boolean = false) {
-        stop()
+        stop(releaseOutput = false)
         val s = Session(source, startMs * 1000)
         s.paused = paused
         session = s
@@ -82,7 +90,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     fun pause() {
         val s = session ?: return
         s.paused = true
-        s.track?.pause()
+        s.sink?.pause()
         _state.update { it.copy(isPlaying = false) }
     }
 
@@ -90,7 +98,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         val s = session ?: return
         synchronized(s.lock) {
             s.paused = false
-            s.track?.play()
+            s.sink?.play()
             s.lock.notifyAll()
         }
         _state.update { it.copy(isPlaying = true) }
@@ -103,12 +111,16 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
 
     val holdsBitPerfectMixer: Boolean get() = router.holdsMixer
 
-    fun stop() {
-        val s = session ?: return
-        session = null
-        s.cancel()
-        s.thread.join(1500)
-        _state.update { it.copy(isPlaying = false, isBuffering = false) }
+    /** [releaseOutput] false when another song follows at once: the USB DAC stays held. */
+    fun stop(releaseOutput: Boolean = true) {
+        val s = session
+        if (s != null) {
+            session = null
+            s.cancel()
+            s.thread.join(1500)
+            _state.update { it.copy(isPlaying = false, isBuffering = false) }
+        }
+        if (releaseOutput) UsbExclusive.releaseAll()
     }
 
     /** Polled by the UI clock; also where a gapless hand-over becomes visible. */
@@ -135,7 +147,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         val lock = Object()
         @Volatile var paused = false
         @Volatile var cancelled = false
-        @Volatile var track: AudioTrack? = null
+        @Volatile var sink: PcmSink? = null
+        private var exclusiveOut: ExclusiveOutput? = null
         val seekUs = AtomicLong(-1)
         val thread = Thread({ run() }, "SideA-decoder")
 
@@ -151,14 +164,14 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         fun cancel() {
             cancelled = true
             synchronized(lock) { lock.notifyAll() }
-            track?.let { runCatching { it.pause(); it.flush() } }
+            sink?.let { runCatching { it.pause(); it.flush() } }
         }
 
-        private fun head(t: AudioTrack) = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+        private fun head(t: PcmSink) = t.framesPlayed
 
         @Synchronized
         fun positionUs(): Long? {
-            val t = track ?: return null
+            val t = sink ?: return null
             val h = head(t)
             next?.let { seg ->
                 if (h >= seg.startHead) {
@@ -173,7 +186,9 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         }
 
         // DoP can't be equalised, so an active EQ means DSD is converted to PCM instead.
-        private val dopPlanner = DopPlanner { r, ch -> callbacks.dopAllowed() && !eq.isActive && router.canDop(r, ch) }
+        private val dopPlanner = DopPlanner { r, ch ->
+            callbacks.dopAllowed() && !eq.isActive && (exclusiveDop(r, ch) || router.canDop(r, ch))
+        }
         private var eqProc: EqProcessor? = null
         private var floatBuf = FloatArray(0)
         private var floatBytes = ByteArray(0)
@@ -184,16 +199,18 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                 dec = Decoders.open(appContext, source, dopPlanner)
                 if (startUs > 0) dec.seekTo(startUs)
                 val plan = planFor(dec)
-                val t = buildTrack(plan)
-                track = t
+                val t = buildSink(plan, dec)
+                sink = t
                 rate = dec.sampleRate
                 val info = facts(dec, plan, t)
                 _state.update { it.copy(isBuffering = false, isPlaying = !paused, durationMs = dec!!.durationUs / 1000, output = info, outputNote = plan.note.takeIf { !plan.bitPerfect }) }
                 // Headphones unplugged, Bluetooth connected: keep the signal path honest.
-                t.addOnRoutingChangedListener(
-                    AudioRouting.OnRoutingChangedListener { _state.update { s -> s.copy(output = s.output?.withDevice(t.routedDevice)) } },
-                    main,
-                )
+                (t as? TrackSink)?.let { ts ->
+                    ts.track.addOnRoutingChangedListener(
+                        AudioRouting.OnRoutingChangedListener { _state.update { s -> s.copy(output = s.output?.withDevice(ts.track.routedDevice)) } },
+                        main,
+                    )
+                }
                 if (!paused) t.play()
 
                 var scratch = ByteArray(0)
@@ -241,7 +258,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                         break
                     }
 
-                    val (pcm, pcmSize, pcmFormat) = equalise(chunk, d)
+                    val (pcm, pcmSize, pcmFormat) = equalise(chunk, d, if (exclusiveOut != null) usbVolume else 1f)
                     val need = PcmConverter.outputSize(pcmSize, pcmFormat, plan.format)
                     if (scratch.size < need) scratch = ByteArray(need)
                     PcmConverter.convert(java.nio.ByteBuffer.wrap(pcm, 0, pcmSize), pcmFormat, plan.format, scratch)
@@ -253,8 +270,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                     }
                     var off = 0
                     while (off < need && !cancelled && seekUs.get() < 0) {
-                        val w = t.write(scratch, off, need - off, AudioTrack.WRITE_BLOCKING)
-                        if (w < 0) error("AudioTrack write failed ($w)")
+                        val w = t.write(scratch, off, need - off)
+                        if (w < 0) error(if (exclusiveOut != null) "The USB DAC stopped responding (unplugged?)" else "AudioTrack write failed ($w)")
                         if (w == 0) synchronized(lock) { if (paused) lock.wait(50) }
                         off += w
                     }
@@ -268,8 +285,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                     _state.update { it.copy(isPlaying = false, isBuffering = false, error = e.message ?: e.javaClass.simpleName) }
                 }
             } finally {
-                track?.let { runCatching { it.stop() }; it.release() }
-                track = null
+                sink?.release()
+                sink = null
                 dec?.close()
                 prefetch?.join(2000)
                 prefetched?.second?.close()
@@ -310,12 +327,15 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             n.sampleRate == cur.sampleRate && n.channels == cur.channels && n.isDop == cur.isDop &&
                 plan.format.exactBits() >= (n.sourceBits?.takeIf { it > 1 } ?: n.format.exactBits())
 
-        /** Runs the EQ when it's on (never on DoP); otherwise hands the chunk through untouched. */
-        private fun equalise(chunk: PcmChunk, d: PcmDecoder): Triple<ByteArray, Int, SampleFormat> {
+        /**
+         * Runs the EQ when it's on and applies [gain] (the USB driver's volume) when it's below 1;
+         * never on DoP. Otherwise the chunk passes through untouched.
+         */
+        private fun equalise(chunk: PcmChunk, d: PcmDecoder, gain: Float): Triple<ByteArray, Int, SampleFormat> {
             val config = eq
-            if (!config.isActive || d.isDop) return Triple(chunk.data, chunk.size, d.format)
-            val proc = eqProc ?: EqProcessor(d.sampleRate, d.channels).also { eqProc = it }
-            proc.configure(config)
+            val eqOn = config.isActive && !d.isDop
+            val gainOn = gain < 0.999f && !d.isDop
+            if (!eqOn && !gainOn) return Triple(chunk.data, chunk.size, d.format)
             val floatSize = PcmConverter.outputSize(chunk.size, d.format, SampleFormat.FLOAT)
             if (floatBytes.size < floatSize) floatBytes = ByteArray(floatSize)
             PcmConverter.convert(java.nio.ByteBuffer.wrap(chunk.data, 0, chunk.size), d.format, SampleFormat.FLOAT, floatBytes)
@@ -323,13 +343,28 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             if (floatBuf.size < samples) floatBuf = FloatArray(samples)
             val fb = java.nio.ByteBuffer.wrap(floatBytes, 0, floatSize).order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
             fb.get(floatBuf, 0, samples)
-            proc.process(floatBuf, samples / d.channels)
+            if (eqOn) {
+                val proc = eqProc ?: EqProcessor(d.sampleRate, d.channels).also { eqProc = it }
+                proc.configure(config)
+                proc.process(floatBuf, samples / d.channels)
+            }
+            if (gainOn) for (k in 0 until samples) floatBuf[k] *= gain
             fb.rewind()
             fb.put(floatBuf, 0, samples)
             return Triple(floatBytes, floatSize, SampleFormat.FLOAT)
         }
 
-        private fun drain(t: AudioTrack, target: Long) {
+        /** A sink for [plan]: Android's AudioTrack, or the USB driver streaming to the DAC. */
+        private fun buildSink(plan: OutputPlan, dec: PcmDecoder): PcmSink {
+            val ex = plan.exclusive ?: return TrackSink(buildTrack(plan))
+            val out = UsbExclusive.open(ex.device, ex.alt, plan.format, plan.sampleRate)
+            exclusiveOut = out
+            // DoP's idle pattern keeps the DAC in DSD mode through pauses; PCM idles at zero.
+            if (dec.isDop) out.stream.setSilence(dopSilence(plan.format, dec.channels))
+            return out.stream
+        }
+
+        private fun drain(t: PcmSink, target: Long) {
             val deadline = System.currentTimeMillis() + 10_000
             while (!cancelled && System.currentTimeMillis() < deadline) {
                 if (head(t) >= target) break
@@ -339,15 +374,70 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         }
     }
 
-    private fun planFor(dec: PcmDecoder): OutputPlan = when {
+    /**
+     * Side A's own USB driver, when it's on and a DAC is connected that Android can't drive
+     * bit-perfect at this rate. Asks for USB access the first time (playing through Android meanwhile).
+     */
+    private fun planExclusive(rate: Int, channels: Int, bits: Int, integerOnly: Boolean): OutputPlan? {
+        if (!exclusiveUsb) return null
+        if (router.usbSupport()?.bitPerfectRates?.contains(rate) == true) return null // Android does it properly
+        val d = UsbExclusive.audioDevice() ?: return null
+        if (!UsbExclusive.hasPermission(d)) {
+            onUsbPermissionNeeded?.invoke(d)
+            return null
+        }
+        val (alt, fmt) = UsbExclusive.choose(d, rate, channels, bits, integerOnly) ?: return null
+        router.clear() // not holding Android's bit-perfect mixer at the same time
+        return OutputPlan(
+            sampleRate = rate,
+            format = fmt,
+            channelMask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
+            device = null,
+            bitPerfect = true,
+            note = "Side A USB driver",
+            exclusive = ExclusiveTarget(d, alt),
+        )
+    }
+
+    private fun exclusiveDop(rate: Int, channels: Int): Boolean {
+        if (!exclusiveUsb || usbVolume < 0.999f) return false // DSD can't be turned down in software
+        val d = UsbExclusive.audioDevice() ?: return false
+        return UsbExclusive.hasPermission(d) && UsbExclusive.choose(d, rate, channels, 24, integerOnly = true) != null
+    }
+
+    private fun planFor(dec: PcmDecoder): OutputPlan {
+        // Volume or EQ make more than the source's bits: ask for a 24-bit or wider slot.
+        val processed = eq.isActive || usbVolume < 0.999f
+        val bits = if (dec.isDop) 24 else maxOf(dec.sourceBits?.takeIf { it > 1 } ?: 16, if (processed) 24 else 0)
+        planExclusive(dec.sampleRate, dec.channels, bits, integerOnly = dec.isDop)?.let { return it }
+        return planAndroid(dec)
+    }
+
+    private fun planAndroid(dec: PcmDecoder): OutputPlan = when {
         dec.isDop -> router.planDop(dec.sampleRate, dec.channels) ?: error("The USB DAC stopped offering a bit-perfect path for DoP")
         // EQ output has more than the source's bits: give it at least a 24-bit container.
         eq.isActive -> router.plan(dec.sampleRate, dec.channels, maxOf(dec.sourceBits ?: 24, 24), SampleFormat.FLOAT)
         else -> router.plan(dec.sampleRate, dec.channels, dec.sourceBits, dec.format)
     }
 
-    private fun facts(dec: PcmDecoder, plan: OutputPlan, track: AudioTrack): StreamFacts {
-        val device = track.routedDevice ?: plan.device
+    private fun facts(dec: PcmDecoder, plan: OutputPlan, sink: PcmSink): StreamFacts {
+        val ex = plan.exclusive
+        if (ex != null) {
+            return StreamFacts(
+                codec = dec.codecName,
+                sourceRate = dec.sourceRate,
+                sourceBits = dec.sourceBits,
+                dsd = if (dec is DsdDecoder) (if (dec.isDop) DsdMode.DOP else DsdMode.PCM) else null,
+                outputRate = plan.sampleRate,
+                outputFormat = plan.format,
+                bitPerfect = true,
+                device = DeviceKind.USB,
+                deviceName = ex.device.productName?.takeIf { it.isNotBlank() } ?: "USB DAC",
+                mixerRate = null,
+                exclusive = ExclusiveFacts(ex.alt.bitResolution, if (dec.isDop) null else (usbVolume * 100).toInt()),
+            )
+        }
+        val device = (sink as? TrackSink)?.track?.routedDevice ?: plan.device
         return StreamFacts(
             codec = dec.codecName,
             sourceRate = dec.sourceRate,
@@ -398,6 +488,16 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             .build()
         plan.device?.let { track.preferredDevice = it }
         return track
+    }
+
+    /** Two frames of DoP silence (0x69 DSD idle bytes under alternating markers) in [format]. */
+    private fun dopSilence(format: SampleFormat, channels: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        for (marker in intArrayOf(0x05, 0xFA)) repeat(channels) {
+            if (format == SampleFormat.S32) out.write(0)
+            out.write(0x69); out.write(0x69); out.write(marker)
+        }
+        return out.toByteArray()
     }
 
     /** Bits a container carries without loss; float is exact up to 24. */

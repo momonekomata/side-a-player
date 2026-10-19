@@ -21,7 +21,32 @@ what actually happened:
 * `● MIXED · … `: Android's mixer is in the path, with the reason (no USB DAC, Android < 14, or the
   DAC/phone doesn't offer bit-perfect at that rate)
 
-No permission prompt is involved: Android's bit-perfect mode is a system feature, not a
+### Exclusive USB driver (phones without bit-perfect, e.g. Samsung)
+
+When Android can't send to the DAC bit-perfect at a file's rate, Side A drives the DAC itself,
+like USB Audio Player Pro (Settings → *Exclusive USB driver*, on by default):
+
+1. The first time, Android asks *"Allow Side A to access <DAC>?"*. Plugging the DAC in can also
+   offer to open Side A, which grants the same access.
+2. Side A takes the DAC's audio interfaces from Android's USB audio driver, picks the DAC's
+   format for the file (16/24/32-bit, the narrowest that holds every bit), sets the DAC's clock
+   to the file's own rate (UAC2 clock source or UAC1 endpoint), and streams the samples over
+   isochronous USB itself (native code over usbfs, `app/src/main/cpp/usb_audio.c`). For async DACs
+   it follows the DAC's feedback endpoint, so the DAC's clock sets the pace.
+3. The badge reads LOSSLESS and the signal path says *Side A USB driver, exclusive*.
+4. When playback stops, the DAC goes back to Android. Between songs it stays with Side A, and only
+   the rate changes. Unplugging stops cleanly.
+
+**Volume.** With Android bypassed, the phone's volume can't reach the DAC, so Side A applies its
+own volume (a slider appears on the deck, and the volume keys and a DAC's own buttons drive it). It starts at
+30 %. 100 % is bit-perfect. Anything lower is digital attenuation in 64-bit float into a 24-bit or
+wider slot, and the badge says ENHANCED. DoP always plays at 100 %, so set the level on the DAC or amp.
+
+Other apps can't play through the DAC while Side A holds it (that's what exclusive means).
+
+### Android's bit-perfect mode
+
+No permission prompt is involved here: Android's bit-perfect mode is a system feature, not a
 USB takeover. Whether it's available is the phone maker's call. If the DAC is connected but the
 phone offers no bit-perfect mode for it, the signal path says exactly that, listing the rates it
 does offer, if any. Plugging the DAC in (or out) mid-song reopens the song on the new path where it
@@ -40,7 +65,7 @@ Notes:
 ## Decoding
 
 Lossless files are decoded by Side A itself: **ALAC** (Apple Lossless in .m4a, 16–32 bit; many
-phones have no decoder for it), **FLAC** (all stereo modes, 8–32 bit, any rate,
+phones have no decoder for it; also when an ID3 tag sits in front), **FLAC** (all stereo modes, 8–32 bit, any rate,
 seek table or not, and files with an ID3 tag stuck on the front, which Android's extractor rejects as
 "audio/unknown"), **WAV** (PCM, extensible, 32/64-bit float), **AIFF/AIFF-C** (incl. `sowt`, `fl32`)
 and **DSD**. They come out as the file's exact integer samples, so the bit-perfect path never detours

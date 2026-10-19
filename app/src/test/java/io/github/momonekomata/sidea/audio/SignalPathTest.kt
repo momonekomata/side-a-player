@@ -69,7 +69,7 @@ class SignalPathTest {
         val mixed = flacUsb.copy(bitPerfect = false, mixerRate = 48_000, usb = UsbSupport("KA17", apiAvailable = true, bitPerfectRates = emptyList()))
         val p = SignalPaths.describe(mixed, null)
         assertEquals(Quality.HIGH_QUALITY, p.quality)
-        assertEquals(true, p.stages.any { it.title == "KA17" && it.detail.contains("no bit-perfect mode") })
+        assertEquals(true, p.stages.any { it.title == "KA17" && it.detail.contains("no bit-perfect USB mode") })
         val someRates = mixed.copy(usb = UsbSupport("KA17", true, listOf(44_100, 48_000)))
         assertEquals(true, SignalPaths.describe(someRates, null).stages.any { it.detail.contains("44.1 kHz, 48 kHz, not at this file's 96 kHz") })
     }
