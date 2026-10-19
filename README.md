@@ -38,17 +38,22 @@ like USB Audio Player Pro (Settings → *Exclusive USB driver*, on by default):
    the rate changes. Unplugging stops cleanly.
 
 **Volume.** With Android bypassed, the phone's volume can't reach the DAC, so Side A applies its
-own volume (a slider appears on the deck, and the volume keys and a DAC's own buttons drive it). It starts at
+own volume (the phone's volume keys and a DAC's own buttons drive it). It starts at
 30 %. 100 % is bit-perfect. Anything lower is digital attenuation in 64-bit float into a 24-bit or
 wider slot, and the badge says ENHANCED. DoP always plays at 100 %, so set the level on the DAC or amp.
 
 Other apps can't play through the DAC while Side A holds it (that's what exclusive means). Side A
-gives it back as soon as another app starts playing, and half a minute into a pause. Play
+gives it back as soon as another app starts playing, and ten seconds into a pause. Play
 picks up from the same spot. To give it back, Side A takes every audio interface of the DAC
 (Linux keeps the sound card half-alive while any one stays bound, and then won't rebuild it),
 returns them control interface first, and if Linux's USB audio driver still won't take the DAC,
 resets it over USB, which looks like a replug to Linux. If Android still doesn't list the DAC a few
 seconds later, Side A says so, and unplugging and replugging it is the way out.
+
+A reset looks like a replug to Android too, so Android asks once which app should open for the
+DAC: pick Side A and tick **Always**. That's what keeps Side A's USB access for good; Side A then
+receives the replug silently and doesn't come to the front. Pressing play on a streaming app's deck
+in Side A waits until Android has the DAC back before telling the app to play.
 
 ### Android's bit-perfect mode
 
@@ -93,10 +98,11 @@ and YT Music Side A shows what can be observed and says so where it can't:
 
 ## Playback controls
 
-Shuffle and repeat (all / one) beside the transport keys; −10 / −5 / +5 / +10 s buttons; hold
-⏮/⏭ to rewind or fast-forward. The speed chip steps 0.5×…2× (long-press for 1×). Speeds other
-than 1× go through Android's time-stretch with the pitch kept, so they're never bit-perfect (the
-signal path says so). ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
+Shuffle and repeat (all / one) beside the transport keys; hold ⏮/⏭ to rewind or fast-forward.
+Swipe the transport keys left for −10 / −5 / +5 / +10 s and the speed chip, which steps 0.5×…2×
+(long-press for 1×). Speeds other than 1× go through Side A's own time-stretch (WSOLA, pitch kept)
+on whichever output is playing, Side A's USB driver included; the samples change, so the badge says
+ENHANCED, and DSD plays as PCM rather than DoP while the speed isn't 1×. ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
 local and NAS songs. **Search** (top of a folder card) indexes the whole local folder or NAS share
 the first time and finds songs and folders by title, artist, album or name. Going back up a folder
 returns to where you were scrolled. Long lists (20 entries or more) get an A–Z index down the right
@@ -143,7 +149,8 @@ phone's short landscape screen it's three columns: cards, a compact deck, and ly
 ## Signal path and quality badge
 
 Like Roon's signal-path light, the badge under the cover grades the whole path from the file to
-your ears, as good as its weakest step. Tap it to see each step.
+your ears, as good as its weakest step. Beside it is just the format (say, FLAC · 44.1 kHz · 24-bit);
+tap either to see each step.
 
 | Badge | Meaning |
 |---|---|

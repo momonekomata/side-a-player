@@ -34,7 +34,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.pointer.pointerInput
 import io.github.momonekomata.sidea.audio.RepeatMode
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -60,6 +59,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.unit.sp
 
 /** What the deck shows, whichever source is playing. */
@@ -79,9 +80,6 @@ data class DeckModel(
     val showLyrics: Boolean = false,
     val onToggleLyrics: () -> Unit = {},
     val onRetryLyrics: () -> Unit = {},
-    /** Side A's volume, shown only while its USB driver drives the DAC (null otherwise). */
-    val volume: Float? = null,
-    val onVolume: (Float) -> Unit = {},
     /** Null hides the heart (streaming songs are favourited in their own apps). */
     val favorite: Boolean? = null,
     val onFavorite: () -> Unit = {},
@@ -110,17 +108,17 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
     val panel = modifier
         .clip(RoundedCornerShape(10.dp))
         .background(Retro.Panel)
-        .padding(if (compact) 10.dp else 14.dp)
+        .padding(if (compact) 8.dp else 12.dp)
     if (compact) {
-        Row(panel, horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(panel, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             ArtSquare(model, Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
                 Controls(model, compact = true) { showPath = true }
             }
         }
     } else {
         // The square gets whatever height the controls leave, so the keys never fall off screen.
-        Column(panel, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(panel, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             ArtSquare(
                 model,
                 Modifier
@@ -142,38 +140,64 @@ private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
             Text(
                 model.title.ifBlank { "Nothing playing" },
                 color = Color.White,
-                fontSize = if (compact) 17.sp else 20.sp,
+                fontSize = if (compact) 16.sp else 18.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (model.subtitle.isNotBlank()) {
-                Text(model.subtitle, color = Retro.Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(model.subtitle, color = Retro.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         model.favorite?.let { fav ->
-            IconButton(onClick = model.onFavorite) {
+            IconButton(onClick = model.onFavorite, modifier = Modifier.size(40.dp)) {
                 Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else Retro.Muted)
             }
         }
     }
     val path = model.path
     if (path != null) {
-        // Badge on its own line; source and output each get a full line below, wrapping if
-        // they must rather than being cut off.
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // The badge and the format; the rest of the signal path is a tap on the badge away.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             QualityBadge(path.quality, onPath)
-            model.status.lines().forEach { line ->
-                Text(line, color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
-            }
+            Text(
+                model.status.lines().first(),
+                color = Retro.Muted,
+                fontFamily = Retro.Mono,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable(onClick = onPath),
+            )
         }
     } else {
         StatusLine(model.status, model.statusColor)
     }
     SeekBar(model)
-    model.volume?.let { v -> VolumeBar(v, model.onVolume) }
+    TransportPager(model, if (compact) 42.dp else 48.dp)
+}
+
+/**
+ * The transport keys; swipe them left for −10 −5 speed +5 +10. Two dots show which is up.
+ */
+@Composable
+private fun TransportPager(model: DeckModel, keyHeight: Dp) {
+    val pager = rememberPagerState { 2 }
+    HorizontalPager(pager, Modifier.fillMaxWidth().height(maxOf(keyHeight, 48.dp))) { page ->
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (page == 0) TransportRow(model, keyHeight) else SkipRow(model)
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+        repeat(2) { i ->
+            Box(Modifier.size(5.dp).clip(CircleShape).background(if (pager.currentPage == i) Retro.Orange else Retro.ShellEdge))
+        }
+    }
+}
+
+@Composable
+private fun TransportRow(model: DeckModel, h: Dp) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-        val h = if (compact) 42.dp else 52.dp
         model.shuffle?.let { on ->
             IconButton(onClick = model.onShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (on) Retro.Orange else Retro.Muted) }
         }
@@ -187,7 +211,6 @@ private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
             }
         }
     }
-    SkipRow(model)
 }
 
 /** The cover, or the lyrics in its place; one tap swaps them. */
@@ -269,21 +292,6 @@ private fun SmallKey(text: String, lit: Boolean = false, onLong: (() -> Unit)? =
             .combinedClickable(onClick = onClick, onLongClick = onLong)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     )
-}
-
-/** Shown while Side A drives the DAC itself: the phone's volume doesn't reach it then. */
-@Composable
-private fun VolumeBar(value: Float, onChange: (Float) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Filled.VolumeUp, "Volume", tint = Retro.Muted, modifier = Modifier.size(18.dp))
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Retro.ShellEdge),
-        )
-        Text("${(value * 100).toInt()}%", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
-    }
 }
 
 @Composable

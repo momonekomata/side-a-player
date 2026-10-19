@@ -462,8 +462,6 @@ private fun localDeck(
         statusColor = if (engine.error != null) Retro.Amber else Retro.Muted,
         path = if (engine.error == null) facts?.let { SignalPaths.describe(it, eq) } else null,
         art = art,
-        volume = facts?.exclusive?.volumePercent?.let { Settings.current.usbVolume },
-        onVolume = Player::setUsbVolume,
         favorite = t?.let { it.id in favorites },
         onFavorite = { t?.let(onFavorite) },
         shuffle = queue.shuffle,
@@ -505,7 +503,7 @@ private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlayin
     statusColor = Retro.Muted,
     path = np?.let { SignalPaths.describeRemote(vm.streaming.output.facts(app, it)) },
     art = art,
-    onToggle = { vm.streaming.playPause(app) },
+    onToggle = { vm.toggleRemote(app) },
     onNext = { vm.streaming.next(app) },
     onPrevious = { vm.streaming.previous(app) },
     onSeek = { vm.streaming.seekTo(app, it) },
@@ -735,7 +733,7 @@ private fun StreamingCard(vm: MainViewModel, app: StreamingApp, np: RemoteNowPla
                 np.queue.forEachIndexed { i, q ->
                     item {
                         JCardRow("%02d".format(i + 1), q.title, q.subtitle, current = q.id == np.activeQueueId) {
-                            vm.streaming.playQueueItem(app, q.id)
+                            Player.releaseDacThen { vm.streaming.playQueueItem(app, q.id) }
                         }
                     }
                 }

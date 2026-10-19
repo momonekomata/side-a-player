@@ -79,7 +79,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     @Volatile var eq = EqConfig()
     /** Use Side A's own USB driver when a DAC is connected and Android can't go bit-perfect. */
     @Volatile var exclusiveUsb = true
-    /** Playback speed; not 1 means Android's time-stretch, so never the bit-perfect paths. */
+    /** Playback speed; not 1 means Side A's time-stretch, so the samples change (never DoP). */
     @Volatile var speed = 1f
     /** Volume for the USB driver (0..1); Android's volume doesn't reach a DAC Side A drives. */
     @Volatile var usbVolume = 0.3f
@@ -195,12 +195,16 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                     main.post { callbacks.onAdvanced(seg.tag) }
                 }
             }
-            return baseUs + (h - headAtBase).coerceAtLeast(0) * 1_000_000 / rate
+            return baseUs + ((h - headAtBase).coerceAtLeast(0) * 1_000_000 / rate * playSpeed).toLong()
         }
 
-        // DoP can't be equalised, so an active EQ means DSD is converted to PCM instead.
+        /** The speed this session plays at; a change reopens the song. */
+        private val playSpeed = speed
+        private var stretch: TimeStretch? = null
+
+        // DoP can't be equalised or stretched, so either means DSD is converted to PCM instead.
         private val dopPlanner = DopPlanner { r, ch ->
-            callbacks.dopAllowed() && !eq.isActive && (exclusiveDop(r, ch) || router.canDop(r, ch))
+            callbacks.dopAllowed() && !eq.isActive && playSpeed == 1f && (exclusiveDop(r, ch) || router.canDop(r, ch))
         }
         private var eqProc: EqProcessor? = null
         private var floatBuf = FloatArray(0)
@@ -245,6 +249,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                         next = null
                         dec!!.seekTo(seek)
                         eqProc?.reset()
+                        stretch?.reset()
                         t.pause(); t.flush(); if (!paused) t.play()
                         flushHead = head(t)
                         written = 0
@@ -267,6 +272,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                         }
                         handOver?.second?.close()
                         handOverSource = null
+                        written += writeStretchTail(t, plan)
                         drain(t, flushHead + written)
                         if (!cancelled) {
                             _state.update { it.copy(isPlaying = false, positionMs = it.durationMs) }
@@ -366,7 +372,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             val config = eq
             val eqOn = config.isActive && !d.isDop
             val gainOn = gain < 0.999f && !d.isDop
-            if (!eqOn && !gainOn) return Triple(chunk.data, chunk.size, d.format)
+            val stretchOn = playSpeed != 1f && !d.isDop
+            if (!eqOn && !gainOn && !stretchOn) return Triple(chunk.data, chunk.size, d.format)
             val floatSize = PcmConverter.outputSize(chunk.size, d.format, SampleFormat.FLOAT)
             if (floatBytes.size < floatSize) floatBytes = ByteArray(floatSize)
             PcmConverter.convert(java.nio.ByteBuffer.wrap(chunk.data, 0, chunk.size), d.format, SampleFormat.FLOAT, floatBytes)
@@ -380,9 +387,41 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                 proc.process(floatBuf, samples / d.channels)
             }
             if (gainOn) for (k in 0 until samples) floatBuf[k] *= gain
+            if (stretchOn) {
+                val ts = stretch ?: TimeStretch(d.sampleRate, d.channels, playSpeed).also { stretch = it }
+                val frames = ts.process(floatBuf, samples / d.channels)
+                return floatsToBytes(ts.output, frames * d.channels)
+            }
             fb.rewind()
             fb.put(floatBuf, 0, samples)
             return Triple(floatBytes, floatSize, SampleFormat.FLOAT)
+        }
+
+        private var stretchBytes = ByteArray(0)
+
+        private fun floatsToBytes(src: FloatArray, samples: Int): Triple<ByteArray, Int, SampleFormat> {
+            if (stretchBytes.size < samples * 4) stretchBytes = ByteArray(samples * 4)
+            java.nio.ByteBuffer.wrap(stretchBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer().put(src, 0, samples)
+            return Triple(stretchBytes, samples * 4, SampleFormat.FLOAT)
+        }
+
+        /** The last few ms the stretcher still holds when the music ends; returns frames written. */
+        private fun writeStretchTail(t: PcmSink, plan: OutputPlan): Long {
+            val ts = stretch ?: return 0
+            val channels = Integer.bitCount(plan.channelMask)
+            val frames = ts.flush()
+            if (frames == 0) return 0
+            val (pcm, size, fmt) = floatsToBytes(ts.output, frames * channels)
+            val out = ByteArray(PcmConverter.outputSize(size, fmt, plan.format))
+            PcmConverter.convert(java.nio.ByteBuffer.wrap(pcm, 0, size), fmt, plan.format, out)
+            var off = 0
+            while (off < out.size && !cancelled) {
+                val w = t.write(out, off, out.size - off)
+                if (w < 0) break
+                if (w == 0) synchronized(lock) { lock.wait(20) }
+                off += w
+            }
+            return (off / (plan.format.bytesPerSample * channels)).toLong()
         }
 
         /** A sink for [plan]: Android's AudioTrack, or the USB driver streaming to the DAC. */
@@ -437,13 +476,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     }
 
     private fun planFor(dec: PcmDecoder): OutputPlan {
-        if (speed != 1f && !dec.isDop) {
-            // Time-stretching changes every sample anyway; Android's mixer does it with the pitch kept.
-            router.clear()
-            return router.mixed(dec.sampleRate, dec.channels)
-        }
-        // Volume or EQ make more than the source's bits: ask for a 24-bit or wider slot.
-        val processed = eq.isActive || usbVolume < 0.999f
+        // Volume, EQ or a speed change make more than the source's bits: ask for a 24-bit or wider slot.
+        val processed = eq.isActive || usbVolume < 0.999f || speed != 1f
         val bits = if (dec.isDop) 24 else maxOf(dec.sourceBits?.takeIf { it > 1 } ?: 16, if (processed) 24 else 0)
         planExclusive(dec.sampleRate, dec.channels, bits, integerOnly = dec.isDop)?.let { return it }
         return planAndroid(dec)
@@ -452,7 +486,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     private fun planAndroid(dec: PcmDecoder): OutputPlan = when {
         dec.isDop -> router.planDop(dec.sampleRate, dec.channels) ?: error("The USB DAC stopped offering a bit-perfect path for DoP")
         // EQ output has more than the source's bits: give it at least a 24-bit container.
-        eq.isActive -> router.plan(dec.sampleRate, dec.channels, maxOf(dec.sourceBits ?: 24, 24), SampleFormat.FLOAT)
+        eq.isActive || speed != 1f -> router.plan(dec.sampleRate, dec.channels, maxOf(dec.sourceBits ?: 24, 24), SampleFormat.FLOAT)
         else -> router.plan(dec.sampleRate, dec.channels, dec.sourceBits, dec.format)
     }
 
@@ -471,6 +505,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                 deviceName = ex.device.productName?.takeIf { it.isNotBlank() } ?: "USB DAC",
                 mixerRate = null,
                 exclusive = ExclusiveFacts(ex.alt.bitResolution, if (dec.isDop) null else (usbVolume * 100).toInt()),
+                speed = if (dec.isDop) 1f else speed,
             )
         }
         val device = (sink as? TrackSink)?.track?.routedDevice ?: plan.device
@@ -525,7 +560,6 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             .setBufferSizeInBytes(maxOf(minBuf * 4, plan.sampleRate / 2 * plan.format.bytesPerSample * Integer.bitCount(plan.channelMask)))
             .build()
         plan.device?.let { track.preferredDevice = it }
-        if (speed != 1f) track.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
         return track
     }
 

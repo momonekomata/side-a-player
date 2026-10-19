@@ -266,6 +266,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(streamingAccess = streaming.hasAccess()) }
     }
 
+    /** Play/pause for a streaming app; playing it first hands the DAC back from Side A's driver. */
+    fun toggleRemote(app: io.github.momonekomata.sidea.streaming.StreamingApp) {
+        if (streaming.nowPlaying.value[app]?.isPlaying == true) streaming.playPause(app)
+        else Player.releaseDacThen { streaming.playPause(app) }
+    }
+
     fun selectTab(tab: SourceTab) {
         prefs.edit().putString("tab", tab.name).apply()
         _ui.update { it.copy(tab = tab) }

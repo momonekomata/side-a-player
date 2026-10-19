@@ -93,7 +93,7 @@ object SignalPaths {
             stages += PathStage("Parametric EQ", "$n band${if (n == 1) "" else "s"} · preamp ${signed(eq.effectivePreampDb)} dB", Quality.ENHANCED)
         }
         if (f.speed != 1f) {
-            stages += PathStage("Speed", "${"%.2f".format(f.speed).trimEnd('0').trimEnd('.')}× · time-stretched by Android, pitch kept", Quality.HIGH_QUALITY)
+            stages += PathStage("Speed", "${"%.2f".format(f.speed).trimEnd('0').trimEnd('.')}× · time-stretched by Side A, pitch kept", Quality.ENHANCED)
         }
         val vol = f.exclusive?.volumePercent
         if (vol != null && vol < 100) {

@@ -35,6 +35,7 @@ class ExclusiveOutput(
  */
 object UsbExclusive {
     private const val TAG = "SideA-usb"
+    private const val EBUSY = 16
     private const val ACTION_PERMISSION = "io.github.momonekomata.sidea.USB_PERMISSION"
 
     private lateinit var appContext: Context
@@ -244,9 +245,15 @@ object UsbExclusive {
         }
         // The control interface first: binding it rebuilds the whole sound card, streaming
         // interfaces included. 1 means Android's driver took it, 0 that no driver would.
-        val bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
+        var bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
+        // The old sound card can take a moment to go; try again briefly before resorting to a reset.
+        for (attempt in 0 until 3) {
+            if (bound > 0 || bound == -EBUSY) break
+            Thread.sleep(100)
+            bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
+        }
         for (id in h.claimed) if (id != h.desc.controlInterface) UsbStream.nativeReattachKernel(fd, id)
-        handBack = if (bound > 0) {
+        handBack = if (bound > 0 || bound == -EBUSY) { // EBUSY: a driver already has it
             "reattached"
         } else {
             // A USB reset makes Linux unbind and probe every interface afresh, as if replugged.
