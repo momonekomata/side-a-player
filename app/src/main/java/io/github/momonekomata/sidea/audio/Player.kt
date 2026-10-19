@@ -66,6 +66,14 @@ data class QueueState(
         )
     }
 
+    /** The same song playing, with [upcoming] after it (reordered or trimmed by the user). */
+    fun withUpcoming(upcoming: List<Track>): QueueState {
+        val tracks = this.tracks.take(index + 1) + upcoming
+        // Unshuffled, the play order is the folder order; shuffled, turning shuffle off returns to the folder.
+        val kept = original.filter { o -> tracks.any { it === o } }
+        return copy(tracks = tracks, original = if (shuffle) kept else tracks)
+    }
+
     /** [t] at the end of the queue. */
     fun withAdded(t: Track): QueueState =
         if (current == null) QueueState(listOf(t), 0, shuffle, repeat) else copy(tracks = tracks + t, original = original + t)
@@ -296,6 +304,13 @@ object Player {
         val q = _queue.value
         if (index == q.index || index !in q.tracks.indices) return
         _queue.value = q.without(index)
+        engine.upNextChanged()
+    }
+
+    /** What plays after the current song, as the user reordered it or swiped songs out. */
+    fun setUpcoming(upcoming: List<Track>) {
+        if (_queue.value.current == null) return
+        _queue.value = _queue.value.withUpcoming(upcoming)
         engine.upNextChanged()
     }
 

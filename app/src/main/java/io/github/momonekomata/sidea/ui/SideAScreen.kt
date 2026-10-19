@@ -30,6 +30,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -709,53 +718,130 @@ private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifi
     if (creating) PlaylistNameDialog(onCreate = { vm.newPlaylist(it, null); creating = false }, onDismiss = { creating = false })
 }
 
-/** What plays next (tap to jump there, long-press for more), or what played. */
+/** An up-next row: its key outlives reordering, which a list index wouldn't. */
+private class QueueSlot(val track: io.github.momonekomata.sidea.sources.Track, val key: Long)
+
+/**
+ * One list, like Apple Music's: what played above (scroll up for more), the song playing in the
+ * middle, and up next below it. Swipe an up-next song left to take it out; long-press and drag
+ * to move it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
-    var history by rememberSaveable { mutableStateOf(false) }
     val played by io.github.momonekomata.sidea.sources.PlayHistory.items.collectAsStateWithLifecycle()
-    val upcoming = (queue.tracks.size - queue.index - 1).coerceAtLeast(0)
-    val subtitle = if (history) "${played.size} songs played" else "${queue.tracks.size} songs · $upcoming to come${if (queue.shuffle) " · shuffled" else ""}"
-    JCard(if (history) "History" else "Queue", subtitle, modifier) {
-        item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton({ history = false }) { Text("Queue", color = if (!history) Retro.Orange else Retro.InkFaint) }
-                TextButton({ history = true }) { Text("History", color = if (history) Retro.Orange else Retro.InkFaint) }
-            }
+    val current = queue.current
+    // Oldest first, ending just above the song playing (which history already holds).
+    val past = remember(played, current?.id) {
+        (if (current != null && played.firstOrNull()?.song?.id == current.id) played.drop(1) else played).reversed()
+    }
+    val nextKey = remember { longArrayOf(0) }
+    val upcoming = remember { mutableStateListOf<QueueSlot>() }
+    var dragKey by remember { mutableStateOf<Long?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(queue) {
+        if (dragKey == null) {
+            upcoming.clear()
+            if (queue.index >= 0) queue.tracks.drop(queue.index + 1).forEach { upcoming += QueueSlot(it, nextKey[0]++) }
         }
-        if (!history) {
-            if (queue.tracks.isEmpty()) item { JCardNote("Nothing queued. Play a song, or long-press one and pick Add to queue.") }
-            queue.tracks.forEachIndexed { i, t ->
-                item {
-                    val mark = when {
-                        i < queue.index -> "·"
-                        else -> "%02d".format(i - queue.index)
-                    }
-                    JCardRow(
-                        mark, t.displayTitle(tags), listOf(t.displayArtist(tags), t.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "),
-                        current = i == queue.index,
-                        action = if (i != queue.index) "✕" to { Player.removeAt(i) } else null,
-                        onLongClick = { vm.openSongMenu(t) },
-                        onClick = { Player.jumpTo(i) },
-                    )
-                }
-            }
-            if (upcoming > 0) item { JCardRow("", "Clear what's to come", onClick = Player::clearUpcoming) }
-        } else {
-            if (played.isEmpty()) item { JCardNote("Songs you play from Local, the NAS, Favourites and playlists show up here.") }
-            played.forEach { p ->
-                item {
+    }
+    val list = rememberLazyListState()
+    val nowItem = if (past.isNotEmpty()) past.size + 1 else 0
+    // Opens on the song playing, history out of sight above it.
+    LaunchedEffect(current?.id) { if (dragKey == null && current != null) list.scrollToItem(nowItem) }
+
+    fun commit() {
+        dragKey = null
+        dragOffset = 0f
+        Player.setUpcoming(upcoming.map { it.track })
+    }
+
+    fun drag(dy: Float) {
+        val key = dragKey ?: return
+        dragOffset += dy
+        val visible = list.layoutInfo.visibleItemsInfo
+        val me = visible.firstOrNull { it.key == key } ?: return
+        val centre = (me.offset + dragOffset + me.size / 2).toInt()
+        val over = visible.firstOrNull { it.key is Long && it.key != key && centre in it.offset until it.offset + it.size } ?: return
+        val from = upcoming.indexOfFirst { it.key == key }
+        val to = upcoming.indexOfFirst { it.key == over.key }
+        if (from < 0 || to < 0) return
+        upcoming.add(to, upcoming.removeAt(from))
+        // The row now sits where the other was; keep it under the finger.
+        dragOffset += me.offset - over.offset
+    }
+
+    val subtitle = "${past.size} played · ${upcoming.size} up next${if (queue.shuffle) " · shuffled" else ""}"
+    JCard("Queue", subtitle, modifier, listState = list) {
+        if (past.isNotEmpty()) {
+            item(key = "clear-history") { JCardRow("", "Clear history", onClick = io.github.momonekomata.sidea.sources.PlayHistory::clear) }
+            past.forEachIndexed { i, p ->
+                item(key = "h$i:${p.atMs}") {
                     val f = p.song
                     JCardRow(
                         playedAgo(p.atMs), f.title, listOf(f.artist, f.album).filter { it.isNotBlank() }.joinToString(" · "),
-                        current = queue.current?.id == f.id,
                         onLongClick = { vm.openSongMenu(f) },
                         onClick = { vm.playPlayed(f) },
                     )
                 }
             }
-            if (played.isNotEmpty()) item { JCardRow("", "Clear history", onClick = io.github.momonekomata.sidea.sources.PlayHistory::clear) }
         }
+        item(key = "now") {
+            if (current == null) {
+                JCardNote("Nothing playing. Play a song, or long-press one and pick Add to queue.")
+            } else {
+                JCardRow(
+                    "▶", current.displayTitle(tags),
+                    "NOW PLAYING · " + listOf(current.displayArtist(tags), current.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "),
+                    current = true,
+                    onLongClick = { vm.openSongMenu(current) },
+                    onClick = {},
+                )
+            }
+        }
+        upcoming.forEachIndexed { i, slot ->
+            item(key = slot.key) {
+                val dragging = dragKey == slot.key
+                val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
+                    if (v == SwipeToDismissBoxValue.EndToStart) {
+                        upcoming.remove(slot)
+                        Player.setUpcoming(upcoming.map { it.track })
+                        true
+                    } else {
+                        false
+                    }
+                })
+                SwipeToDismissBox(
+                    swipe,
+                    enableDismissFromStartToEnd = false,
+                    backgroundContent = {
+                        Box(Modifier.fillMaxSize().background(Retro.Orange).padding(end = 18.dp), contentAlignment = Alignment.CenterEnd) {
+                            Text("REMOVE", color = Retro.Cream, fontFamily = Retro.Mono, fontSize = 12.sp)
+                        }
+                    },
+                    modifier = Modifier
+                        .zIndex(if (dragging) 1f else 0f)
+                        .graphicsLayer { translationY = if (dragging) dragOffset else 0f }
+                        .then(if (dragging) Modifier else Modifier.animateItem())
+                        .pointerInput(slot.key) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { dragKey = slot.key; dragOffset = 0f },
+                                onDrag = { change, d -> change.consume(); drag(d.y) },
+                                onDragEnd = ::commit,
+                                onDragCancel = ::commit,
+                            )
+                        },
+                ) {
+                    val t = slot.track
+                    JCardRow(
+                        "%02d".format(i + 1), t.displayTitle(tags), listOf(t.displayArtist(tags), t.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "),
+                        // A long press that turned into a drag isn't a tap.
+                        onClick = { if (dragKey == null) Player.jumpTo(queue.index + 1 + upcoming.indexOf(slot)) },
+                    )
+                }
+            }
+        }
+        if (upcoming.isNotEmpty()) item(key = "clear-next") { JCardRow("", "Clear up next", onClick = Player::clearUpcoming) }
     }
 }
 

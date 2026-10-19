@@ -111,9 +111,9 @@ hangul get a mark each after Z.
 
 **Long-press a song** (in a folder, search, Favourites, a playlist, the queue or the history) for
 add to / remove from favourites, play next, add to queue and add to playlist. Playlists sit in the
-Favourites tab above the favourite songs. The **Queue** tab shows what plays next: tap a song to
-jump to it, ✕ to take it out, or clear what's to come. Its **History** side lists the last 300
-songs played, newest first.
+Favourites tab above the favourite songs. The **Queue** tab is one list, like Apple Music's: the song
+playing in the middle, up next below it (tap to jump there, swipe left to take a song out,
+long-press and drag to move it), and the last 300 songs played above it; scroll up for older ones.
 
 ## NAS playback
 

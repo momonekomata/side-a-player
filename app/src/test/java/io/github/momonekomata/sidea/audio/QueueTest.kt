@@ -48,4 +48,15 @@ class QueueTest {
         assertEquals("t3", q.current?.id)
         assertEquals(listOf("t2", "t3"), q.original.map { it.id })
     }
+
+    @Test
+    fun `reordering up next keeps the song playing and, unshuffled, the folder order follows`() {
+        val q = QueueState(tracks, 0).withUpcoming(listOf(tracks[2], tracks[1]))
+        assertEquals(listOf("t1", "t3", "t2"), q.tracks.map { it.id })
+        assertEquals(listOf("t1", "t3", "t2"), q.original.map { it.id })
+        assertEquals("t1", q.current?.id)
+        val shuffled = QueueState(listOf(tracks[1], tracks[0], tracks[2]), 0, shuffle = true, original = tracks).withUpcoming(listOf(tracks[2]))
+        assertEquals(listOf("t2", "t3"), shuffled.tracks.map { it.id })
+        assertEquals(listOf("t2", "t3"), shuffled.original.map { it.id })
+    }
 }
