@@ -1,5 +1,6 @@
 package io.github.momonekomata.sidea.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -23,6 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,9 +38,10 @@ fun JCard(
     title: String,
     subtitle: String,
     modifier: Modifier = Modifier,
+    art: ImageBitmap? = null,
     content: LazyListScope.() -> Unit,
 ) {
-    JCardFrame(title, subtitle, modifier) {
+    JCardFrame(title, subtitle, modifier, art) {
         LazyColumn(Modifier.fillMaxSize(), content = content)
     }
 }
@@ -47,6 +52,7 @@ fun JCardFrame(
     title: String,
     subtitle: String,
     modifier: Modifier = Modifier,
+    art: ImageBitmap? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
@@ -56,17 +62,28 @@ fun JCardFrame(
             .background(Retro.Cream),
     ) {
         Box(Modifier.fillMaxWidth().height(6.dp).background(Retro.Orange))
-        Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
-            Text(
-                title,
-                color = Retro.Ink,
-                fontFamily = Retro.Hand,
-                fontWeight = FontWeight.Bold,
-                fontSize = 24.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(subtitle, color = Retro.InkFaint, fontFamily = Retro.Mono, fontSize = 11.sp, maxLines = 1)
+        Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            // The album cover where a real J-card has its front panel.
+            if (art != null) {
+                Image(
+                    art,
+                    contentDescription = "Cover",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.padding(end = 12.dp).size(56.dp).clip(RoundedCornerShape(3.dp)),
+                )
+            }
+            Column {
+                Text(
+                    title,
+                    color = Retro.Ink,
+                    fontFamily = Retro.Hand,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(subtitle, color = Retro.InkFaint, fontFamily = Retro.Mono, fontSize = 11.sp, maxLines = 1)
+            }
         }
         HorizontalDivider(color = Retro.Ink.copy(alpha = 0.6f), thickness = 1.5.dp)
         content()

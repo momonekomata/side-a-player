@@ -14,6 +14,7 @@ import android.media.session.PlaybackState
 import android.os.IBinder
 import io.github.momonekomata.sidea.MainActivity
 import io.github.momonekomata.sidea.R
+import io.github.momonekomata.sidea.sources.ArtworkStore
 import io.github.momonekomata.sidea.sources.TagStore
 import io.github.momonekomata.sidea.sources.Track
 import io.github.momonekomata.sidea.sources.displayAlbum
@@ -54,7 +55,9 @@ class PlaybackService : Service() {
         }
         startForeground(ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         scope.launch {
-            combine(Player.queue, Player.state, TagStore.tags) { q, s, tags -> Shown(q.current, s.isPlaying, s.durationMs, q.current?.let { tags[it.id] }) }
+            combine(Player.queue, Player.state, TagStore.tags, ArtworkStore.loaded) { q, s, tags, art ->
+                Shown(q.current, s.isPlaying, s.durationMs, q.current?.let { tags[it.id] }, art)
+            }
                 .distinctUntilChanged()
                 .collect { shown ->
                     val t = shown.track
@@ -66,6 +69,7 @@ class PlaybackService : Service() {
                             .putString(MediaMetadata.METADATA_KEY_ARTIST, t?.displayArtist(tags).orEmpty())
                             .putString(MediaMetadata.METADATA_KEY_ALBUM, t?.displayAlbum(tags).orEmpty())
                             .putLong(MediaMetadata.METADATA_KEY_DURATION, s.durationMs)
+                            .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, t?.let { ArtworkStore.cached(it) })
                             .build(),
                     )
                     session.setPlaybackState(
@@ -112,6 +116,7 @@ class PlaybackService : Service() {
             .setContentTitle(t?.displayTitle(tags) ?: "Side A")
             .setContentText(listOf(t?.displayArtist(tags), t?.displayAlbum(tags)).filter { !it.isNullOrBlank() }.joinToString(" · "))
             .setContentIntent(open)
+            .setLargeIcon(t?.let { ArtworkStore.cached(it) })
             .setOngoing(playing)
             .addAction(action(android.R.drawable.ic_media_previous, "Previous", ACTION_PREV))
             .addAction(
@@ -132,7 +137,7 @@ class PlaybackService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     /** What the notification depends on; position ticks are left out, the session extrapolates them. */
-    private data class Shown(val track: Track?, val playing: Boolean, val durationMs: Long, val tags: Any?)
+    private data class Shown(val track: Track?, val playing: Boolean, val durationMs: Long, val tags: Any?, val artVersion: Int)
 
     companion object {
         private const val CHANNEL = "playback"

@@ -30,6 +30,39 @@ Notes:
 * What isn't done yet: a UAPP-style user-space USB driver for phones without Android 14 bit-perfect
   support, multichannel, DST-compressed DFF, and DSD at 48 kHz-family rates.
 
+## Signal path and quality badge
+
+Like Roon's signal-path light, the badge under the cassette grades the whole path from the file to
+your ears, as good as its weakest step. Tap it to see each step.
+
+| Badge | Meaning |
+|---|---|
+| **LOSSLESS** (purple) | Lossless file, no DSP, bit-perfect to the USB DAC (DoP included) |
+| **ENHANCED** (blue) | Lossless file, deliberately changed by your EQ, then bit-perfect out |
+| **HIGH QUALITY** (green) | Lossless file, but Android's mixer resamples/mixes it, or DSD is converted to PCM |
+| **LOSSY** (amber) | A compressed file (MP3, AAC, Opus…) or a Bluetooth link anywhere in the path |
+
+The output is watched while playing, so plugging in Bluetooth headphones or pulling the DAC
+updates the badge.
+
+## Parametric EQ
+
+Up to 10 bands (peak, low/high shelf, low/high pass) with frequency, gain and Q, a live
+response curve, presets, and **Paste AutoEQ**: copy the "Parametric EQ" text for your headphones from
+[autoeq.app](https://autoeq.app) (Equalizer APO format) and paste it in. The EQ runs in 64-bit
+floating point at the file's own sample rate, *before* the output. Bit-perfect USB stays
+bit-perfect, but carries your EQ'd signal in at least a 24-bit container (the badge says
+ENHANCED). Auto preamp lowers the level by the biggest boost so nothing clips. A flat or switched-off EQ
+is fully bypassed. While the EQ is on, DSD is converted to PCM so it can be equalised (DoP can't
+be). The EQ applies to local and NAS playback; streaming apps' audio is theirs.
+
+## Artwork
+
+Covers come from the file (FLAC pictures, ID3 APIC, MP4 `covr`, DSF's ID3), else from the folder
+(`cover.jpg`, `folder.jpg`, `front.jpg`, `AlbumArt*.jpg`, or a lone image). Streaming apps
+supply their own. The cover shows on the cassette label, in the J-card header, on the lock screen
+and in the notification. Tap the cassette to see it full size.
+
 ## Gapless playback
 
 About 15 s before a song ends, the next one in the folder is opened and decoded on a helper

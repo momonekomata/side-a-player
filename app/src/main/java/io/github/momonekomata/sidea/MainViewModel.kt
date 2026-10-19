@@ -20,7 +20,10 @@ import io.github.momonekomata.sidea.streaming.StreamingController
 import io.github.momonekomata.sidea.lyrics.Lyrics
 import io.github.momonekomata.sidea.lyrics.LyricsQuery
 import io.github.momonekomata.sidea.lyrics.LyricsRepository
+import android.graphics.Bitmap
+import io.github.momonekomata.sidea.sources.ArtworkStore
 import io.github.momonekomata.sidea.sources.TagStore
+import kotlinx.coroutines.delay
 import io.github.momonekomata.sidea.sources.guessArtistTitle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,6 +92,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var loadJob: Job? = null
     private var tagJob: Job? = null
 
+    private val _nowArt = MutableStateFlow<Bitmap?>(null)
+    /** Cover of the local song playing. */
+    val nowArt = _nowArt.asStateFlow()
+
     private val lyricsRepo = LyricsRepository(app)
     private val _lyrics = MutableStateFlow(LyricsState())
     val lyrics = _lyrics.asStateFlow()
@@ -104,6 +111,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         prefs.getString("localTree", null)?.let { openLocal(Uri.parse(it), remember = false) }
         onResume()
         followLyrics()
+        followArtwork()
+    }
+
+    private fun followArtwork() = viewModelScope.launch {
+        Player.queue.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }.collectLatest { t ->
+            _nowArt.value = t?.let { ArtworkStore.cached(it) }
+            if (t == null) return@collectLatest
+            // An FTPS song only becomes readable once it's cached, so look again a few times.
+            repeat(4) {
+                ArtworkStore.load(getApplication(), t)?.let { _nowArt.value = it; return@collectLatest }
+                delay(20_000)
+            }
+        }
     }
 
     /**

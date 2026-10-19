@@ -2,9 +2,14 @@ package io.github.momonekomata.sidea
 
 import android.content.Context
 import android.content.SharedPreferences
+import io.github.momonekomata.sidea.audio.EqBand
+import io.github.momonekomata.sidea.audio.EqConfig
+import io.github.momonekomata.sidea.audio.FilterType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class Prefs(
     val gapless: Boolean = true,
@@ -12,6 +17,7 @@ data class Prefs(
     val dop: Boolean = false,
     /** Look lyrics up on lrclib.net when the file and folder have none. */
     val onlineLyrics: Boolean = true,
+    val eq: EqConfig = EqConfig(),
 )
 
 object Settings {
@@ -27,6 +33,7 @@ object Settings {
             gapless = sp.getBoolean("gapless", true),
             dop = sp.getBoolean("dop", false),
             onlineLyrics = sp.getBoolean("onlineLyrics", true),
+            eq = runCatching { sp.getString("eq", null)?.let { eqFromJson(JSONObject(it)) } }.getOrNull() ?: EqConfig(),
         )
     }
 
@@ -37,6 +44,26 @@ object Settings {
             .putBoolean("gapless", p.gapless)
             .putBoolean("dop", p.dop)
             .putBoolean("onlineLyrics", p.onlineLyrics)
+            .putString("eq", eqToJson(p.eq).toString())
             .apply()
+    }
+
+    private fun eqToJson(c: EqConfig) = JSONObject()
+        .put("enabled", c.enabled).put("preampDb", c.preampDb).put("autoPreamp", c.autoPreamp)
+        .put("bands", JSONArray(c.bands.map {
+            JSONObject().put("type", it.type.name).put("freq", it.freqHz).put("gain", it.gainDb).put("q", it.q).put("on", it.enabled)
+        }))
+
+    private fun eqFromJson(o: JSONObject): EqConfig {
+        val arr = o.optJSONArray("bands") ?: JSONArray()
+        return EqConfig(
+            enabled = o.optBoolean("enabled"),
+            preampDb = o.optDouble("preampDb", 0.0),
+            autoPreamp = o.optBoolean("autoPreamp", true),
+            bands = (0 until arr.length()).map { i ->
+                val b = arr.getJSONObject(i)
+                EqBand(FilterType.valueOf(b.getString("type")), b.getDouble("freq"), b.getDouble("gain"), b.getDouble("q"), b.optBoolean("on", true))
+            },
+        )
     }
 }

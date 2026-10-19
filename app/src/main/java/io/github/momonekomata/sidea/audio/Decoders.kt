@@ -11,6 +11,8 @@ import io.github.momonekomata.sidea.sources.readUpTo
 /** One file's worth of PCM, whatever it was encoded as. */
 interface PcmDecoder {
     val sampleRate: Int
+    /** The file's own rate; differs from [sampleRate] only for DSD (bits per second). */
+    val sourceRate: Int get() = sampleRate
     val channels: Int
     val format: SampleFormat
     val sourceBits: Int?
@@ -207,6 +209,7 @@ class DsdDecoder(private val dsd: DsdStream, dop: DopPlanner?) : PcmDecoder {
 
     override val isDop: Boolean
     override val sampleRate: Int
+    override val sourceRate = dsd.dsdRate
     override val channels = dsd.channels
     override val format: SampleFormat
     override val sourceBits: Int? = 1

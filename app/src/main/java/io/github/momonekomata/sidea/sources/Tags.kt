@@ -112,7 +112,8 @@ object TagReader {
 
     // ---- ID3v2.2 / 2.3 / 2.4 ----
 
-    fun id3(ra: RandomAccess, at: Long): Tags? {
+    /** Frames of the ID3v2 tag at [at], with v2.2 ids mapped to their v2.3 names (PIC stays "PIC"). */
+    internal fun id3Frames(ra: RandomAccess, at: Long): List<Pair<String, ByteArray>>? {
         val h = ra.readFully(at, 10)
         if (h.ascii(0, 3) != "ID3") return null
         val major = h[3].toInt()
@@ -125,7 +126,7 @@ object TagReader {
         }
         val idLen = if (major == 2) 3 else 4
         val hdrLen = if (major == 2) 6 else 10
-        val f = mutableMapOf<String, String>()
+        val frames = mutableListOf<Pair<String, ByteArray>>()
         while (p + hdrLen <= body.size) {
             val id = body.ascii(p, idLen)
             if (id[0] == '\u0000') break
@@ -136,13 +137,19 @@ object TagReader {
             }
             val start = p + hdrLen
             if (len <= 0 || start + len > body.size) break
-            val data = body.copyOfRange(start, start + len)
-            val key = V22[id] ?: id
+            frames += (V22[id] ?: id) to body.copyOfRange(start, start + len)
+            p = start + len
+        }
+        return frames
+    }
+
+    fun id3(ra: RandomAccess, at: Long): Tags? {
+        val f = mutableMapOf<String, String>()
+        for ((key, data) in id3Frames(ra, at) ?: return null) {
             when {
                 key == "USLT" -> f.putIfAbsent(key, uslt(data))
                 key.startsWith("T") -> f.putIfAbsent(key, id3Text(data))
             }
-            p = start + len
         }
         return Tags(
             title = f["TIT2"],
@@ -156,7 +163,7 @@ object TagReader {
 
     private val V22 = mapOf("TT2" to "TIT2", "TP1" to "TPE1", "TAL" to "TALB", "TP2" to "TPE2", "TRK" to "TRCK", "ULT" to "USLT")
 
-    private fun charset(enc: Int): Charset = when (enc) {
+    internal fun charset(enc: Int): Charset = when (enc) {
         1 -> Charsets.UTF_16
         2 -> Charsets.UTF_16BE
         3 -> Charsets.UTF_8
@@ -225,7 +232,7 @@ object TagReader {
     }
 
     /** Returns (content start, end) of the first child atom named [type] within [from, to). */
-    private fun findAtom(ra: RandomAccess, from: Long, to: Long, type: String): Pair<Long, Long>? {
+    internal fun findAtom(ra: RandomAccess, from: Long, to: Long, type: String): Pair<Long, Long>? {
         var pos = from
         while (pos + 8 <= to) {
             val h = ra.readUpTo(pos, 16)

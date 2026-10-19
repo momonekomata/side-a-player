@@ -15,6 +15,8 @@ data class Track(
     val tagSource: ((Context) -> RandomAccess?)? = null,
     /** Reads the .lrc with the same name next to the file, when the folder has one. Blocking. */
     val lyricsFile: ((Context) -> String)? = null,
+    /** Reads the folder's cover image (cover.jpg and the like), when there is one. Blocking. */
+    val folderArt: ((Context) -> ByteArray)? = null,
 )
 
 typealias TrackOpener = suspend (Context) -> PlayableSource

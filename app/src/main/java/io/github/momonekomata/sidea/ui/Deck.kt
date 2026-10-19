@@ -1,5 +1,6 @@
 package io.github.momonekomata.sidea.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,7 +33,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import io.github.momonekomata.sidea.audio.SignalPath
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,6 +50,9 @@ data class DeckModel(
     val playing: Boolean,
     val status: String,
     val statusColor: Color,
+    /** Local playback only: the graded signal path behind the quality badge. */
+    val path: SignalPath? = null,
+    val art: ImageBitmap? = null,
     val onToggle: () -> Unit,
     val onNext: () -> Unit,
     val onPrevious: () -> Unit,
@@ -52,6 +61,8 @@ data class DeckModel(
 
 @Composable
 fun Deck(model: DeckModel, modifier: Modifier = Modifier) {
+    var showCover by remember { mutableStateOf(false) }
+    var showPath by remember { mutableStateOf(false) }
     Column(
         modifier
             .clip(RoundedCornerShape(10.dp))
@@ -68,14 +79,53 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier) {
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
         val progress = if (model.durationMs > 0) model.positionMs.toFloat() / model.durationMs else 0f
-        Cassette(model.title, model.subtitle, progress, model.playing)
-        StatusLine(model.status, model.statusColor)
+        val tapCover = Modifier.clickable(enabled = model.art != null) { showCover = !showCover }
+        if (showCover && model.art != null) {
+            CoverView(model.art, tapCover)
+        } else {
+            Cassette(model.title, model.subtitle, progress, model.playing, tapCover, model.art)
+        }
+        val path = model.path
+        if (path != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                QualityBadge(path.quality) { showPath = true }
+                Text(
+                    model.status,
+                    color = Retro.Muted,
+                    fontFamily = Retro.Mono,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 10.dp).weight(1f),
+                )
+            }
+        } else {
+            StatusLine(model.status, model.statusColor)
+        }
         SeekBar(model)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
             DeckKey(Icons.Filled.SkipPrevious, "Previous", onClick = model.onPrevious)
             DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", wide = true, lit = model.playing, onClick = model.onToggle)
             DeckKey(Icons.Filled.SkipNext, "Next", onClick = model.onNext)
         }
+    }
+    val path = model.path
+    if (showPath && path != null) SignalPathDialog(path, onDismiss = { showPath = false })
+}
+
+/** The cover in place of the cassette, framed like the front of the case. */
+@Composable
+private fun CoverView(art: ImageBitmap, modifier: Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .aspectRatio(1.58f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF111111))
+            .border(2.dp, Retro.ShellEdge, RoundedCornerShape(10.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(art, "Cover", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxHeight().padding(10.dp).clip(RoundedCornerShape(4.dp)))
     }
 }
 

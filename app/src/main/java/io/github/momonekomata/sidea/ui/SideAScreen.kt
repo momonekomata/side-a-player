@@ -17,7 +17,13 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,7 +47,10 @@ import io.github.momonekomata.sidea.MainViewModel
 import io.github.momonekomata.sidea.Settings
 import io.github.momonekomata.sidea.SourceTab
 import io.github.momonekomata.sidea.audio.EngineState
-import io.github.momonekomata.sidea.audio.OutputInfo
+import io.github.momonekomata.sidea.audio.EqConfig
+import io.github.momonekomata.sidea.audio.SignalPaths
+import io.github.momonekomata.sidea.audio.StreamFacts
+import io.github.momonekomata.sidea.sources.ArtworkStore
 import io.github.momonekomata.sidea.audio.Player
 import io.github.momonekomata.sidea.audio.QueueState
 import io.github.momonekomata.sidea.sources.Entry
@@ -83,7 +92,13 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     BackHandler(enabled = lyricsOpen && lyrics.lyrics != null) { lyricsOpen = false }
 
     val app = ui.tab.app
-    val deck = if (app != null) remoteDeck(vm, app, remote[app], tick) else localDeck(queue, engine, tags)
+    val prefs by Settings.prefs.collectAsStateWithLifecycle()
+    val localArt by vm.nowArt.collectAsStateWithLifecycle()
+    val remoteBitmap = app?.let { remote[it]?.art }
+    val remoteArt = remember(remoteBitmap) { remoteBitmap?.asImageBitmap() }
+    val localImage = remember(localArt) { localArt?.asImageBitmap() }
+    val deck = if (app != null) remoteDeck(vm, app, remote[app], tick, remoteArt) else localDeck(queue, engine, tags, prefs.eq, localImage)
+    var eqOpen by remember { mutableStateOf(false) }
     val sheet = lyrics.lyrics
     val showSheet = lyricsOpen && sheet != null
 
@@ -93,7 +108,7 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
             .background(Retro.Background)
             .safeDrawingPadding(),
     ) {
-        Header(onSettings = { settingsOpen = true })
+        Header(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)) {
             val card: @Composable (Modifier) -> Unit = { m ->
                 if (showSheet && sheet != null) {
@@ -127,18 +142,19 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 
     ui.certPrompt?.let { CertificateDialog(it, onTrust = { vm.trustCertificate(it) }, onDismiss = vm::dismissCertPrompt) }
+    if (eqOpen) EqScreen(prefs.eq, onChange = { c -> Settings.update { it.copy(eq = c) } }, onDismiss = { eqOpen = false })
     if (settingsOpen) {
-        val prefs by Settings.prefs.collectAsStateWithLifecycle()
         SettingsDialog(prefs, onChange = { p -> Settings.update { p } }, onDismiss = { settingsOpen = false })
     }
 }
 
 @Composable
-private fun Header(onSettings: () -> Unit) {
+private fun Header(eqActive: Boolean, onEq: () -> Unit, onSettings: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.Top) {
-        Text("Side A", color = androidx.compose.ui.graphics.Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
+        Text("Side A", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
         Text("+", color = Retro.Orange, fontSize = 18.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.weight(1f))
+        IconButton(onClick = onEq) { Icon(Icons.Filled.Equalizer, "Equalizer", tint = if (eqActive) Color(0xFF6FB8FF) else Retro.Muted) }
         IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = Retro.Muted) }
     }
 }
@@ -171,13 +187,14 @@ private fun SourceTabs(selected: SourceTab, onSelect: (SourceTab) -> Unit) {
 
 // ---- Deck models ----
 
-private fun localDeck(queue: QueueState, engine: EngineState, tags: Map<String, Tags>): DeckModel {
+private fun localDeck(queue: QueueState, engine: EngineState, tags: Map<String, Tags>, eq: EqConfig, art: ImageBitmap?): DeckModel {
     val t = queue.current
-    val (status, color) = when {
-        t == null -> "Pick a song from Local or NAS" to Retro.Muted
-        engine.error != null -> "ERROR · ${engine.error}" to Retro.Amber
-        engine.output == null -> "Threading the tape…" to Retro.Muted
-        else -> describe(engine.output)
+    val facts = engine.output
+    val status = when {
+        t == null -> "Pick a song from Local or NAS"
+        engine.error != null -> "ERROR · ${engine.error}"
+        facts == null -> "Threading the tape…"
+        else -> summary(facts, engine.outputNote)
     }
     return DeckModel(
         title = t?.displayTitle(tags).orEmpty(),
@@ -186,7 +203,9 @@ private fun localDeck(queue: QueueState, engine: EngineState, tags: Map<String, 
         durationMs = engine.durationMs,
         playing = engine.isPlaying,
         status = status,
-        statusColor = color,
+        statusColor = if (engine.error != null) Retro.Amber else Retro.Muted,
+        path = if (engine.error == null) facts?.let { SignalPaths.describe(it, eq) } else null,
+        art = art,
         onToggle = Player::togglePlay,
         onNext = { Player.next() },
         onPrevious = Player::previous,
@@ -194,22 +213,19 @@ private fun localDeck(queue: QueueState, engine: EngineState, tags: Map<String, 
     )
 }
 
-private fun describe(o: OutputInfo): Pair<String, androidx.compose.ui.graphics.Color> {
-    val src = "${o.codec} ${khz(o.sourceRate)}${o.sourceBits?.let { "/$it-bit" } ?: ""}"
-    return if (o.bitPerfect) {
-        "BIT-PERFECT · $src · ${o.outputFormat.label} · ${o.note.removePrefix("Bit-perfect to ")}" to Retro.Led
-    } else {
-        "MIXED · $src · ${o.note}" to Retro.Amber
+/** One line next to the badge: what the file is and where it goes. */
+private fun summary(f: StreamFacts, note: String?): String {
+    val bits = f.sourceBits?.takeIf { it > 1 }?.let { "/$it-bit" } ?: ""
+    val src = if (f.dsd != null) "DSD${f.sourceRate / 44_100}" else "${f.codec} ${SignalPaths.khz(f.sourceRate)}$bits"
+    val dest = f.deviceName ?: f.device.label
+    return when {
+        f.bitPerfect -> "$src → $dest"
+        else -> "$src → ${note ?: "Android mixer"}"
     }
 }
 
-private fun khz(hz: Int): String {
-    val k = hz / 1000.0
-    return (if (k % 1.0 == 0.0) "%.0f" else "%.1f").format(k) + " kHz"
-}
-
 @Suppress("UNUSED_PARAMETER") // tick forces recomposition so the extrapolated position moves
-private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlaying?, tick: Long) = DeckModel(
+private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlaying?, tick: Long, art: ImageBitmap?) = DeckModel(
     title = np?.title.orEmpty(),
     subtitle = listOf(np?.artist, np?.album).filter { !it.isNullOrBlank() }.joinToString(" · "),
     positionMs = np?.positionMs ?: 0,
@@ -217,6 +233,7 @@ private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlayin
     playing = np?.isPlaying == true,
     status = if (np == null) "${app.label} is not playing" else "REMOTE · audio path and quality set in ${app.label}",
     statusColor = Retro.Muted,
+    art = art,
     onToggle = { vm.streaming.playPause(app) },
     onNext = { vm.streaming.next(app) },
     onPrevious = { vm.streaming.previous(app) },
@@ -275,7 +292,12 @@ private fun BrowserCard(
 ) {
     val songs = state.entries.count { it is Entry.Song }
     val folders = state.entries.size - songs
-    JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier) {
+    val context = LocalContext.current
+    val firstSong = state.entries.firstOrNull { it is Entry.Song } as Entry.Song?
+    val cover by produceState<ImageBitmap?>(null, firstSong?.track?.id) {
+        value = firstSong?.let { ArtworkStore.load(context, it.track)?.asImageBitmap() }
+    }
+    JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier, art = cover) {
         if (state.path.size > 1) item { JCardRow("‹", "Back to ${state.path[state.path.size - 2].first}", onClick = onUp) }
         when {
             state.loading -> item { JCardNote("Reading…") }

@@ -1,6 +1,12 @@
 package io.github.momonekomata.sidea.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -49,6 +55,7 @@ fun Cassette(
     progress: Float,
     playing: Boolean,
     modifier: Modifier = Modifier,
+    art: ImageBitmap? = null,
 ) {
     val p by rememberUpdatedState(progress.coerceIn(0f, 1f))
     var leftAngle by remember { mutableFloatStateOf(0f) }
@@ -72,10 +79,22 @@ fun Cassette(
     Box(modifier.fillMaxWidth().aspectRatio(ASPECT)) {
         Canvas(Modifier.matchParentSize()) { drawCassette(p, leftAngle, rightAngle) }
         // Label text sits on the cream strip at the top of the shell.
+        // A small cover stuck on the label, like a hand-made mixtape's.
+        if (art != null) {
+            Image(
+                art,
+                contentDescription = "Cover",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .padding(start = 32.dp, top = 18.dp)
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+            )
+        }
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 34.dp, end = 34.dp, top = 18.dp),
+                .padding(start = if (art != null) 86.dp else 34.dp, end = 34.dp, top = 18.dp),
         ) {
             Text(
                 title.ifBlank { "— no tape —" },

@@ -30,6 +30,10 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
             while (c.moveToNext()) rows += Row(c.getString(0), c.getString(1) ?: continue, c.getString(2), c.getLong(3))
         }
         val lrc = rows.filter { isLrcFile(it.name) }.associate { lrcKey(it.name) to it.id }
+        val coverUri = pickFolderCover(rows.map { it.name })?.let { name ->
+            DocumentsContract.buildDocumentUriUsingTree(treeUri, rows.first { it.name == name }.id)
+        }
+        val folderArt: ((Context) -> ByteArray)? = coverUri?.let { u -> { ctx -> ctx.contentResolver.openInputStream(u)!!.use { it.readBytes() } } }
         rows.mapNotNull { r ->
             if (r.mime == DocumentsContract.Document.MIME_TYPE_DIR) return@mapNotNull Entry.Folder(r.name, r.id)
             if (!isAudioFile(r.name) && r.mime?.startsWith("audio/") != true) return@mapNotNull null
@@ -47,6 +51,7 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
                     lyricsFile = lrcUri?.let { u ->
                         { ctx -> ctx.contentResolver.openInputStream(u)!!.use { it.readBytes().toString(Charsets.UTF_8) } }
                     },
+                    folderArt = folderArt,
                 ),
             )
         }.sortedForBrowsing()

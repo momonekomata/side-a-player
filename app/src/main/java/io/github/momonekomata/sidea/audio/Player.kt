@@ -56,7 +56,12 @@ object Player {
         appContext = context.applicationContext
         Settings.init(appContext)
         engine = AudioEngine(appContext, callbacks)
-        scope.launch { Settings.prefs.collect { engine.gapless = it.gapless } }
+        scope.launch {
+            Settings.prefs.collect {
+                engine.gapless = it.gapless
+                engine.eq = it.eq
+            }
+        }
     }
 
     fun playQueue(tracks: List<Track>, index: Int) {

@@ -1,7 +1,9 @@
 package io.github.momonekomata.sidea.audio
 
 import android.content.Context
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioRouting
 import android.media.AudioTrack
 import android.media.MediaDataSource
 import android.net.Uri
@@ -21,22 +23,14 @@ sealed interface PlayableSource {
     class Stream(val dataSource: MediaDataSource) : PlayableSource
 }
 
-data class OutputInfo(
-    val sourceRate: Int,
-    val sourceBits: Int?,
-    val codec: String,
-    val outputRate: Int,
-    val outputFormat: SampleFormat,
-    val bitPerfect: Boolean,
-    val note: String,
-)
-
 data class EngineState(
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
     val positionMs: Long = 0,
     val durationMs: Long = 0,
-    val output: OutputInfo? = null,
+    val output: StreamFacts? = null,
+    /** Why the stream isn't bit-perfect, when it isn't. */
+    val outputNote: String? = null,
     val error: String? = null,
 )
 
@@ -72,6 +66,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
 
     @Volatile private var session: Session? = null
     @Volatile var gapless = true
+    /** Read for every chunk, so changes apply within a few milliseconds of audio. */
+    @Volatile var eq = EqConfig()
 
     fun play(source: PlayableSource, startMs: Long = 0) {
         stop()
@@ -129,7 +125,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     }
 
     /** A song queued on the AudioTrack behind the current one: when the head reaches [startHead] it's audible. */
-    private class Segment(val startHead: Long, val tag: Any, val durationUs: Long, val output: OutputInfo)
+    private class Segment(val startHead: Long, val tag: Any, val durationUs: Long, val output: StreamFacts)
 
     private inner class Session(val source: PlayableSource, val startUs: Long) {
         val lock = Object()
@@ -172,7 +168,11 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             return baseUs + (h - headAtBase).coerceAtLeast(0) * 1_000_000 / rate
         }
 
-        private val dopPlanner = DopPlanner { r, ch -> callbacks.dopAllowed() && router.canDop(r, ch) }
+        // DoP can't be equalised, so an active EQ means DSD is converted to PCM instead.
+        private val dopPlanner = DopPlanner { r, ch -> callbacks.dopAllowed() && !eq.isActive && router.canDop(r, ch) }
+        private var eqProc: EqProcessor? = null
+        private var floatBuf = FloatArray(0)
+        private var floatBytes = ByteArray(0)
 
         private fun run() {
             var dec: PcmDecoder? = null
@@ -183,8 +183,13 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                 val t = buildTrack(plan)
                 track = t
                 rate = dec.sampleRate
-                val info = outputInfo(dec, plan)
-                _state.update { it.copy(isBuffering = false, isPlaying = !paused, durationMs = dec!!.durationUs / 1000, output = info) }
+                val info = facts(dec, plan, t)
+                _state.update { it.copy(isBuffering = false, isPlaying = !paused, durationMs = dec!!.durationUs / 1000, output = info, outputNote = plan.note.takeIf { !plan.bitPerfect }) }
+                // Headphones unplugged, Bluetooth connected: keep the signal path honest.
+                t.addOnRoutingChangedListener(
+                    AudioRouting.OnRoutingChangedListener { _state.update { s -> s.copy(output = s.output?.withDevice(t.routedDevice)) } },
+                    main,
+                )
                 if (!paused) t.play()
 
                 var scratch = ByteArray(0)
@@ -204,6 +209,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                         // unless a hand-over is still queued in the track buffer; drop that.
                         next = null
                         dec!!.seekTo(seek)
+                        eqProc?.reset()
                         t.pause(); t.flush(); if (!paused) t.play()
                         flushHead = head(t)
                         written = 0
@@ -219,7 +225,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                             d.close()
                             dec = handOver.second
                             decodedUs = 0
-                            next = Segment(flushHead + written, handOver.first.tag, handOver.second.durationUs, outputInfo(handOver.second, plan))
+                            next = Segment(flushHead + written, handOver.first.tag, handOver.second.durationUs, facts(handOver.second, plan, t))
                             continue
                         }
                         handOver?.second?.close()
@@ -231,9 +237,10 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                         break
                     }
 
-                    val need = PcmConverter.outputSize(chunk.size, d.format, plan.format)
+                    val (pcm, pcmSize, pcmFormat) = equalise(chunk, d)
+                    val need = PcmConverter.outputSize(pcmSize, pcmFormat, plan.format)
                     if (scratch.size < need) scratch = ByteArray(need)
-                    PcmConverter.convert(java.nio.ByteBuffer.wrap(chunk.data, 0, chunk.size), d.format, plan.format, scratch)
+                    PcmConverter.convert(java.nio.ByteBuffer.wrap(pcm, 0, pcmSize), pcmFormat, plan.format, scratch)
                     decodedUs = chunk.ptsUs
                     if (rebase) {
                         baseUs = chunk.ptsUs
@@ -297,6 +304,25 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             n.sampleRate == cur.sampleRate && n.channels == cur.channels && n.isDop == cur.isDop &&
                 plan.format.exactBits() >= (n.sourceBits?.takeIf { it > 1 } ?: n.format.exactBits())
 
+        /** Runs the EQ when it's on (never on DoP); otherwise hands the chunk through untouched. */
+        private fun equalise(chunk: PcmChunk, d: PcmDecoder): Triple<ByteArray, Int, SampleFormat> {
+            val config = eq
+            if (!config.isActive || d.isDop) return Triple(chunk.data, chunk.size, d.format)
+            val proc = eqProc ?: EqProcessor(d.sampleRate, d.channels).also { eqProc = it }
+            proc.configure(config)
+            val floatSize = PcmConverter.outputSize(chunk.size, d.format, SampleFormat.FLOAT)
+            if (floatBytes.size < floatSize) floatBytes = ByteArray(floatSize)
+            PcmConverter.convert(java.nio.ByteBuffer.wrap(chunk.data, 0, chunk.size), d.format, SampleFormat.FLOAT, floatBytes)
+            val samples = floatSize / 4
+            if (floatBuf.size < samples) floatBuf = FloatArray(samples)
+            val fb = java.nio.ByteBuffer.wrap(floatBytes, 0, floatSize).order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+            fb.get(floatBuf, 0, samples)
+            proc.process(floatBuf, samples / d.channels)
+            fb.rewind()
+            fb.put(floatBuf, 0, samples)
+            return Triple(floatBytes, floatSize, SampleFormat.FLOAT)
+        }
+
         private fun drain(t: AudioTrack, target: Long) {
             val deadline = System.currentTimeMillis() + 10_000
             while (!cancelled && System.currentTimeMillis() < deadline) {
@@ -307,22 +333,48 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         }
     }
 
-    private fun planFor(dec: PcmDecoder): OutputPlan =
-        if (dec.isDop) {
-            router.planDop(dec.sampleRate, dec.channels) ?: error("The USB DAC stopped offering a bit-perfect path for DoP")
-        } else {
-            router.plan(dec.sampleRate, dec.channels, dec.sourceBits, dec.format)
-        }
+    private fun planFor(dec: PcmDecoder): OutputPlan = when {
+        dec.isDop -> router.planDop(dec.sampleRate, dec.channels) ?: error("The USB DAC stopped offering a bit-perfect path for DoP")
+        // EQ output has more than the source's bits: give it at least a 24-bit container.
+        eq.isActive -> router.plan(dec.sampleRate, dec.channels, maxOf(dec.sourceBits ?: 24, 24), SampleFormat.FLOAT)
+        else -> router.plan(dec.sampleRate, dec.channels, dec.sourceBits, dec.format)
+    }
 
-    private fun outputInfo(dec: PcmDecoder, plan: OutputPlan) = OutputInfo(
-        sourceRate = dec.sampleRate,
-        sourceBits = dec.sourceBits,
-        codec = dec.codecName,
-        outputRate = plan.sampleRate,
-        outputFormat = plan.format,
-        bitPerfect = plan.bitPerfect,
-        note = plan.note,
-    )
+    private fun facts(dec: PcmDecoder, plan: OutputPlan, track: AudioTrack): StreamFacts {
+        val device = track.routedDevice ?: plan.device
+        return StreamFacts(
+            codec = dec.codecName,
+            sourceRate = dec.sourceRate,
+            sourceBits = dec.sourceBits,
+            dsd = if (dec is DsdDecoder) (if (dec.isDop) DsdMode.DOP else DsdMode.PCM) else null,
+            outputRate = plan.sampleRate,
+            outputFormat = plan.format,
+            bitPerfect = plan.bitPerfect,
+            device = device.kind(),
+            deviceName = device.displayName(),
+            mixerRate = if (plan.bitPerfect) null else router.mixerRate(),
+        )
+    }
+
+    private fun StreamFacts.withDevice(d: AudioDeviceInfo?) =
+        if (d == null) this else copy(device = d.kind(), deviceName = d.displayName())
+
+    /** The product name for external gear; the phone's own outputs report the phone's model. */
+    private fun AudioDeviceInfo?.displayName(): String? {
+        val d = this ?: return null
+        if (d.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || d.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) return null
+        return d.productName?.toString()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun AudioDeviceInfo?.kind(): DeviceKind = when (this?.type) {
+        null -> DeviceKind.OTHER
+        AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_ACCESSORY -> DeviceKind.USB
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        AudioDeviceInfo.TYPE_BLE_BROADCAST, AudioDeviceInfo.TYPE_HEARING_AID -> DeviceKind.BLUETOOTH
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET -> DeviceKind.WIRED
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> DeviceKind.SPEAKER
+        else -> DeviceKind.OTHER
+    }
 
     private fun buildTrack(plan: OutputPlan): AudioTrack {
         val fmt = AudioFormat.Builder()

@@ -94,16 +94,22 @@ class WebDavBrowser(private val server: NasServer) : Browser {
                 }
             }
         }
-        val lrc = out.filter { !it.isDir && isLrcFile(it.displayName()) }
-            .associate { lrcKey(it.displayName()) to it.path() }
-        return out.mapNotNull { entryFor(it, requestPath, lrc) }.sortedForBrowsing()
+        val files = out.filter { !it.isDir }
+        val lrc = files.filter { isLrcFile(it.displayName()) }.associate { lrcKey(it.displayName()) to it.path() }
+        val cover = pickFolderCover(files.map { it.displayName() })?.let { name -> files.first { it.displayName() == name }.path() }
+        val folderArt: ((android.content.Context) -> ByteArray)? = cover?.let { path ->
+            { getBytes(base.newBuilder().encodedPath(path).build()) }
+        }
+        return out.mapNotNull { entryFor(it, requestPath, lrc, folderArt) }.sortedForBrowsing()
     }
 
-    private fun getText(url: HttpUrl): String {
+    private fun getText(url: HttpUrl): String = getBytes(url).toString(Charsets.UTF_8)
+
+    private fun getBytes(url: HttpUrl): ByteArray {
         val req = Request.Builder().url(url).apply { auth?.let { header("Authorization", it) } }.build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} reading $url")
-            return resp.body!!.string()
+            return resp.body!!.bytes()
         }
     }
 
@@ -113,7 +119,7 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         fun displayName() = name ?: URLDecoder.decode(path().trimEnd('/').substringAfterLast('/'), "UTF-8")
     }
 
-    private fun entryFor(item: DavItem, requestPath: String, lrc: Map<String, String>): Entry? {
+    private fun entryFor(item: DavItem, requestPath: String, lrc: Map<String, String>, folderArt: ((android.content.Context) -> ByteArray)?): Entry? {
         val path = item.path()
         if (path.trimEnd('/') == requestPath.trimEnd('/')) return null
         val name = item.displayName()
@@ -134,6 +140,7 @@ class WebDavBrowser(private val server: NasServer) : Browser {
                 // Tags sit in the first few KB, so read them with small range requests.
                 tagSource = { MediaDataSourceAccess(HttpRangeDataSource(client, url, auth, size, chunk = 64 * 1024)) },
                 lyricsFile = lrcUrl?.let { u -> { getText(u) } },
+                folderArt = folderArt,
             ),
         )
     }

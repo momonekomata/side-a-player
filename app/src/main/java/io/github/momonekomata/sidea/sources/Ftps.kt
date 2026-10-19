@@ -61,6 +61,8 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
             }
             val lrc = files.filter { it.isFile && isLrcFile(it.name) }
                 .associate { lrcKey(it.name) to path.trimEnd('/') + "/" + it.name }
+            val cover = pickFolderCover(files.filter { it.isFile }.map { it.name })?.let { path.trimEnd('/') + "/" + it }
+            val folderArt: ((Context) -> ByteArray)? = cover?.let { c -> { fetchBytes(c) } }
             files.filter { it.name != "." && it.name != ".." }.mapNotNull { f ->
                 val full = path.trimEnd('/') + "/" + f.name
                 when {
@@ -76,6 +78,7 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
                             // Tags only once the song is cached: FTPS can't fetch just the header cheaply.
                             tagSource = { cachedFile(full, f.size)?.let(::openFileAccess) },
                             lyricsFile = lrc[lrcKey(f.name)]?.let { lrcPath -> { fetchText(lrcPath) } },
+                            folderArt = folderArt,
                         ),
                     )
                     else -> null
@@ -96,10 +99,12 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
 
     private fun cachedFile(path: String, size: Long) = cacheFile(path).takeIf { size > 0 && it.length() == size }
 
-    private fun fetchText(path: String): String = withFtps { ftp ->
+    private fun fetchText(path: String): String = fetchBytes(path).toString(Charsets.UTF_8)
+
+    private fun fetchBytes(path: String): ByteArray = withFtps { ftp ->
         val out = java.io.ByteArrayOutputStream()
         if (!ftp.retrieveFile(path, out)) throw IOException("Can't read $path: ${ftp.replyString.trim()}")
-        out.toString(Charsets.UTF_8.name())
+        out.toByteArray()
     }
 
     private inline fun <T> withFtps(block: (FTPSClient) -> T): T {
