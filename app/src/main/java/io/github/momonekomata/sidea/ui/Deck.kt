@@ -38,7 +38,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import io.github.momonekomata.sidea.audio.SignalPath
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.unit.sp
 
 /** What the deck shows, whichever source is playing. */
@@ -60,26 +62,30 @@ data class DeckModel(
 )
 
 @Composable
-fun Deck(model: DeckModel, modifier: Modifier = Modifier) {
+fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = false) {
     var showCover by remember { mutableStateOf(false) }
     var showPath by remember { mutableStateOf(false) }
     Column(
         modifier
             .clip(RoundedCornerShape(10.dp))
             .background(Retro.Panel)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(if (compact) 10.dp else 16.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 14.dp),
     ) {
-        Text(
-            "STREAMING · CASSETTE · PLAYER",
-            color = Retro.Muted,
-            fontFamily = Retro.Mono,
-            fontSize = 10.sp,
-            letterSpacing = 3.sp,
-            modifier = Modifier.align(Alignment.CenterHorizontally),
-        )
+        if (!compact) {
+            Text(
+                "STREAMING · CASSETTE · PLAYER",
+                color = Retro.Muted,
+                fontFamily = Retro.Mono,
+                fontSize = 10.sp,
+                letterSpacing = 3.sp,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+        }
         val progress = if (model.durationMs > 0) model.positionMs.toFloat() / model.durationMs else 0f
-        val tapCover = Modifier.clickable(enabled = model.art != null) { showCover = !showCover }
+        // Compact (landscape phone): the cassette is sized by height so the controls still fit.
+        val sizing = if (compact) Modifier.height(150.dp).align(Alignment.CenterHorizontally) else Modifier.fillMaxWidth()
+        val tapCover = sizing.clickable(enabled = model.art != null) { showCover = !showCover }
         if (showCover && model.art != null) {
             CoverView(model.art, tapCover)
         } else {
@@ -87,26 +93,23 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier) {
         }
         val path = model.path
         if (path != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Badge on its own line; source and output each get a full line below, wrapping if
+            // they must rather than being cut off.
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 QualityBadge(path.quality) { showPath = true }
-                Text(
-                    model.status,
-                    color = Retro.Muted,
-                    fontFamily = Retro.Mono,
-                    fontSize = 11.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 10.dp).weight(1f),
-                )
+                model.status.lines().forEach { line ->
+                    Text(line, color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
+                }
             }
         } else {
             StatusLine(model.status, model.statusColor)
         }
         SeekBar(model)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
-            DeckKey(Icons.Filled.SkipPrevious, "Previous", onClick = model.onPrevious)
-            DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", wide = true, lit = model.playing, onClick = model.onToggle)
-            DeckKey(Icons.Filled.SkipNext, "Next", onClick = model.onNext)
+            val h = if (compact) 42.dp else 52.dp
+            DeckKey(Icons.Filled.SkipPrevious, "Previous", height = h, onClick = model.onPrevious)
+            DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", wide = true, lit = model.playing, height = h, onClick = model.onToggle)
+            DeckKey(Icons.Filled.SkipNext, "Next", height = h, onClick = model.onNext)
         }
     }
     val path = model.path
@@ -118,7 +121,6 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier) {
 private fun CoverView(art: ImageBitmap, modifier: Modifier) {
     Box(
         modifier
-            .fillMaxWidth()
             .aspectRatio(1.58f)
             .clip(RoundedCornerShape(10.dp))
             .background(Color(0xFF111111))
@@ -174,10 +176,10 @@ private fun SeekBar(model: DeckModel) {
 
 /** A chunky piano-key transport button like a tape deck's. */
 @Composable
-private fun DeckKey(icon: ImageVector, label: String, wide: Boolean = false, lit: Boolean = false, onClick: () -> Unit) {
+private fun DeckKey(icon: ImageVector, label: String, wide: Boolean = false, lit: Boolean = false, height: Dp = 52.dp, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(width = if (wide) 96.dp else 72.dp, height = 52.dp)
+            .size(width = if (wide) 96.dp else 72.dp, height = height)
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF2B2B2B))
             .border(1.dp, if (lit) Retro.Orange else Retro.ShellEdge, RoundedCornerShape(6.dp))

@@ -2,6 +2,11 @@ package io.github.momonekomata.sidea.audio
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import io.github.momonekomata.sidea.Settings
 import io.github.momonekomata.sidea.sources.Track
 import kotlinx.coroutines.CoroutineScope
@@ -51,9 +56,62 @@ object Player {
         override fun dopAllowed() = Settings.current.dop
     }
 
+    // ---- Audio focus: one player at a time, like every music app ----
+
+    private lateinit var audioManager: AudioManager
+    private var focus: AudioFocusRequest? = null
+    private var resumeOnGain = false
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            // Another app started playing for good (Spotify, a video): stop competing with it.
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                resumeOnGain = false
+                engine.pause()
+                abandonFocus()
+            }
+            // A call, a navigation prompt: pause and pick up afterwards. Ducking would mean
+            // changing the samples, so a bit-perfect player pauses instead.
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                if (engine.state.value.isPlaying) {
+                    resumeOnGain = true
+                    engine.pause()
+                }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {
+                resumeOnGain = false
+                engine.resume()
+            }
+        }
+    }
+
+    /** Asks the other players to pause. False while a phone call holds the audio. */
+    private fun requestFocus(): Boolean {
+        val req = focus ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build(),
+            )
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener(focusListener, Handler(Looper.getMainLooper()))
+            .build()
+            .also { focus = it }
+        return audioManager.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    }
+
+    private fun abandonFocus() {
+        focus?.let { audioManager.abandonAudioFocusRequest(it) }
+    }
+
+    /** Headphones or the DAC were unplugged: pause rather than blast the phone speaker. */
+    fun pauseForNoisy() {
+        resumeOnGain = false
+        if (engine.state.value.isPlaying) engine.pause()
+    }
+
     fun init(context: Context) {
         if (::engine.isInitialized) return
         appContext = context.applicationContext
+        audioManager = appContext.getSystemService(AudioManager::class.java)
         Settings.init(appContext)
         engine = AudioEngine(appContext, callbacks)
         scope.launch {
@@ -73,17 +131,23 @@ object Player {
         val s = engine.state.value
         when {
             _queue.value.current == null -> return
-            s.isPlaying -> engine.pause()
+            s.isPlaying -> {
+                resumeOnGain = false
+                engine.pause()
+            }
             s.isBuffering -> Unit
             s.error != null || s.output == null -> startCurrent()
-            else -> engine.resume()
+            else -> if (requestFocus()) engine.resume()
         }
     }
 
     fun next(auto: Boolean = false) {
         val q = _queue.value
         if (q.index + 1 >= q.tracks.size) {
-            if (auto) engine.stop()
+            if (auto) {
+                engine.stop()
+                abandonFocus()
+            }
             return
         }
         _queue.value = q.copy(index = q.index + 1)
@@ -110,12 +174,18 @@ object Player {
     fun stop() {
         openJob?.cancel()
         engine.stop()
+        abandonFocus()
     }
 
     private fun startCurrent() {
         val track = _queue.value.current ?: return
         openJob?.cancel()
         engine.stop()
+        resumeOnGain = false
+        if (!requestFocus()) {
+            engine.fail("Another app (a call?) has the audio right now")
+            return
+        }
         appContext.startForegroundService(Intent(appContext, PlaybackService::class.java))
         openJob = scope.launch {
             try {

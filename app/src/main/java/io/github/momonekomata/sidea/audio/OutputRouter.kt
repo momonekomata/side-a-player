@@ -53,9 +53,9 @@ class OutputRouter(context: Context) {
         clear()
         val mixerRate = am.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
         val why = when {
-            usb == null -> "No USB DAC: Android mixes to ${mixerRate ?: "?"} Hz"
-            Build.VERSION.SDK_INT < 34 -> "Bit-perfect needs Android 14+: Android mixes the stream"
-            else -> "${usb.productName} offers no bit-perfect mode at ${sampleRate / 1000.0} kHz"
+            usb == null -> "Android mixer${mixerRate?.let { " · ${it / 1000.0} kHz".replace(".0 ", " ") } ?: ""}"
+            Build.VERSION.SDK_INT < 34 -> "Android mixer (bit-perfect needs Android 14)"
+            else -> "Android mixer (${usb.productName} has no bit-perfect ${sampleRate / 1000.0} kHz)".replace(".0 kHz", " kHz")
         }
         // Float keeps hi-res material intact up to the system mixer.
         val fmt = if (decoded == SampleFormat.S16) SampleFormat.S16 else SampleFormat.FLOAT

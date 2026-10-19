@@ -76,7 +76,8 @@ fun Cassette(
         }
     }
 
-    Box(modifier.fillMaxWidth().aspectRatio(ASPECT)) {
+    // The caller sets the width (or the height, in a compact deck); the shape follows.
+    Box(modifier.aspectRatio(ASPECT)) {
         Canvas(Modifier.matchParentSize()) { drawCassette(p, leftAngle, rightAngle) }
         // Label text sits on the cream strip at the top of the shell.
         // A small cover stuck on the label, like a hand-made mixtape's.

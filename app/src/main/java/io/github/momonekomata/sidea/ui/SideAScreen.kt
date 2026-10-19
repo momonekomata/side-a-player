@@ -42,6 +42,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.app.Activity
+import android.content.ContextWrapper
+import android.content.res.Configuration
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import io.github.momonekomata.sidea.BrowseState
 import io.github.momonekomata.sidea.LyricsState
 import androidx.compose.material3.TextButton
@@ -138,16 +152,26 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         remote.values.filter { it.isPlaying }.forEach { np -> SourceTab.entries.firstOrNull { it.app == np.app }?.let(::add) }
     }
 
+    // Landscape: full screen. The system bars hide (swipe from an edge to peek), and the header's
+    // buttons move into the tab row so the cards and the deck get the whole height.
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    ImmersiveMode(landscape)
+    val headerIcons: @Composable RowScope.() -> Unit = {
+        HeaderIcons(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
+    }
+
     Column(
         Modifier
             .fillMaxSize()
             .background(Retro.Background)
-            .safeDrawingPadding(),
+            .then(if (landscape) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier.safeDrawingPadding()),
     ) {
-        Header(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
+        if (!landscape) Header(headerIcons)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
-                WideLayout(vm, ui.tab, deck, lyrics, playing) { m -> SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m) }
+                WideLayout(vm, ui.tab, deck, lyrics, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null) { m ->
+                    SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m)
+                }
             } else {
                 PhoneLayout(vm, ui.tab, deck, lyrics, playing) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
             }
@@ -169,14 +193,36 @@ private fun WideLayout(
     deck: DeckModel,
     lyrics: LyricsState,
     playing: Set<SourceTab>,
+    short: Boolean,
+    trailing: (@Composable RowScope.() -> Unit)?,
     card: @Composable (Modifier) -> Unit,
 ) {
     val sheet = lyrics.lyrics
+    if (short) {
+        // A phone on its side: three columns, the deck compact in the middle, lyrics on the right.
+        Column {
+            Row(Modifier.weight(1f).padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                card(Modifier.weight(1f).fillMaxHeight().padding(vertical = 4.dp))
+                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+                    Deck(deck, compact = true)
+                }
+                Column(Modifier.weight(0.8f).fillMaxHeight().padding(vertical = 4.dp)) {
+                    if (sheet != null) {
+                        LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxSize(), compact = false) {}
+                    } else {
+                        LyricsStatus(lyrics, vm::retryLyrics)
+                    }
+                }
+            }
+            SourceTabs(tab, playing, vm::selectTab, trailing)
+        }
+        return
+    }
     var lyricsOpen by remember { mutableStateOf(false) }
     val showSheet = lyricsOpen && sheet != null
     BackHandler(enabled = showSheet) { lyricsOpen = false }
     Column {
-        Row(Modifier.weight(1f).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(Modifier.weight(1f).padding(horizontal = if (trailing != null) 8.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             val left = Modifier.weight(1f).fillMaxHeight().padding(vertical = 8.dp)
             if (showSheet && sheet != null) {
                 LyricsCard(deck.title.ifBlank { "Lyrics" }, sheet, deck.positionMs, left, onClose = { lyricsOpen = false })
@@ -192,7 +238,7 @@ private fun WideLayout(
                 }
             }
         }
-        SourceTabs(tab, playing, vm::selectTab)
+        SourceTabs(tab, playing, vm::selectTab, trailing)
     }
 }
 
@@ -350,20 +396,46 @@ private fun LyricsStatus(lyrics: LyricsState, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun Header(eqActive: Boolean, onEq: () -> Unit, onSettings: () -> Unit) {
+private fun Header(icons: @Composable RowScope.() -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("Side A", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
         Text("+", color = Retro.Orange, fontSize = 16.sp, fontWeight = FontWeight.Black, modifier = Modifier.align(Alignment.Top))
         Spacer(Modifier.weight(1f))
-        IconButton(onClick = onEq) { Icon(Icons.Filled.Equalizer, "Equalizer", tint = if (eqActive) Color(0xFF6FB8FF) else Retro.Muted) }
-        IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = Retro.Muted) }
+        icons()
+    }
+}
+
+@Composable
+private fun HeaderIcons(eqActive: Boolean, onEq: () -> Unit, onSettings: () -> Unit) {
+    IconButton(onClick = onEq) { Icon(Icons.Filled.Equalizer, "Equalizer", tint = if (eqActive) Color(0xFF6FB8FF) else Retro.Muted) }
+    IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = Retro.Muted) }
+}
+
+/** Hides the status and navigation bars while [on]; a swipe from the edge shows them briefly. */
+@Composable
+private fun ImmersiveMode(on: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(on) {
+        var ctx = view.context
+        while (ctx is ContextWrapper && ctx !is Activity) ctx = ctx.baseContext
+        val window = (ctx as? Activity)?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            if (on) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {}
     }
 }
 
 /** All six sources fit on one line with equal widths; no sideways scrolling. */
 @Composable
-private fun SourceTabs(selected: SourceTab, playing: Set<SourceTab>, onSelect: (SourceTab) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+private fun SourceTabs(selected: SourceTab, playing: Set<SourceTab>, onSelect: (SourceTab) -> Unit, trailing: (@Composable RowScope.() -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = if (trailing != null) 2.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
         SourceTab.entries.forEach { tab ->
             val on = tab == selected
             Column(
@@ -392,6 +464,7 @@ private fun SourceTabs(selected: SourceTab, playing: Set<SourceTab>, onSelect: (
                 )
             }
         }
+        trailing?.invoke(this)
     }
 }
 
@@ -424,14 +497,16 @@ private fun localDeck(queue: QueueState, engine: EngineState, tags: Map<String, 
 }
 
 /** One line next to the badge: what the file is and where it goes. */
+/** Two lines under the badge: what the file is, and where it goes. */
 private fun summary(f: StreamFacts, note: String?): String {
-    val bits = f.sourceBits?.takeIf { it > 1 }?.let { "/$it-bit" } ?: ""
-    val src = if (f.dsd != null) "DSD${f.sourceRate / 44_100}" else "${f.codec} ${SignalPaths.khz(f.sourceRate)}$bits"
+    val bits = f.sourceBits?.takeIf { it > 1 }?.let { " · $it-bit" } ?: ""
+    val src = if (f.dsd != null) "DSD${f.sourceRate / 44_100} · ${"%.1f".format(f.sourceRate / 1e6)} MHz" else "${f.codec} · ${SignalPaths.khz(f.sourceRate)}$bits"
     val dest = f.deviceName ?: f.device.label
-    return when {
-        f.bitPerfect -> "$src → $dest"
-        else -> "$src → ${note ?: "Android mixer"}"
+    val out = when {
+        f.bitPerfect -> "→ $dest · bit-perfect ${SignalPaths.khz(f.outputRate)} ${f.outputFormat.label}"
+        else -> "→ ${note ?: "Android mixer"} → $dest"
     }
+    return "$src\n$out"
 }
 
 // tick and seen force recomposition: the position is extrapolated, and the output can change.
@@ -457,9 +532,9 @@ private fun remoteSummary(app: StreamingApp, np: RemoteNowPlaying, seen: OutputS
     val dest = seen.deviceName ?: seen.device?.label ?: "phone"
     val rate = seen.bitPerfectRate
     return when {
-        rate != null -> "${app.label} · bit-perfect ${SignalPaths.khz(rate)}${seen.bitPerfectFormat?.let { " ${it.label}" } ?: ""} → $dest"
-        np.qualityHint != null -> "${app.label} · ${np.qualityHint} → $dest"
-        else -> "${app.label} · up to ${app.ceiling.substringBefore(" (")} · mixed${seen.mixerRate?.let { " at ${SignalPaths.khz(it)}" } ?: ""} → $dest"
+        rate != null -> "${app.label} stream\n→ $dest · bit-perfect ${SignalPaths.khz(rate)}${seen.bitPerfectFormat?.let { " ${it.label}" } ?: ""}"
+        np.qualityHint != null -> "${app.label} · ${np.qualityHint}\n→ $dest"
+        else -> "${app.label} · up to ${app.ceiling.substringBefore(" (")}\n→ Android mixer${seen.mixerRate?.let { " · ${SignalPaths.khz(it)}" } ?: ""} → $dest"
     }
 }
 

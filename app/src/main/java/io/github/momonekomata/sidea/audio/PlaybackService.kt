@@ -5,7 +5,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.media.MediaMetadata
@@ -36,9 +40,16 @@ class PlaybackService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var session: MediaSession
 
+    private val noisy = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) Player.pauseForNoisy()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         Player.init(this)
+        registerReceiver(noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "Playback", NotificationManager.IMPORTANCE_LOW),
         )
@@ -129,6 +140,7 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(noisy)
         scope.cancel()
         session.release()
         super.onDestroy()

@@ -52,6 +52,13 @@ and YT Music Side A shows what can be observed and says so where it can't:
 * Otherwise, **the service's ceiling** (e.g. "FLAC up to 24-bit/192 kHz"), marked *not reported*
   in the signal path. Unverified steps never raise the badge.
 
+## Playing nicely with other apps
+
+Side A takes Android's audio focus like any music app. Starting a song pauses Spotify, TIDAL and
+the rest, and when another app starts playing Side A pauses. Calls and navigation prompts pause it
+(a bit-perfect player can't "duck" the volume without changing the samples) and it resumes after.
+Unplugging headphones or the DAC pauses instead of switching to the speaker.
+
 ## Phone layout
 
 On a phone, the sources are cards: swipe between them or tap the tab row (all six fit, no
@@ -59,7 +66,9 @@ scrolling, and a green dot marks what's playing). What's playing sits in a mini 
 showing cover, title, quality, play/pause and next. Tap it or swipe up for the full cassette deck with
 lyrics; swipe down or press Back to put it away. The now-playing card follows what's actually
 playing, local or streaming, not just the tab you're on. Unfolded (≥600 dp wide), it's the
-two-page case layout.
+two-page case layout. Turned sideways, Side A goes full screen: the system bars hide (swipe
+from an edge to peek), the title bar goes, and EQ and Settings move to the end of the tab row. On a
+phone's short landscape screen it's three columns: cards, a compact deck, and lyrics.
 
 ## Signal path and quality badge
 
