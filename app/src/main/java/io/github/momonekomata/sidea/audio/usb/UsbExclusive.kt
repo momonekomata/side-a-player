@@ -243,23 +243,25 @@ object UsbExclusive {
                 h.conn.releaseInterface(intf)
             }
         }
-        // The control interface first: binding it rebuilds the whole sound card, streaming
-        // interfaces included. 1 means Android's driver took it, 0 that no driver would.
-        var bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
-        // The old sound card can take a moment to go; try again briefly before resorting to a reset.
-        for (attempt in 0 until 3) {
-            if (bound > 0 || bound == -EBUSY) break
-            Thread.sleep(100)
-            bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
-        }
-        for (id in h.claimed) if (id != h.desc.controlInterface) UsbStream.nativeReattachKernel(fd, id)
-        handBack = if (bound > 0 || bound == -EBUSY) { // EBUSY: a driver already has it
-            "reattached"
+        // A USB reset, always: Linux unbinds and probes every interface afresh, as if the DAC were
+        // replugged, and Android sets its audio up from scratch. Only reattaching the driver
+        // rebuilds Linux's sound card, but Android keeps talking to the old one: the DAC is still
+        // listed, and other apps play into silence.
+        val r = UsbStream.nativeReset(fd)
+        handBack = if (r == 0) {
+            "reset"
         } else {
-            // A USB reset makes Linux unbind and probe every interface afresh, as if replugged.
-            val r = UsbStream.nativeReset(fd)
-            Log.w(TAG, "kernel driver didn't rebind ($bound); USB reset: $r")
-            if (r == 0) "reset" else "failed ($bound, $r)"
+            // No reset allowed: rebind the driver ourselves, control interface first (binding it
+            // rebuilds the whole card). 1 means a driver took it; EBUSY that one already has it.
+            var bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
+            for (attempt in 0 until 3) {
+                if (bound > 0 || bound == -EBUSY) break
+                Thread.sleep(100)
+                bound = UsbStream.nativeReattachKernel(fd, h.desc.controlInterface)
+            }
+            for (id in h.claimed) if (id != h.desc.controlInterface) UsbStream.nativeReattachKernel(fd, id)
+            Log.w(TAG, "USB reset refused ($r); driver reattach: $bound")
+            if (bound > 0 || bound == -EBUSY) "reattached" else "failed ($r, $bound)"
         }
         h.conn.close()
         onReleased?.invoke()

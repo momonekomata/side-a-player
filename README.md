@@ -44,11 +44,12 @@ wider slot, and the badge says ENHANCED. DoP always plays at 100 %, so set the l
 
 Other apps can't play through the DAC while Side A holds it (that's what exclusive means). Side A
 gives it back as soon as another app starts playing, and ten seconds into a pause. Play
-picks up from the same spot. To give it back, Side A takes every audio interface of the DAC
-(Linux keeps the sound card half-alive while any one stays bound, and then won't rebuild it),
-returns them control interface first, and if Linux's USB audio driver still won't take the DAC,
-resets it over USB, which looks like a replug to Linux. If Android still doesn't list the DAC a few
-seconds later, Side A says so, and unplugging and replugging it is the way out.
+picks up from the same spot. To give it back, Side A takes every audio interface
+of the DAC while it holds it, and on release resets the DAC over USB, which looks like a replug to
+Linux and to Android, so both set the DAC up from scratch. (Only handing Linux's driver back
+rebuilds Linux's sound card, but Android keeps using the old one: the DAC stays listed in other
+apps and they play into silence.) If a reset isn't allowed, Side A falls back to reattaching the
+driver, and if Android doesn't list the DAC a few seconds later, Side A says so.
 
 A reset looks like a replug to Android too, so Android asks once which app should open for the
 DAC: pick Side A and tick **Always**. That's what keeps Side A's USB access for good; Side A then
