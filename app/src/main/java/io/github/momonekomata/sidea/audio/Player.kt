@@ -23,8 +23,28 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
-data class QueueState(val tracks: List<Track> = emptyList(), val index: Int = -1) {
+enum class RepeatMode { OFF, ALL, ONE }
+
+/**
+ * [tracks] is the play order (shuffled when [shuffle] is on); [original] keeps the folder's
+ * order so shuffle can be undone without losing the place.
+ */
+data class QueueState(
+    val tracks: List<Track> = emptyList(),
+    val index: Int = -1,
+    val shuffle: Boolean = false,
+    val repeat: RepeatMode = RepeatMode.OFF,
+    val original: List<Track> = tracks,
+) {
     val current: Track? get() = tracks.getOrNull(index)
+
+    /** The index after this one, following repeat; null at the end. */
+    fun nextIndex(auto: Boolean): Int? = when {
+        auto && repeat == RepeatMode.ONE -> index
+        index + 1 < tracks.size -> index + 1
+        repeat != RepeatMode.OFF && tracks.isNotEmpty() -> 0
+        else -> null
+    }
 }
 
 /** The app-wide local player: a queue in front of [AudioEngine]. Shared by the UI and the service. */
@@ -44,14 +64,14 @@ object Player {
     private val callbacks = object : EngineCallbacks {
         override fun upNext(): UpNext? {
             val q = _queue.value
-            val i = q.index + 1
+            val i = q.nextIndex(auto = true) ?: return null
             val t = q.tracks.getOrNull(i) ?: return null
             return UpNext(Slot(q.tracks, i)) { runBlocking(Dispatchers.IO) { t.opener(appContext) } }
         }
 
         override fun onAdvanced(tag: Any) {
             val slot = tag as Slot
-            if (_queue.value.tracks === slot.tracks) _queue.value = QueueState(slot.tracks, slot.index)
+            if (_queue.value.tracks === slot.tracks) _queue.value = _queue.value.copy(index = slot.index)
         }
 
         override fun onCompleted() = next(auto = true)
@@ -68,9 +88,10 @@ object Player {
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
             // Another app started playing for good (Spotify, a video): stop competing with it.
+            // Another app plays now: pause and hand the DAC back at once, so it gets sound.
             AudioManager.AUDIOFOCUS_LOSS -> {
                 resumeOnGain = false
-                engine.pause()
+                park()
                 abandonFocus()
             }
             // A call, a navigation prompt: pause and pick up afterwards. Ducking would mean
@@ -132,7 +153,7 @@ object Player {
 
     private fun reopenOnNewOutput() {
         val s = engine.state.value
-        if (_queue.value.current == null || s.output == null) return
+        if (_queue.value.current == null || s.output == null || parkedAtMs != null) return
         startCurrent(startMs = s.positionMs, paused = !s.isPlaying)
     }
 
@@ -151,7 +172,7 @@ object Player {
     fun pauseForNoisy() {
         if (usbDriverBusy()) return
         resumeOnGain = false
-        if (engine.state.value.isPlaying) engine.pause()
+        if (engine.state.value.isPlaying) pauseAndPark()
     }
 
     fun init(context: Context) {
@@ -171,6 +192,7 @@ object Player {
             }
         }
         Settings.init(appContext)
+        io.github.momonekomata.sidea.streaming.StreamingEq.start(appContext)
         engine = AudioEngine(appContext, callbacks)
         // Asked once per DAC per run; the song plays through Android until the user says yes.
         engine.onUsbPermissionNeeded = { d ->
@@ -185,6 +207,7 @@ object Player {
             Settings.prefs.collect {
                 engine.gapless = it.gapless
                 engine.eq = it.eq
+                io.github.momonekomata.sidea.streaming.StreamingEq.setConfig(it.eq)
                 engine.usbVolume = it.usbVolume
                 if (engine.exclusiveUsb != it.exclusiveUsb) {
                     engine.exclusiveUsb = it.exclusiveUsb
@@ -195,17 +218,91 @@ object Player {
     }
 
     fun playQueue(tracks: List<Track>, index: Int) {
-        _queue.value = QueueState(tracks, index)
+        val q = _queue.value
+        var next = QueueState(tracks, index, shuffle = false, repeat = q.repeat, original = tracks)
+        if (q.shuffle) next = shuffled(next)
+        _queue.value = next
         startCurrent()
+    }
+
+    // ---- shuffle, repeat ----
+
+    private fun shuffled(q: QueueState): QueueState {
+        val cur = q.current ?: return q.copy(shuffle = true)
+        val rest = q.original.filter { it !== cur }.shuffled()
+        return q.copy(tracks = listOf(cur) + rest, index = 0, shuffle = true)
+    }
+
+    fun toggleShuffle() {
+        val q = _queue.value
+        _queue.value = if (q.shuffle) {
+            val cur = q.current
+            q.copy(tracks = q.original, index = q.original.indexOfFirst { it === cur }.coerceAtLeast(0), shuffle = false)
+        } else {
+            shuffled(q)
+        }
+    }
+
+    fun cycleRepeat() {
+        val q = _queue.value
+        _queue.value = q.copy(repeat = RepeatMode.entries[(q.repeat.ordinal + 1) % RepeatMode.entries.size])
+    }
+
+    // ---- skipping, speed ----
+
+    /** Jumps by [deltaMs] within the song (±5 s, ±10 s, or held fast-forward/rewind). */
+    fun skipBy(deltaMs: Long) {
+        val s = engine.state.value
+        if (_queue.value.current == null) return
+        val to = (s.positionMs + deltaMs).coerceIn(0, if (s.durationMs > 0) s.durationMs - 500 else Long.MAX_VALUE)
+        if (parkedAtMs != null) parkedAtMs = to else seekTo(to)
+    }
+
+    private val _speed = MutableStateFlow(1f)
+    val speed: StateFlow<Float> = _speed.asStateFlow()
+
+    /** Playback speed with the pitch kept. Anything but 1× goes through Android's time-stretch. */
+    fun setSpeed(v: Float) {
+        if (v == _speed.value) return
+        _speed.value = v
+        engine.speed = v
+        reopenOnNewOutput()
+    }
+
+    // ---- giving the DAC back while paused ----
+
+    /** Where a parked song resumes: the DAC was handed back while it sat paused. */
+    private var parkedAtMs: Long? = null
+    private val parkLater = Runnable { if (!engine.state.value.isPlaying) park() }
+
+    /** Releases the output (and the USB DAC) but remembers the song and the spot. */
+    private fun park() {
+        val s = engine.state.value
+        if (_queue.value.current == null || s.output == null) return
+        main.removeCallbacks(parkLater)
+        parkedAtMs = s.positionMs
+        engine.stop(releaseOutput = true)
+    }
+
+    private fun pauseAndPark() {
+        engine.pause()
+        // Other apps get the DAC back half a minute into a pause.
+        main.removeCallbacks(parkLater)
+        if (UsbExclusive.holding) main.postDelayed(parkLater, 30_000)
     }
 
     fun togglePlay() {
         val s = engine.state.value
+        parkedAtMs?.let { at ->
+            parkedAtMs = null
+            startCurrent(startMs = at)
+            return
+        }
         when {
             _queue.value.current == null -> return
             s.isPlaying -> {
                 resumeOnGain = false
-                engine.pause()
+                pauseAndPark()
             }
             s.isBuffering -> Unit
             s.error != null || s.output == null -> startCurrent()
@@ -215,25 +312,26 @@ object Player {
 
     fun next(auto: Boolean = false) {
         val q = _queue.value
-        if (q.index + 1 >= q.tracks.size) {
+        val i = q.nextIndex(auto)
+        if (i == null) {
             if (auto) {
                 engine.stop()
                 abandonFocus()
             }
             return
         }
-        _queue.value = q.copy(index = q.index + 1)
+        _queue.value = q.copy(index = i)
         startCurrent()
     }
 
     /** Like a tape deck: rewinds the current song first, the previous one only near its start. */
     fun previous() {
         val q = _queue.value
-        if (engine.state.value.positionMs > 3000 || q.index <= 0) {
+        if (engine.state.value.positionMs > 3000 || (q.index <= 0 && q.repeat != RepeatMode.ALL)) {
             seekTo(0)
             return
         }
-        _queue.value = q.copy(index = q.index - 1)
+        _queue.value = q.copy(index = if (q.index > 0) q.index - 1 else q.tracks.size - 1)
         startCurrent()
     }
 
@@ -245,6 +343,7 @@ object Player {
 
     fun stop() {
         openJob?.cancel()
+        parkedAtMs = null
         engine.stop()
         abandonFocus()
     }
@@ -252,7 +351,10 @@ object Player {
     private fun startCurrent(startMs: Long = 0, paused: Boolean = false) {
         val track = _queue.value.current ?: return
         openJob?.cancel()
-        engine.stop()
+        parkedAtMs = null
+        main.removeCallbacks(parkLater)
+        // The next song opens straight away: keep the DAC rather than hand it back and retake it.
+        engine.stop(releaseOutput = false)
         resumeOnGain = false
         if (!paused && !requestFocus()) {
             engine.fail("Another app (a call?) has the audio right now")

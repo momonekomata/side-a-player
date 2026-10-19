@@ -40,6 +40,8 @@ data class RemoteFacts(
     val bitPerfectRate: Int?,
     val bitPerfectFormat: SampleFormat?,
     val mixerRate: Int?,
+    /** Side A's EQ is attached to this app's audio session. */
+    val eq: EqConfig? = null,
 )
 
 /** What the engine knows about one playing stream, enough to describe its path. */
@@ -60,6 +62,7 @@ data class StreamFacts(
     val usb: UsbSupport? = null,
     /** Set when Side A's own USB driver streams to the DAC. */
     val exclusive: ExclusiveFacts? = null,
+    val speed: Float = 1f,
 )
 
 /** [volumePercent] is Side A's volume for the DAC; null for DoP, which always plays at 100. */
@@ -88,6 +91,9 @@ object SignalPaths {
         if (eq != null && eq.isActive && f.dsd != DsdMode.DOP) {
             val n = eq.activeBands.size
             stages += PathStage("Parametric EQ", "$n band${if (n == 1) "" else "s"} · preamp ${signed(eq.effectivePreampDb)} dB", Quality.ENHANCED)
+        }
+        if (f.speed != 1f) {
+            stages += PathStage("Speed", "${"%.2f".format(f.speed).trimEnd('0').trimEnd('.')}× · time-stretched by Android, pitch kept", Quality.HIGH_QUALITY)
         }
         val vol = f.exclusive?.volumePercent
         if (vol != null && vol < 100) {
@@ -137,6 +143,9 @@ object SignalPaths {
                 Quality.LOSSLESS,
                 verified = false,
             )
+        }
+        r.eq?.takeIf { it.isActive }?.let { eq ->
+            stages += PathStage("Parametric EQ", "${eq.activeBands.size} bands on ${r.appLabel}'s audio (Android effect, before the mixer)", Quality.ENHANCED)
         }
         val rate = r.bitPerfectRate
         stages += when {

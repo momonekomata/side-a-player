@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
@@ -39,10 +41,11 @@ fun JCard(
     subtitle: String,
     modifier: Modifier = Modifier,
     art: ImageBitmap? = null,
+    listState: LazyListState? = null,
     content: LazyListScope.() -> Unit,
 ) {
     JCardFrame(title, subtitle, modifier, art) {
-        LazyColumn(Modifier.fillMaxSize(), content = content)
+        LazyColumn(Modifier.fillMaxSize(), state = listState ?: rememberLazyListState(), content = content)
     }
 }
 

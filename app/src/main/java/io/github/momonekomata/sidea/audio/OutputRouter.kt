@@ -88,6 +88,16 @@ class OutputRouter(context: Context) {
         return Build.VERSION.SDK_INT >= 34 && bitPerfectChoice(usb, rate, channels, bits = 24, integerOnly = true) != null
     }
 
+    /** Plain float output through Android's mixer, for playback that changes the samples anyway. */
+    fun mixed(sampleRate: Int, channels: Int) = OutputPlan(
+        sampleRate = sampleRate,
+        format = SampleFormat.FLOAT,
+        channelMask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
+        device = usbDevice(),
+        bitPerfect = false,
+        note = "Android mixer",
+    )
+
     /** A bit-perfect plan for DoP, or null; DoP must never be sent through the mixer. */
     fun planDop(rate: Int, channels: Int): OutputPlan? {
         val usb = usbDevice() ?: return null

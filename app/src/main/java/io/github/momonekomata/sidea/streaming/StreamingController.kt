@@ -45,6 +45,8 @@ data class RemoteNowPlaying(
     val qualityHint: String?,
     private val state: PlaybackState?,
 ) {
+    val speed: Float get() = state?.playbackSpeed?.takeIf { it > 0f } ?: 1f
+
     /** Extrapolated from the last report, as the apps only report on change. */
     val positionMs: Long
         get() {
@@ -165,6 +167,11 @@ class StreamingController(private val context: Context) {
     fun previous(app: StreamingApp) = controls(app)?.skipToPrevious()
     fun seekTo(app: StreamingApp, ms: Long) = controls(app)?.seekTo(ms)
     fun playQueueItem(app: StreamingApp, id: Long) = controls(app)?.skipToQueueItem(id)
+
+    /** Apps may ignore this; most music apps honour it, podcasts-style. */
+    fun setSpeed(app: StreamingApp, speed: Float) {
+        if (android.os.Build.VERSION.SDK_INT >= 29) controls(app)?.setPlaybackSpeed(speed)
+    }
 
     fun isInstalled(app: StreamingApp) = context.packageManager.getLaunchIntentForPackage(app.packageName) != null
 

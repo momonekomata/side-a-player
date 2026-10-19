@@ -72,6 +72,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     @Volatile var eq = EqConfig()
     /** Use Side A's own USB driver when a DAC is connected and Android can't go bit-perfect. */
     @Volatile var exclusiveUsb = true
+    /** Playback speed; not 1 means Android's time-stretch, so never the bit-perfect paths. */
+    @Volatile var speed = 1f
     /** Volume for the USB driver (0..1); Android's volume doesn't reach a DAC Side A drives. */
     @Volatile var usbVolume = 0.3f
     /** The user hasn't granted USB access yet; Player asks and reopens the song. */
@@ -406,6 +408,11 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     }
 
     private fun planFor(dec: PcmDecoder): OutputPlan {
+        if (speed != 1f && !dec.isDop) {
+            // Time-stretching changes every sample anyway; Android's mixer does it with the pitch kept.
+            router.clear()
+            return router.mixed(dec.sampleRate, dec.channels)
+        }
         // Volume or EQ make more than the source's bits: ask for a 24-bit or wider slot.
         val processed = eq.isActive || usbVolume < 0.999f
         val bits = if (dec.isDop) 24 else maxOf(dec.sourceBits?.takeIf { it > 1 } ?: 16, if (processed) 24 else 0)
@@ -450,6 +457,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             deviceName = device.displayName(),
             mixerRate = if (plan.bitPerfect) null else router.mixerRate(),
             usb = if (plan.bitPerfect) null else router.usbSupport(),
+            speed = speed,
         )
     }
 
@@ -484,9 +492,11 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             .setAudioAttributes(router.attributes)
             .setAudioFormat(fmt)
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes((minBuf.coerceAtLeast(4096)) * 4)
+            // About half a second, so a slow read (a NAS, a big hi-res file) doesn't reach the speaker.
+            .setBufferSizeInBytes(maxOf(minBuf * 4, plan.sampleRate / 2 * plan.format.bytesPerSample * Integer.bitCount(plan.channelMask)))
             .build()
         plan.device?.let { track.preferredDevice = it }
+        if (speed != 1f) track.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
         return track
     }
 

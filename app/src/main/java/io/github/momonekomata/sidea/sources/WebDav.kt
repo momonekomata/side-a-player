@@ -105,6 +105,20 @@ class WebDavBrowser(private val server: NasServer) : Browser {
 
     private fun getText(url: HttpUrl): String = getBytes(url).toString(Charsets.UTF_8)
 
+    private fun download(url: HttpUrl, sink: (ByteArray, Int) -> Boolean) {
+        val req = Request.Builder().url(url).apply { auth?.let { header("Authorization", it) } }.build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} reading $url")
+            val input = resp.body!!.byteStream()
+            val buf = ByteArray(256 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                if (!sink(buf, n)) return // playback moved on
+            }
+        }
+    }
+
     private fun getBytes(url: HttpUrl): ByteArray {
         val req = Request.Builder().url(url).apply { auth?.let { header("Authorization", it) } }.build()
         client.newCall(req).execute().use { resp ->
@@ -129,21 +143,23 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         val url = base.newBuilder().encodedPath(path).build()
         val lrcUrl = lrc[lrcKey(name)]?.let { base.newBuilder().encodedPath(it).build() }
         val folder = URLDecoder.decode(requestPath.trimEnd('/').substringAfterLast('/'), "UTF-8")
-        return Entry.Song(
-            name,
-            Track(
-                id = url.toString(),
-                title = titleFromFileName(name),
-                album = folder,
-                sizeBytes = size,
-                opener = { PlayableSource.Stream(HttpRangeDataSource(client, url, auth, size)) },
-                // Tags sit in the first few KB, so read them with small range requests.
-                tagSource = { MediaDataSourceAccess(HttpRangeDataSource(client, url, auth, size, chunk = 64 * 1024)) },
-                lyricsFile = lrcUrl?.let { u -> { getText(u) } },
-                folderArt = folderArt,
-            ),
-        )
+        return Entry.Song(name, trackFor(url, name, size, folder).copy(lyricsFile = lrcUrl?.let { u -> { getText(u) } }, folderArt = folderArt))
     }
+
+    /** A playable track for a file on this server; also used to bring back favourites. */
+    fun trackFor(url: HttpUrl, name: String, size: Long, album: String) = Track(
+        id = url.toString(),
+        title = titleFromFileName(name),
+        album = album,
+        sizeBytes = size,
+        // One continuous download into the cache, played as it arrives (see MediaCache).
+        opener = { ctx -> MediaCache.open(MediaCache.file(ctx, url.toString(), name.substringAfterLast('.', "bin")), size) { sink -> download(url, sink) } },
+        // Tags sit in the first few KB, so read them with small range requests.
+        tagSource = { MediaDataSourceAccess(HttpRangeDataSource(client, url, auth, size, chunk = 64 * 1024)) },
+    )
+
+    /** Whether [url] lives on this server. */
+    fun owns(url: HttpUrl) = url.host == base.host && url.port == base.port && url.encodedPath.startsWith(base.encodedPath)
 }
 
 /**

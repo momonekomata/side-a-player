@@ -37,7 +37,7 @@ class UsbStream private constructor(private val handle: Long, val frameBytes: In
             fd: Int, endpointOut: Int, maxPacket: Int, feedbackEndpoint: Int, feedbackPacket: Int,
             packetsPerSecond: Int, feedbackScale: Int, rate: Int, frameBytes: Int,
         ): UsbStream {
-            val h = nativeOpen(fd, endpointOut, maxPacket, feedbackEndpoint, feedbackPacket, packetsPerSecond, feedbackScale, rate, frameBytes, 250)
+            val h = nativeOpen(fd, endpointOut, maxPacket, feedbackEndpoint, feedbackPacket, packetsPerSecond, feedbackScale, rate, frameBytes, 500)
             check(h != 0L) { "Out of memory opening the USB stream" }
             val s = UsbStream(h, frameBytes)
             val r = nativeStart(h)

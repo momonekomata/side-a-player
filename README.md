@@ -42,7 +42,9 @@ own volume (a slider appears on the deck, and the volume keys and a DAC's own bu
 30 %. 100 % is bit-perfect. Anything lower is digital attenuation in 64-bit float into a 24-bit or
 wider slot, and the badge says ENHANCED. DoP always plays at 100 %, so set the level on the DAC or amp.
 
-Other apps can't play through the DAC while Side A holds it (that's what exclusive means).
+Other apps can't play through the DAC while Side A holds it (that's what exclusive means). Side A
+gives it back as soon as another app starts playing, and half a minute into a pause. Play
+picks up from the same spot.
 
 ### Android's bit-perfect mode
 
@@ -84,6 +86,29 @@ and YT Music Side A shows what can be observed and says so where it can't:
 * **A quality hint** if the app publishes one in its media metadata (few do).
 * Otherwise, **the service's ceiling** (e.g. "FLAC up to 24-bit/192 kHz"), marked *not reported*
   in the signal path. Unverified steps never raise the badge.
+
+## Playback controls
+
+Shuffle and repeat (all / one) beside the transport keys; −10 / −5 / +5 / +10 s buttons; hold
+⏮/⏭ to rewind or fast-forward. The speed chip steps 0.5×…2× (long-press for 1×). Speeds other
+than 1× go through Android's time-stretch with the pitch kept, so they're never bit-perfect (the
+signal path says so). ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
+local and NAS songs. **Search** (top of a folder card) indexes the whole local folder or NAS share
+the first time and finds songs and folders by title, artist, album or name. Going back up a folder
+returns to where you were scrolled.
+
+## NAS playback
+
+Songs from WebDAV and FTPS are downloaded in one continuous transfer into a cache (up to 2 GB,
+least recently played dropped first), and play starts as soon as the beginning is in. Replays come
+from the phone. This keeps large hi-res files from stuttering the way reading them in pieces on demand did.
+
+## EQ on streaming apps
+
+Apps that announce their audio to system equalisers (Spotify and YouTube Music do; Apple Music and
+TIDAL may not) get Side A's EQ through an Android effect on their audio, a 32-band version of the
+parametric curve plus the preamp. The signal path shows it when it's attached. Their audio is
+still mixed by Android, so it's never bit-perfect.
 
 ## Playing nicely with other apps
 

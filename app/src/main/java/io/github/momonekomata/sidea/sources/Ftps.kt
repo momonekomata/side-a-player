@@ -10,8 +10,6 @@ import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 import java.io.File
 import java.io.IOException
-import java.io.RandomAccessFile
-import java.security.MessageDigest
 
 /** Opens a logged-in, private-data-channel FTPS session. Caller must [disconnectQuietly]. */
 fun NasServer.connectFtps(): FTPSClient {
@@ -69,14 +67,7 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
                     f.isDirectory -> Entry.Folder(f.name, full)
                     isAudioFile(f.name) -> Entry.Song(
                         f.name,
-                        Track(
-                            id = "ftps://${server.id}$full",
-                            title = titleFromFileName(f.name),
-                            album = path.trimEnd('/').substringAfterLast('/'),
-                            sizeBytes = f.size,
-                            opener = { open(full, f.size) },
-                            // Tags only once the song is cached: FTPS can't fetch just the header cheaply.
-                            tagSource = { cachedFile(full, f.size)?.let(::openFileAccess) },
+                        trackFor(full, f.size).copy(
                             lyricsFile = lrc[lrcKey(f.name)]?.let { lrcPath -> { fetchText(lrcPath) } },
                             folderArt = folderArt,
                         ),
@@ -89,13 +80,18 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
         }
     }
 
-    private val cacheDir get() = File(context.cacheDir, "ftps").apply { mkdirs() }
+    /** A playable track for [full] on this server; also used to bring back favourites. */
+    fun trackFor(full: String, size: Long) = Track(
+        id = "ftps://${server.id}$full",
+        title = titleFromFileName(full.substringAfterLast('/')),
+        album = full.substringBeforeLast('/').substringAfterLast('/'),
+        sizeBytes = size,
+        opener = { open(full, size) },
+        // Tags only once the song is cached: FTPS can't fetch just the header cheaply.
+        tagSource = { cachedFile(full, size)?.let(::openFileAccess) },
+    )
 
-    private fun cacheFile(path: String): File {
-        val key = MessageDigest.getInstance("SHA-1").digest("${server.id}$path".toByteArray())
-            .joinToString("") { "%02x".format(it) }
-        return File(cacheDir, key + "." + path.substringAfterLast('.', "bin"))
-    }
+    private fun cacheFile(path: String): File = MediaCache.file(context, "${server.id}$path", path.substringAfterLast('.', "bin"))
 
     private fun cachedFile(path: String, size: Long) = cacheFile(path).takeIf { size > 0 && it.length() == size }
 
@@ -116,15 +112,8 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
         }
     }
 
-    private fun open(path: String, size: Long): PlayableSource {
-        val file = cacheFile(path)
-        if (file.length() == size && size > 0) {
-            file.setLastModified(System.currentTimeMillis())
-            return PlayableSource.File(file.path)
-        }
-        trimCache(cacheDir, keep = file)
-        return PlayableSource.Stream(GrowingFileDataSource(file, size) { sink -> download(path, sink) })
-    }
+    private fun open(path: String, size: Long): PlayableSource =
+        MediaCache.open(cacheFile(path), size) { sink -> download(path, sink) }
 
     private fun download(path: String, sink: (ByteArray, Int) -> Boolean) {
         val ftp = server.connectFtps()
@@ -144,76 +133,5 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
         }
     }
 
-    /** Keeps the cache under ~2 GB by dropping the least recently played songs. */
-    private fun trimCache(dir: File, keep: File) {
-        val files = dir.listFiles()?.filter { it != keep }?.sortedBy { it.lastModified() } ?: return
-        var total = files.sumOf { it.length() }
-        for (f in files) {
-            if (total < 2L * 1024 * 1024 * 1024) break
-            total -= f.length()
-            f.delete()
-        }
-    }
-}
-
-/**
- * A data source over a file that a background thread is still writing. Reads past the
- * downloaded part wait for it, so playback starts after the first few hundred kilobytes.
- */
-class GrowingFileDataSource(
-    private val file: File,
-    private val expectedSize: Long,
-    private val fetch: ((ByteArray, Int) -> Boolean) -> Unit,
-) : MediaDataSource() {
-    private val lock = Object()
-    private var written = 0L
-    private var done = false
-    private var failure: Throwable? = null
-    @Volatile private var closed = false
-    private val partial = File(file.path + ".part")
-    private val reader: RandomAccessFile
-
-    init {
-        partial.delete()
-        RandomAccessFile(partial, "rw").close()
-        reader = RandomAccessFile(partial, "r")
-        Thread({
-            try {
-                RandomAccessFile(partial, "rw").use { out ->
-                    fetch(sink@{ buf, n ->
-                        if (closed) return@sink false
-                        out.write(buf, 0, n)
-                        synchronized(lock) { written += n; lock.notifyAll() }
-                        true
-                    })
-                }
-                if (!closed) partial.renameTo(file)
-            } catch (t: Throwable) {
-                failure = t
-            } finally {
-                synchronized(lock) { done = true; lock.notifyAll() }
-            }
-        }, "SideA-ftps").start()
-    }
-
-    override fun getSize(): Long = expectedSize
-
-    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
-        if (expectedSize in 0..position) return -1
-        synchronized(lock) {
-            while (!done && !closed && written < position + size && written < expectedSize) lock.wait(200)
-            failure?.let { if (written <= position) throw IOException("Download failed", it) }
-            if (written <= position) return -1
-        }
-        val n = minOf(size.toLong(), written - position).toInt()
-        // The reader's file handle survives the rename on Linux, so this stays valid.
-        reader.seek(position)
-        return reader.read(buffer, offset, n)
-    }
-
-    override fun close() {
-        closed = true
-        synchronized(lock) { lock.notifyAll() }
-        runCatching { reader.close() }
     }
 }

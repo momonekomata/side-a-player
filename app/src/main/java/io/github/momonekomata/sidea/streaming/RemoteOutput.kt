@@ -87,6 +87,7 @@ class RemoteOutput(context: Context, private val ownsMixer: () -> Boolean) {
             bitPerfectRate = s.bitPerfectRate,
             bitPerfectFormat = s.bitPerfectFormat,
             mixerRate = s.mixerRate,
+            eq = io.github.momonekomata.sidea.Settings.current.eq.takeIf { app.packageName in StreamingEq.activePackages },
         )
     }
 

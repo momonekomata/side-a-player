@@ -24,6 +24,9 @@ import io.github.momonekomata.sidea.lyrics.LyricsSources
 import android.graphics.Bitmap
 import io.github.momonekomata.sidea.sources.ArtworkStore
 import io.github.momonekomata.sidea.sources.TagStore
+import io.github.momonekomata.sidea.sources.displayAlbum
+import io.github.momonekomata.sidea.sources.displayArtist
+import io.github.momonekomata.sidea.sources.displayTitle
 import kotlinx.coroutines.delay
 import io.github.momonekomata.sidea.sources.guessArtistTitle
 import kotlinx.coroutines.Job
@@ -46,7 +49,20 @@ enum class SourceTab(val label: String, val short: String, val app: StreamingApp
     APPLE_MUSIC("Apple Music", "APPLE", StreamingApp.APPLE_MUSIC),
     TIDAL("TIDAL", "TIDAL", StreamingApp.TIDAL),
     YT_MUSIC("YT Music", "YT", StreamingApp.YT_MUSIC),
+    FAVORITES("Favourites", "♥"),
 }
+
+/** A song or folder found by search, with the folders leading to it. */
+data class Found(val entry: Entry, val crumbs: List<Pair<String, String>>, val haystack: String)
+
+/** Search over one library (the local folder or a NAS), indexed on first use. */
+data class SearchState(
+    val isNas: Boolean,
+    val query: String = "",
+    val indexing: Boolean = true,
+    val foldersRead: Int = 0,
+    val results: List<Found> = emptyList(),
+)
 
 /** Where the J-card is in a folder tree: the browser, and the stack of folders opened. */
 data class BrowseState(
@@ -124,6 +140,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _nowArt = MutableStateFlow<Bitmap?>(null)
     /** Cover of the local song playing. */
     val nowArt = _nowArt.asStateFlow()
+
+    private val favoriteStore = io.github.momonekomata.sidea.sources.FavoritesStore(app)
+    private val _favorites = MutableStateFlow(favoriteStore.all())
+    val favorites = _favorites.asStateFlow()
+
+    private val _search = MutableStateFlow<SearchState?>(null)
+    val search = _search.asStateFlow()
+    private val indexes = mutableMapOf<String, List<Found>>()
+    private var indexJob: Job? = null
+
+    /** Where each folder was scrolled to, so going back up lands where you were. */
+    private val scroll = mutableMapOf<String, Pair<Int, Int>>()
 
     private val lyricsRepo = LyricsRepository(app)
     private val _lyrics = MutableStateFlow(LyricsState())
@@ -343,6 +371,105 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             entries.filterIsInstance<Entry.Song>().forEach { TagStore.load(ctx, it.track) }
         }
     }
+
+    // ---- favourites ----
+
+    fun toggleFavorite(t: io.github.momonekomata.sidea.sources.Track) {
+        val list = _favorites.value
+        val next = if (list.any { it.id == t.id }) {
+            list.filterNot { it.id == t.id }
+        } else {
+            val tags = TagStore.tags.value
+            listOf(io.github.momonekomata.sidea.sources.Favorite(t.id, t.displayTitle(tags), t.displayArtist(tags), t.displayAlbum(tags), t.sizeBytes)) + list
+        }
+        _favorites.value = next
+        favoriteStore.save(next)
+    }
+
+    fun playFavorites(index: Int) {
+        val ctx = getApplication<Application>()
+        val servers = nasStore.all()
+        val tracks = _favorites.value.mapNotNull { io.github.momonekomata.sidea.sources.TrackResolver.resolve(ctx, it, servers) }
+        val want = _favorites.value.getOrNull(index)?.id
+        if (tracks.isNotEmpty()) Player.playQueue(tracks, tracks.indexOfFirst { it.id == want }.coerceAtLeast(0))
+    }
+
+    // ---- scroll memory ----
+
+    fun scrollFor(key: String) = scroll[key] ?: (0 to 0)
+    fun saveScroll(key: String, index: Int, offset: Int) { scroll[key] = index to offset }
+
+    // ---- search ----
+
+    fun openSearch(isNas: Boolean) {
+        val b = browse(isNas) ?: return
+        val key = indexKey(isNas, b)
+        _search.value = SearchState(isNas, indexing = indexes[key] == null)
+        if (indexes[key] != null) return
+        indexJob?.cancel()
+        indexJob = viewModelScope.launch {
+            val found = mutableListOf<Found>()
+            // Breadth-first over the whole tree; each folder is one listing, like opening it.
+            val queue = ArrayDeque(listOf(b.path.take(1)))
+            var read = 0
+            while (queue.isNotEmpty()) {
+                val crumbs = queue.removeFirst()
+                val entries = runCatching { b.browser.list(crumbs.last().second) }.getOrDefault(emptyList())
+                read++
+                for (e in entries) {
+                    when (e) {
+                        is Entry.Folder -> {
+                            val next = crumbs + (e.name to e.path)
+                            queue.addLast(next)
+                            found += Found(e, next, e.name.lowercase())
+                        }
+                        is Entry.Song -> found += Found(e, crumbs, (e.name + " " + crumbs.last().first).lowercase())
+                    }
+                }
+                if (read % 10 == 0) _search.update { it?.copy(foldersRead = read) }
+            }
+            indexes[key] = found
+            _search.update { it?.copy(indexing = false, foldersRead = read) }
+            setQuery(_search.value?.query.orEmpty())
+            // Tags for the songs make titles and artists searchable too.
+            val ctx = getApplication<Application>()
+            found.mapNotNull { (it.entry as? Entry.Song)?.track }.forEach { TagStore.load(ctx, it) }
+        }
+    }
+
+    fun closeSearch() {
+        _search.value = null
+    }
+
+    fun setQuery(q: String) {
+        val s = _search.value ?: return
+        val b = browse(s.isNas) ?: return
+        val all = indexes[indexKey(s.isNas, b)]
+        val words = q.lowercase().split(' ').filter { it.isNotBlank() }
+        val tags = TagStore.tags.value
+        val results = if (all == null || words.isEmpty()) emptyList() else all.filter { f ->
+            val t = (f.entry as? Entry.Song)?.track?.let { tags[it.id] }
+            val text = if (t == null) f.haystack else f.haystack + " " + listOfNotNull(t.title, t.artist, t.album, t.albumArtist).joinToString(" ").lowercase()
+            words.all { it in text }
+        }.sortedBy { if (it.entry is Entry.Song) 0 else 1 }.take(400)
+        _search.value = s.copy(query = q, results = results)
+    }
+
+    fun playFound(found: Found) {
+        val songs = _search.value?.results?.mapNotNull { (it.entry as? Entry.Song)?.track } ?: return
+        val t = (found.entry as? Entry.Song)?.track ?: return
+        Player.playQueue(songs, songs.indexOf(t).coerceAtLeast(0))
+    }
+
+    /** Opens the folder a search result lives in (or the folder itself). */
+    fun openFound(found: Found) {
+        val isNas = _search.value?.isNas ?: return
+        _search.value = null
+        updateBrowse(isNas) { it.copy(path = found.crumbs) }
+        load(isNas)
+    }
+
+    private fun indexKey(isNas: Boolean, b: BrowseState) = (if (isNas) "nas:" else "local:") + b.browser.title + ":" + b.path.first().second
 
     override fun onCleared() {
         streaming.stop()
