@@ -132,6 +132,4 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
             ftp.disconnectQuietly()
         }
     }
-
-    }
 }
