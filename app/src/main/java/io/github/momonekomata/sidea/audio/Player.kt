@@ -103,6 +103,8 @@ object Player {
 
     fun seekTo(ms: Long) = engine.seekTo(ms)
 
+    fun ownsMixer() = ::engine.isInitialized && engine.holdsBitPerfectMixer
+
     fun refreshPosition() = engine.refreshPosition()
 
     fun stop() {

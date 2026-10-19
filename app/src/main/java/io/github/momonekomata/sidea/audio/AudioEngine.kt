@@ -99,6 +99,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         _state.update { it.copy(positionMs = ms) }
     }
 
+    val holdsBitPerfectMixer: Boolean get() = router.holdsMixer
+
     fun stop() {
         val s = session ?: return
         session = null
@@ -270,6 +272,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                 prefetch?.join(2000)
                 prefetched?.second?.close()
                 prefetched = null
+                // Give the DAC back once nothing of ours plays, so other apps can use it as they like.
+                if (session == null || session === this) router.clear()
             }
         }
 

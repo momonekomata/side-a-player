@@ -17,11 +17,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class StreamingApp(val label: String, val packageName: String) {
-    SPOTIFY("Spotify", "com.spotify.music"),
-    APPLE_MUSIC("Apple Music", "com.apple.android.music"),
-    TIDAL("TIDAL", "com.aspiro.tidal"),
-    YT_MUSIC("YT Music", "com.google.android.apps.youtube.music");
+/** [ceiling] is the best each service streams, from their published tiers. */
+enum class StreamingApp(val label: String, val packageName: String, val ceiling: String, val lossyOnly: Boolean) {
+    SPOTIFY("Spotify", "com.spotify.music", "FLAC up to 24-bit/44.1 kHz (Lossless)", false),
+    APPLE_MUSIC("Apple Music", "com.apple.android.music", "ALAC up to 24-bit/192 kHz (Hi-Res Lossless)", false),
+    TIDAL("TIDAL", "com.aspiro.tidal", "FLAC up to 24-bit/192 kHz (Max)", false),
+    YT_MUSIC("YT Music", "com.google.android.apps.youtube.music", "AAC/Opus up to 256 kbps", true);
 
     companion object {
         fun forPackage(pkg: String) = entries.firstOrNull { it.packageName == pkg }
@@ -40,6 +41,8 @@ data class RemoteNowPlaying(
     val art: Bitmap?,
     val queue: List<RemoteQueueItem>,
     val activeQueueId: Long,
+    /** Any quality the app put in its metadata (non-standard; few apps do). */
+    val qualityHint: String?,
     private val state: PlaybackState?,
 ) {
     /** Extrapolated from the last report, as the apps only report on change. */
@@ -64,6 +67,9 @@ class StreamingController(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val callbacks = mutableMapOf<MediaController, MediaController.Callback>()
     private var started = false
+
+    /** Output device and bit-perfect format of other apps' playback; works without notification access. */
+    val output = RemoteOutput(context) { io.github.momonekomata.sidea.audio.Player.ownsMixer() }
 
     private val _nowPlaying = MutableStateFlow<Map<StreamingApp, RemoteNowPlaying>>(emptyMap())
     val nowPlaying: StateFlow<Map<StreamingApp, RemoteNowPlaying>> = _nowPlaying.asStateFlow()
@@ -130,9 +136,21 @@ class StreamingController(private val context: Context) {
                     RemoteQueueItem(it.queueId, it.description.title?.toString().orEmpty(), it.description.subtitle?.toString().orEmpty())
                 },
                 activeQueueId = st?.activeQueueItemId ?: -1,
+                qualityHint = m?.let(::qualityHint),
                 state = st,
             )
         }.toMap()
+    }
+
+    /** Scans custom metadata keys for something that looks like a format or bitrate. */
+    private fun qualityHint(m: MediaMetadata): String? {
+        val pattern = Regex("quality|bitrate|bit_rate|sample|format|codec|lossless|hires|hi_res", RegexOption.IGNORE_CASE)
+        for (key in m.keySet()) {
+            if (key.startsWith("android.media.metadata.") || !pattern.containsMatchIn(key)) continue
+            val v = runCatching { m.getString(key) }.getOrNull() ?: runCatching { m.getLong(key).takeIf { it > 0 }?.toString() }.getOrNull()
+            if (!v.isNullOrBlank()) return "${key.substringAfterLast('.')}: $v"
+        }
+        return null
     }
 
     private fun controls(app: StreamingApp) =

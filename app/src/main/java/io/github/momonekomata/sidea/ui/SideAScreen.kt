@@ -61,7 +61,33 @@ import io.github.momonekomata.sidea.sources.displayAlbum
 import io.github.momonekomata.sidea.sources.displayArtist
 import io.github.momonekomata.sidea.sources.displayTitle
 import io.github.momonekomata.sidea.streaming.RemoteNowPlaying
+import io.github.momonekomata.sidea.streaming.OutputSeen
 import io.github.momonekomata.sidea.streaming.StreamingApp
+import io.github.momonekomata.sidea.lyrics.Lyrics
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 
 @Composable
@@ -72,8 +98,13 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     val remote by vm.streaming.nowPlaying.collectAsStateWithLifecycle()
     val tags by TagStore.tags.collectAsStateWithLifecycle()
     val lyrics by vm.lyrics.collectAsStateWithLifecycle()
-    var lyricsOpen by remember { mutableStateOf(false) }
+    val deckApp by vm.deckSource.collectAsStateWithLifecycle()
+    val prefs by Settings.prefs.collectAsStateWithLifecycle()
+    val localArt by vm.nowArt.collectAsStateWithLifecycle()
+    // Collected so the remote signal path redraws when another app's output changes.
+    val remoteOut by vm.streaming.output.seen.collectAsStateWithLifecycle()
     var settingsOpen by remember { mutableStateOf(false) }
+    var eqOpen by remember { mutableStateOf(false) }
 
     // Drives the position readout and the reels; remote positions are extrapolated per frame.
     var tick by remember { mutableLongStateOf(0L) }
@@ -86,21 +117,24 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 
     val isNas = ui.tab == SourceTab.NAS
-    BackHandler(enabled = !(lyricsOpen && lyrics.lyrics != null) && ((ui.tab == SourceTab.LOCAL && (ui.local?.path?.size ?: 0) > 1) || (isNas && ui.nas != null))) {
+    BackHandler(enabled = (ui.tab == SourceTab.LOCAL && (ui.local?.path?.size ?: 0) > 1) || (isNas && ui.nas != null)) {
         vm.up(isNas)
     }
-    BackHandler(enabled = lyricsOpen && lyrics.lyrics != null) { lyricsOpen = false }
 
-    val app = ui.tab.app
-    val prefs by Settings.prefs.collectAsStateWithLifecycle()
-    val localArt by vm.nowArt.collectAsStateWithLifecycle()
+    val app = deckApp
     val remoteBitmap = app?.let { remote[it]?.art }
     val remoteArt = remember(remoteBitmap) { remoteBitmap?.asImageBitmap() }
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
-    val deck = if (app != null) remoteDeck(vm, app, remote[app], tick, remoteArt) else localDeck(queue, engine, tags, prefs.eq, localImage)
-    var eqOpen by remember { mutableStateOf(false) }
-    val sheet = lyrics.lyrics
-    val showSheet = lyricsOpen && sheet != null
+    val deck = if (app != null) {
+        remoteDeck(vm, app, remote[app], tick, remoteArt, remoteOut)
+    } else {
+        localDeck(queue, engine, tags, prefs.eq, localImage)
+    }
+    // A dot on the tab of whatever is playing, so it's easy to find again.
+    val playing = buildSet {
+        if (engine.isPlaying) queue.current?.let { add(if (ui.nas?.entries?.any { e -> e is Entry.Song && e.track.id == it.id } == true) SourceTab.NAS else SourceTab.LOCAL) }
+        remote.values.filter { it.isPlaying }.forEach { np -> SourceTab.entries.firstOrNull { it.app == np.app }?.let(::add) }
+    }
 
     Column(
         Modifier
@@ -109,36 +143,13 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
             .safeDrawingPadding(),
     ) {
         Header(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)) {
-            val card: @Composable (Modifier) -> Unit = { m ->
-                if (showSheet && sheet != null) {
-                    LyricsCard(deck.title.ifBlank { "Lyrics" }, sheet, deck.positionMs, m, onClose = { lyricsOpen = false })
-                } else {
-                    SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m)
-                }
-            }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
-                // Unfolded: J-card on the left page; deck and lyrics on the right, like the open case.
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    card(Modifier.weight(1f).fillMaxHeight().padding(vertical = 8.dp))
-                    Column(Modifier.weight(1.15f).fillMaxHeight().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
-                        Deck(deck)
-                        if (sheet != null && !showSheet) {
-                            LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f), compact = false) { lyricsOpen = true }
-                        }
-                    }
-                }
+                WideLayout(vm, ui.tab, deck, lyrics.lyrics, playing) { m -> SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m) }
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Deck(deck)
-                    if (sheet != null && !showSheet) {
-                        LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().height(84.dp), compact = true) { lyricsOpen = true }
-                    }
-                    card(Modifier.weight(1f).fillMaxWidth())
-                }
+                PhoneLayout(vm, ui.tab, deck, lyrics.lyrics, playing) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
             }
         }
-        SourceTabs(ui.tab, vm::selectTab)
     }
 
     ui.certPrompt?.let { CertificateDialog(it, onTrust = { vm.trustCertificate(it) }, onDismiss = vm::dismissCertPrompt) }
@@ -148,38 +159,205 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 }
 
+/** Unfolded: J-card on the left page; deck and lyrics on the right, like the open case. */
+@Composable
+private fun WideLayout(
+    vm: MainViewModel,
+    tab: SourceTab,
+    deck: DeckModel,
+    sheet: Lyrics?,
+    playing: Set<SourceTab>,
+    card: @Composable (Modifier) -> Unit,
+) {
+    var lyricsOpen by remember { mutableStateOf(false) }
+    val showSheet = lyricsOpen && sheet != null
+    BackHandler(enabled = showSheet) { lyricsOpen = false }
+    Column {
+        Row(Modifier.weight(1f).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            val left = Modifier.weight(1f).fillMaxHeight().padding(vertical = 8.dp)
+            if (showSheet && sheet != null) {
+                LyricsCard(deck.title.ifBlank { "Lyrics" }, sheet, deck.positionMs, left, onClose = { lyricsOpen = false })
+            } else {
+                card(left)
+            }
+            Column(Modifier.weight(1.15f).fillMaxHeight().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
+                Deck(deck)
+                if (sheet != null && !showSheet) {
+                    LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f), compact = false) { lyricsOpen = true }
+                }
+            }
+        }
+        SourceTabs(tab, playing, vm::selectTab)
+    }
+}
+
+/**
+ * Phone: the sources are cards you swipe between (or pick from the tab row), and what's playing
+ * sits in a mini player at the bottom. Tap it or swipe it up for the full deck with lyrics;
+ * swipe down or press Back to put it away.
+ */
+@Composable
+private fun PhoneLayout(
+    vm: MainViewModel,
+    tab: SourceTab,
+    deck: DeckModel,
+    sheet: Lyrics?,
+    playing: Set<SourceTab>,
+    card: @Composable (SourceTab, Modifier) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = expanded) { expanded = false }
+    val pager = rememberPagerState(initialPage = tab.ordinal) { SourceTab.entries.size }
+    LaunchedEffect(pager.settledPage) { vm.selectTab(SourceTab.entries[pager.settledPage]) }
+    LaunchedEffect(tab) { if (pager.currentPage != tab.ordinal) pager.animateScrollToPage(tab.ordinal) }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            SourceTabs(tab, playing, vm::selectTab)
+            HorizontalPager(
+                state = pager,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                pageSpacing = 12.dp,
+            ) { page -> card(SourceTab.entries[page], Modifier.fillMaxSize()) }
+            MiniPlayer(deck, onExpand = { expanded = true })
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = slideInVertically { it } + fadeIn(),
+            exit = slideOutVertically { it } + fadeOut(),
+        ) {
+            ExpandedDeck(deck, sheet, onCollapse = { expanded = false })
+        }
+    }
+}
+
+/** Collapsed now-playing card: cover, title, quality, play/pause, next, and a thin progress line. */
+@Composable
+private fun MiniPlayer(deck: DeckModel, onExpand: () -> Unit) {
+    var drag by remember { mutableFloatStateOf(0f) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Retro.Panel)
+            .clickable(onClick = onExpand)
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { drag = 0f },
+                    onDragEnd = { if (drag < -40f) onExpand() },
+                ) { _, dy -> drag += dy }
+            },
+    ) {
+        val progress = if (deck.durationMs > 0) (deck.positionMs.toFloat() / deck.durationMs).coerceIn(0f, 1f) else 0f
+        Box(Modifier.fillMaxWidth().height(3.dp).background(Retro.ShellEdge)) {
+            Box(Modifier.fillMaxWidth(progress).height(3.dp).background(Retro.Orange))
+        }
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            val art = deck.art
+            if (art != null) {
+                Image(art, "Cover", contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
+            } else {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(Retro.Cream), contentAlignment = Alignment.Center) {
+                    Text("A", color = Retro.Orange, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                }
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(deck.title.ifBlank { "Nothing playing" }, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(deck.subtitle.ifBlank { deck.status }, color = Retro.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                deck.path?.quality?.let { q ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                        Box(Modifier.size(6.dp).clip(CircleShape).background(q.color()))
+                        Text(q.label, color = q.color(), fontFamily = Retro.Mono, fontSize = 9.sp, letterSpacing = 1.sp, modifier = Modifier.padding(start = 5.dp))
+                    }
+                }
+            }
+            IconButton(onClick = deck.onToggle) {
+                Icon(if (deck.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White)
+            }
+            IconButton(onClick = deck.onNext) { Icon(Icons.Filled.SkipNext, "Next", tint = Retro.Muted) }
+        }
+    }
+}
+
+/** The full deck over the cards, with lyrics filling what the deck leaves. */
+@Composable
+private fun ExpandedDeck(deck: DeckModel, sheet: Lyrics?, onCollapse: () -> Unit) {
+    var drag by remember { mutableFloatStateOf(0f) }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Retro.Background)
+            .padding(horizontal = 12.dp),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onCollapse)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { drag = 0f },
+                        onDragEnd = { if (drag > 60f) onCollapse() },
+                    ) { _, dy -> drag += dy }
+                }
+                .padding(vertical = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = Retro.Muted)
+            Text("NOW PLAYING", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 3.sp)
+        }
+        Deck(deck)
+        if (sheet != null) {
+            LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f).padding(vertical = 10.dp), compact = false) {}
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
 @Composable
 private fun Header(eqActive: Boolean, onEq: () -> Unit, onSettings: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.Top) {
-        Text("Side A", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
-        Text("+", color = Retro.Orange, fontSize = 18.sp, fontWeight = FontWeight.Black)
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Side A", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
+        Text("+", color = Retro.Orange, fontSize = 16.sp, fontWeight = FontWeight.Black, modifier = Modifier.align(Alignment.Top))
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onEq) { Icon(Icons.Filled.Equalizer, "Equalizer", tint = if (eqActive) Color(0xFF6FB8FF) else Retro.Muted) }
         IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = Retro.Muted) }
     }
 }
 
+/** All six sources fit on one line with equal widths; no sideways scrolling. */
 @Composable
-private fun SourceTabs(selected: SourceTab, onSelect: (SourceTab) -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(18.dp),
-    ) {
+private fun SourceTabs(selected: SourceTab, playing: Set<SourceTab>, onSelect: (SourceTab) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
         SourceTab.entries.forEach { tab ->
             val on = tab == selected
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onSelect(tab) }.padding(4.dp)) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (on) Retro.Panel else Color.Transparent)
+                    .clickable { onSelect(tab) }
+                    .padding(vertical = 8.dp),
+            ) {
                 Text(
-                    tab.label.uppercase(),
+                    tab.short,
                     color = if (on) Retro.Orange else Retro.Muted,
                     fontFamily = Retro.Mono,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                    letterSpacing = 1.sp,
+                    maxLines = 1,
                 )
-                Text(if (on) "▲" else " ", color = Retro.Orange, fontSize = 8.sp)
+                Box(
+                    Modifier
+                        .padding(top = 4.dp)
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(if (tab in playing) Retro.Led else Color.Transparent),
+                )
             }
         }
     }
@@ -224,21 +402,34 @@ private fun summary(f: StreamFacts, note: String?): String {
     }
 }
 
-@Suppress("UNUSED_PARAMETER") // tick forces recomposition so the extrapolated position moves
-private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlaying?, tick: Long, art: ImageBitmap?) = DeckModel(
+// tick and seen force recomposition: the position is extrapolated, and the output can change.
+@Suppress("UNUSED_PARAMETER")
+private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlaying?, tick: Long, art: ImageBitmap?, seen: OutputSeen) = DeckModel(
     title = np?.title.orEmpty(),
     subtitle = listOf(np?.artist, np?.album).filter { !it.isNullOrBlank() }.joinToString(" · "),
     positionMs = np?.positionMs ?: 0,
     durationMs = np?.durationMs ?: 0,
     playing = np?.isPlaying == true,
-    status = if (np == null) "${app.label} is not playing" else "REMOTE · audio path and quality set in ${app.label}",
+    status = if (np == null) "${app.label} is not playing" else remoteSummary(app, np, seen),
     statusColor = Retro.Muted,
+    path = np?.let { SignalPaths.describeRemote(vm.streaming.output.facts(app, it)) },
     art = art,
     onToggle = { vm.streaming.playPause(app) },
     onNext = { vm.streaming.next(app) },
     onPrevious = { vm.streaming.previous(app) },
     onSeek = { vm.streaming.seekTo(app, it) },
 )
+
+/** As much of the stream's format as can be seen from outside the app. */
+private fun remoteSummary(app: StreamingApp, np: RemoteNowPlaying, seen: OutputSeen): String {
+    val dest = seen.deviceName ?: seen.device?.label ?: "phone"
+    val rate = seen.bitPerfectRate
+    return when {
+        rate != null -> "${app.label} · bit-perfect ${SignalPaths.khz(rate)}${seen.bitPerfectFormat?.let { " ${it.label}" } ?: ""} → $dest"
+        np.qualityHint != null -> "${app.label} · ${np.qualityHint} → $dest"
+        else -> "${app.label} · up to ${app.ceiling.substringBefore(" (")} · mixed${seen.mixerRate?.let { " at ${SignalPaths.khz(it)}" } ?: ""} → $dest"
+    }
+}
 
 // ---- J-card contents per source ----
 

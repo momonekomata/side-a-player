@@ -29,6 +29,9 @@ class OutputRouter(context: Context) {
     private val am = context.getSystemService(AudioManager::class.java)
     private var activeMixer: Pair<AudioDeviceInfo, Any>? = null
 
+    /** True while Side A holds a bit-perfect mixer on the DAC. */
+    val holdsMixer: Boolean get() = activeMixer != null
+
     val attributes: AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)

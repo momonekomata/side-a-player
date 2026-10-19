@@ -30,6 +30,37 @@ Notes:
 * What isn't done yet: a UAPP-style user-space USB driver for phones without Android 14 bit-perfect
   support, multichannel, DST-compressed DFF, and DSD at 48 kHz-family rates.
 
+## Decoding
+
+Lossless files are decoded by Side A itself: **FLAC** (all stereo modes, 8–32 bit, any rate,
+seek table or not, and files with an ID3 tag stuck on the front, which Android's extractor rejects as
+"audio/unknown"), **WAV** (PCM, extensible, 32/64-bit float), **AIFF/AIFF-C** (incl. `sowt`, `fl32`)
+and **DSD**. They come out as the file's exact integer samples, so the bit-perfect path never detours
+through float. MP3, AAC, Opus, Vorbis and ALAC go through Android's MediaCodec. If the phone has
+no decoder for a file, the error says which format it is.
+
+## Streaming quality
+
+Android doesn't let one app read another app's stream format, so for Spotify, Apple Music, TIDAL
+and YT Music Side A shows what can be observed and says so where it can't:
+
+* **The real format, when the app owns the DAC.** On Android 14+, an app that takes a USB DAC
+  bit-perfect (e.g. TIDAL's exclusive USB mode) sets the DAC's mixer to the stream's own rate and
+  depth. Side A reads that back: `TIDAL · bit-perfect 96 kHz 24-bit → KA17`.
+* **The output device** of the playback (USB DAC, Bluetooth, speaker) and the mixer rate.
+* **A quality hint** if the app publishes one in its media metadata (few do).
+* Otherwise, **the service's ceiling** (e.g. "FLAC up to 24-bit/192 kHz"), marked *not reported*
+  in the signal path. Unverified steps never raise the badge.
+
+## Phone layout
+
+On a phone, the sources are cards: swipe between them or tap the tab row (all six fit, no
+scrolling, and a green dot marks what's playing). What's playing sits in a mini player at the bottom,
+showing cover, title, quality, play/pause and next. Tap it or swipe up for the full cassette deck with
+lyrics; swipe down or press Back to put it away. The now-playing card follows what's actually
+playing, local or streaming, not just the tab you're on. Unfolded (≥600 dp wide), it's the
+two-page case layout.
+
 ## Signal path and quality badge
 
 Like Roon's signal-path light, the badge under the cassette grades the whole path from the file to

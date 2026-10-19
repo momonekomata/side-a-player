@@ -31,17 +31,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class SourceTab(val label: String, val app: StreamingApp? = null) {
-    LOCAL("Local"),
-    NAS("NAS"),
-    SPOTIFY("Spotify", StreamingApp.SPOTIFY),
-    APPLE_MUSIC("Apple Music", StreamingApp.APPLE_MUSIC),
-    TIDAL("TIDAL", StreamingApp.TIDAL),
-    YT_MUSIC("YT Music", StreamingApp.YT_MUSIC),
+enum class SourceTab(val label: String, val short: String, val app: StreamingApp? = null) {
+    LOCAL("Local", "LOCAL"),
+    NAS("NAS", "NAS"),
+    SPOTIFY("Spotify", "SPOTIFY", StreamingApp.SPOTIFY),
+    APPLE_MUSIC("Apple Music", "APPLE", StreamingApp.APPLE_MUSIC),
+    TIDAL("TIDAL", "TIDAL", StreamingApp.TIDAL),
+    YT_MUSIC("YT Music", "YT", StreamingApp.YT_MUSIC),
 }
 
 /** Where the J-card is in a folder tree: the browser, and the stack of folders opened. */
@@ -92,6 +95,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var loadJob: Job? = null
     private var tagJob: Job? = null
 
+    /**
+     * What the now-playing card shows: null for Side A's own player, or a streaming app. It
+     * follows what is actually playing; the tab only decides when nothing is.
+     */
+    val deckSource: StateFlow<StreamingApp?>
+
+    private fun deckSourceFlow() = combine(_ui.map { it.tab }.distinctUntilChanged(), Player.state.map { it.isPlaying }.distinctUntilChanged(), streaming.nowPlaying) { tab, localPlaying, remote ->
+        val playingApps = remote.values.filter { it.isPlaying }.map { it.app }
+        when {
+            localPlaying -> null
+            tab.app != null && tab.app in playingApps -> tab.app
+            playingApps.isNotEmpty() -> playingApps.first()
+            tab.app != null && remote[tab.app] != null && Player.queue.value.current == null -> tab.app
+            else -> if (Player.queue.value.current == null) tab.app else null
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     private val _nowArt = MutableStateFlow<Bitmap?>(null)
     /** Cover of the local song playing. */
     val nowArt = _nowArt.asStateFlow()
@@ -102,6 +122,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         Player.init(app)
+        deckSource = deckSourceFlow()
         _ui.update {
             it.copy(
                 tab = runCatching { SourceTab.valueOf(prefs.getString("tab", null)!!) }.getOrDefault(SourceTab.LOCAL),
@@ -110,6 +131,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         prefs.getString("localTree", null)?.let { openLocal(Uri.parse(it), remember = false) }
         onResume()
+        streaming.output.start()
         followLyrics()
         followArtwork()
     }
@@ -127,17 +149,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Looks lyrics up for the song on the deck: the local queue, or the streaming app on the
-     * selected tab. Waits for the duration so the online match can use it.
+     * Looks lyrics up for the song on the deck: the local queue, or the streaming app it shows.
+     * Waits for the duration so the online match can use it.
      */
     private fun followLyrics() = viewModelScope.launch {
         combine(
-            _ui.map { it.tab }.distinctUntilChanged(),
+            deckSource,
             Player.queue,
             Player.state.map { it.durationMs }.distinctUntilChanged(),
             streaming.nowPlaying,
-        ) { tab, queue, duration, remote ->
-            val app = tab.app
+        ) { app, queue, duration, remote ->
             if (app != null) {
                 remote[app]?.takeIf { it.title.isNotBlank() }?.let { Playing.Remote(app, it.title, it.artist, it.album, it.durationMs) }
             } else {
@@ -299,5 +320,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         streaming.stop()
+        streaming.output.stop()
     }
 }

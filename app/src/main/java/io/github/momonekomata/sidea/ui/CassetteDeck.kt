@@ -94,7 +94,8 @@ fun Cassette(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(start = if (art != null) 86.dp else 34.dp, end = 34.dp, top = 18.dp),
+                // Clear of the orange "A" badge in the label's top-right corner.
+                .padding(start = if (art != null) 86.dp else 34.dp, end = 64.dp, top = 18.dp),
         ) {
             Text(
                 title.ifBlank { "— no tape —" },

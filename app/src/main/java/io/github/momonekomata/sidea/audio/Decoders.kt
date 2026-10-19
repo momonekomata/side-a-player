@@ -33,14 +33,85 @@ fun interface DopPlanner {
     fun canDop(pcmRate: Int, channels: Int): Boolean
 }
 
+/**
+ * Lossless formats are decoded by Side A itself (DSD, FLAC, WAV, AIFF): exact integer samples,
+ * and files Android's extractor rejects still play. Lossy formats and ALAC go to MediaCodec.
+ */
 object Decoders {
     fun open(context: Context, source: PlayableSource, dop: DopPlanner?): PcmDecoder {
         val ra = source.openRandomAccess(context)
-        val head = ra.readUpTo(0, 4)
-        if (DsdStream.isDsd(head)) return DsdDecoder(DsdStream.open(ra), dop)
+        val head = ra.readUpTo(0, 12)
+        try {
+            when {
+                DsdStream.isDsd(head) -> return DsdDecoder(DsdStream.open(ra), dop)
+                PcmFileStream.sniff(head) -> return StreamDecoder.pcm(PcmFileStream(ra))
+                FlacStream.sniff(head) -> runCatching { FlacStream(ra) }.getOrNull()?.let { return StreamDecoder.flac(it) }
+            }
+        } catch (e: Exception) {
+            ra.close()
+            throw e
+        }
         // Content and file sources reopen cleanly; a stream must stay open for the extractor.
         if (source !is PlayableSource.Stream) ra.close()
         return MediaCodecDecoder(context, source)
+    }
+}
+
+/** A [PcmDecoder] over one of the in-app stream readers. */
+class StreamDecoder private constructor(
+    override val sampleRate: Int,
+    override val channels: Int,
+    override val format: SampleFormat,
+    override val sourceBits: Int?,
+    override val codecName: String,
+    override val durationUs: Long,
+    private val next: () -> PcmChunk?,
+    private val seekFrame: (Long) -> Long,
+    private val closer: () -> Unit,
+) : PcmDecoder {
+    /** Frames to drop after a seek, which lands on a frame boundary before the target. */
+    private var dropUntilUs = -1L
+
+    init {
+        require(channels in 1..2) { "Only mono and stereo are supported (this file has $channels channels)" }
+    }
+
+    override fun read(): PcmChunk? {
+        while (true) {
+            val c = next() ?: return null
+            if (dropUntilUs < 0) return c
+            val frameBytes = channels * format.bytesPerSample
+            val frames = c.size / frameBytes
+            val endUs = c.ptsUs + frames * 1_000_000L / sampleRate
+            if (endUs <= dropUntilUs) continue
+            val skip = ((dropUntilUs - c.ptsUs).coerceAtLeast(0) * sampleRate / 1_000_000).toInt().coerceIn(0, frames)
+            dropUntilUs = -1
+            if (skip == 0) return c
+            val bytes = c.data.copyOfRange(skip * frameBytes, c.size)
+            return PcmChunk(bytes, bytes.size, c.ptsUs + skip * 1_000_000L / sampleRate)
+        }
+    }
+
+    override fun seekTo(us: Long) {
+        val target = us * sampleRate / 1_000_000
+        seekFrame(target)
+        dropUntilUs = us
+    }
+
+    override fun close() = closer()
+
+    companion object {
+        fun flac(f: FlacStream) = StreamDecoder(
+            f.sampleRate, f.channels, f.format, f.bitsPerSample, "FLAC",
+            if (f.totalSamples > 0) f.totalSamples * 1_000_000 / f.sampleRate else 0,
+            next = f::nextFrame, seekFrame = f::seekTo, closer = f::close,
+        )
+
+        fun pcm(p: PcmFileStream) = StreamDecoder(
+            p.sampleRate, p.channels, p.format, p.validBits, if (p.format == SampleFormat.FLOAT) "PCM float" else "PCM",
+            p.totalFrames * 1_000_000 / p.sampleRate,
+            next = { p.read() }, seekFrame = { p.seekToFrame(it); it }, closer = p::close,
+        )
     }
 }
 
@@ -72,14 +143,19 @@ class MediaCodecDecoder(context: Context, source: PlayableSource) : PcmDecoder {
         }
         val index = (0 until extractor.trackCount).firstOrNull {
             extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-        } ?: run { extractor.release(); error("No audio stream in this file") }
+        } ?: run { extractor.release(); throw java.io.IOException("No audio stream in this file") }
         val inFormat = extractor.getTrackFormat(index)
         extractor.selectTrack(index)
         val mime = inFormat.getString(MediaFormat.KEY_MIME)!!
         codecName = mime.removePrefix("audio/").uppercase()
         durationUs = if (inFormat.containsKey(MediaFormat.KEY_DURATION)) inFormat.getLong(MediaFormat.KEY_DURATION) else 0L
         sourceBits = sourceBitDepth(inFormat)
-        codec = createDecoder(inFormat, wantFloat = sourceBits == null || sourceBits > 16)
+        codec = try {
+            createDecoder(inFormat, wantFloat = sourceBits == null || sourceBits > 16)
+        } catch (e: Exception) {
+            extractor.release()
+            throw java.io.IOException("This phone has no decoder for this file (${mime.removePrefix("audio/")})", e)
+        }
         codec.start()
         // Decode the first buffer now so the real output format is known before planning.
         val first = decodeNext()

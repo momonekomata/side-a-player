@@ -37,4 +37,30 @@ class SignalPathTest {
         assertEquals(Quality.LOSSLESS, SignalPaths.describe(dop, eqOn).quality)
         assertEquals(Quality.HIGH_QUALITY, SignalPaths.describe(dop.copy(dsd = DsdMode.PCM, outputFormat = SampleFormat.FLOAT), null).quality)
     }
+
+    private val tidal = RemoteFacts(
+        appLabel = "TIDAL", ceiling = "FLAC up to 24-bit/192 kHz", lossyOnly = false, hint = null,
+        device = DeviceKind.USB, deviceName = "KA17", bitPerfectRate = null, bitPerfectFormat = null, mixerRate = 48_000,
+    )
+
+    @Test
+    fun `an unreported stream quality doesn't decide the badge`() {
+        val p = SignalPaths.describeRemote(tidal)
+        assertEquals(false, p.stages.first().verified)
+        assertEquals(Quality.HIGH_QUALITY, p.quality) // the mixer is what we can see
+    }
+
+    @Test
+    fun `an app holding the dac bit-perfect shows its real format`() {
+        val p = SignalPaths.describeRemote(tidal.copy(bitPerfectRate = 96_000, bitPerfectFormat = SampleFormat.S24_PACKED))
+        assertEquals(Quality.LOSSLESS, p.quality)
+        assertEquals(true, p.stages.last().detail.contains("96 kHz 24-bit"))
+    }
+
+    @Test
+    fun `yt music and bluetooth are lossy`() {
+        assertEquals(Quality.LOSSY, SignalPaths.describeRemote(tidal.copy(appLabel = "YT Music", lossyOnly = true)).quality)
+        assertEquals(Quality.LOSSY, SignalPaths.describeRemote(tidal.copy(device = DeviceKind.BLUETOOTH)).quality)
+        assertEquals(Quality.LOSSY, SignalPaths.describeRemote(tidal.copy(hint = "quality: AAC 256 kbps")).quality)
+    }
 }

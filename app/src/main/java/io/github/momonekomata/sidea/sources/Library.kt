@@ -36,7 +36,7 @@ interface Browser {
 }
 
 private val AUDIO_EXTENSIONS = setOf(
-    "flac", "wav", "wave", "aif", "aiff", "alac", "m4a", "mp3", "ogg", "oga", "opus", "aac", "dsf", "dff",
+    "flac", "wav", "wave", "aif", "aiff", "aifc", "alac", "m4a", "mp3", "ogg", "oga", "opus", "aac", "dsf", "dff",
 )
 
 fun isAudioFile(name: String) = name.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS
