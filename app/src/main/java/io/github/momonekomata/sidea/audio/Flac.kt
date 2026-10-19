@@ -9,7 +9,9 @@ import java.io.EOFException
 import java.io.IOException
 
 /** Reads bits MSB-first from a [RandomAccess], fetching 64 KB at a time. */
-internal class BitReader(private val ra: RandomAccess, start: Long) {
+/** [zeroPadEnd] lets a decoder peek a few bits past the end of a packet, which reads as zeros. */
+internal class BitReader(private val ra: RandomAccess, start: Long, private val zeroPadEnd: Boolean = false) {
+    private var padded = 0
     private val buf = ByteArray(1 shl 16)
     private var bufStart = start
     private var bufLen = 0
@@ -29,7 +31,11 @@ internal class BitReader(private val ra: RandomAccess, start: Long) {
             bufStart += bufLen
             bufPos = 0
             bufLen = ra.readAt(bufStart, buf, 0, buf.size).coerceAtLeast(0)
-            if (bufLen == 0) throw EOFException()
+            if (bufLen == 0) {
+                if (!zeroPadEnd || padded >= 8) throw EOFException()
+                padded++
+                return 0
+            }
         }
         return buf[bufPos++].toInt() and 0xFF
     }
@@ -46,6 +52,12 @@ internal class BitReader(private val ra: RandomAccess, start: Long) {
         need(n)
         bits -= n
         return (cache ushr bits) and ((1L shl n) - 1)
+    }
+
+    fun peekBits(n: Int): Long {
+        if (n == 0) return 0
+        need(n)
+        return (cache ushr (bits - n)) and ((1L shl n) - 1)
     }
 
     fun readSigned(n: Int): Long {

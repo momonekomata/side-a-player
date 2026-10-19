@@ -142,7 +142,20 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Uni
                 LabeledSwitch("DSD as DoP to the USB DAC", prefs.dop) { onChange(prefs.copy(dop = it)) }
                 Note("Native DSD for DACs that understand DoP. Only used when the bit-perfect path is available; otherwise DSD is converted to 176.4 kHz PCM. Turn off if your DAC plays DSD as noise.")
                 LabeledSwitch("Find lyrics online", prefs.onlineLyrics) { onChange(prefs.copy(onlineLyrics = it)) }
-                Note("When a song has no lyrics in its tags or a .lrc file beside it, its title, artist and length are sent to lrclib.net.")
+                Note("When a song has no lyrics in its tags or a .lrc file beside it, its title, artist and length are sent to the sources below, in order, until one has them.")
+                if (prefs.onlineLyrics) {
+                    LabeledSwitch("LRCLIB · timed lyrics, open", prefs.lrclib) { onChange(prefs.copy(lrclib = it)) }
+                    var key by remember(prefs.musixmatchKey) { mutableStateOf(prefs.musixmatchKey) }
+                    OutlinedTextField(
+                        key,
+                        { key = it.trim(); onChange(prefs.copy(musixmatchKey = key)) },
+                        label = { Text("Musixmatch API key") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                    )
+                    Note("Free key from developer.musixmatch.com. The free plan gives part of each song's lyrics; timed lyrics need a paid plan. Leave blank to skip Musixmatch.")
+                    LabeledSwitch("lyrics.ovh · plain lyrics, open", prefs.lyricsOvh) { onChange(prefs.copy(lyricsOvh = it)) }
+                }
             }
         },
         confirmButton = { TextButton(onDismiss) { Text("Done") } },

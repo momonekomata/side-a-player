@@ -20,6 +20,7 @@ import io.github.momonekomata.sidea.streaming.StreamingController
 import io.github.momonekomata.sidea.lyrics.Lyrics
 import io.github.momonekomata.sidea.lyrics.LyricsQuery
 import io.github.momonekomata.sidea.lyrics.LyricsRepository
+import io.github.momonekomata.sidea.lyrics.LyricsSources
 import android.graphics.Bitmap
 import io.github.momonekomata.sidea.sources.ArtworkStore
 import io.github.momonekomata.sidea.sources.TagStore
@@ -191,7 +192,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val q = query(playing)
         val song = listOf(q.title, q.artist).filter { it.isNotBlank() }.joinToString(" — ")
         _lyrics.value = LyricsState(key = playing.key, loading = true, song = song)
-        val found = lyricsRepo.find(q, online = Settings.current.onlineLyrics, force = force)
+        val p = Settings.current
+        val sources = LyricsSources(lrclib = p.lrclib, musixmatchKey = p.musixmatchKey, lyricsOvh = p.lyricsOvh)
+        val found = lyricsRepo.find(q, online = p.onlineLyrics, sources = sources, force = force)
         if (current?.key == playing.key) _lyrics.value = LyricsState(key = playing.key, lyrics = found, missed = found == null, song = song)
     }
 

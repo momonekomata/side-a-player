@@ -15,8 +15,12 @@ data class Prefs(
     val gapless: Boolean = true,
     /** Send DSD as DoP when a bit-perfect USB path exists; otherwise DSD is converted to PCM. */
     val dop: Boolean = false,
-    /** Look lyrics up on lrclib.net when the file and folder have none. */
+    /** Look lyrics up online when the file and folder have none; the sources follow. */
     val onlineLyrics: Boolean = true,
+    val lrclib: Boolean = true,
+    val lyricsOvh: Boolean = true,
+    /** The user's own key from developer.musixmatch.com; blank leaves Musixmatch out. */
+    val musixmatchKey: String = "",
     val eq: EqConfig = EqConfig(),
 )
 
@@ -33,6 +37,9 @@ object Settings {
             gapless = sp.getBoolean("gapless", true),
             dop = sp.getBoolean("dop", false),
             onlineLyrics = sp.getBoolean("onlineLyrics", true),
+            lrclib = sp.getBoolean("lrclib", true),
+            lyricsOvh = sp.getBoolean("lyricsOvh", true),
+            musixmatchKey = sp.getString("musixmatchKey", "").orEmpty(),
             eq = runCatching { sp.getString("eq", null)?.let { eqFromJson(JSONObject(it)) } }.getOrNull() ?: EqConfig(),
         )
     }
@@ -44,6 +51,9 @@ object Settings {
             .putBoolean("gapless", p.gapless)
             .putBoolean("dop", p.dop)
             .putBoolean("onlineLyrics", p.onlineLyrics)
+            .putBoolean("lrclib", p.lrclib)
+            .putBoolean("lyricsOvh", p.lyricsOvh)
+            .putString("musixmatchKey", p.musixmatchKey)
             .putString("eq", eqToJson(p.eq).toString())
             .apply()
     }

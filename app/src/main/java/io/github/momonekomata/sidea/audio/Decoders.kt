@@ -34,8 +34,8 @@ fun interface DopPlanner {
 }
 
 /**
- * Lossless formats are decoded by Side A itself (DSD, FLAC, WAV, AIFF): exact integer samples,
- * and files Android's extractor rejects still play. Lossy formats and ALAC go to MediaCodec.
+ * Lossless formats are decoded by Side A itself (DSD, FLAC, ALAC, WAV, AIFF): exact integer
+ * samples, and files Android rejects still play. Lossy formats go to MediaCodec.
  */
 object Decoders {
     fun open(context: Context, source: PlayableSource, dop: DopPlanner?): PcmDecoder {
@@ -46,6 +46,8 @@ object Decoders {
                 DsdStream.isDsd(head) -> return DsdDecoder(DsdStream.open(ra), dop)
                 PcmFileStream.sniff(head) -> return StreamDecoder.pcm(PcmFileStream(ra))
                 FlacStream.sniff(head) -> runCatching { FlacStream(ra) }.getOrNull()?.let { return StreamDecoder.flac(it) }
+                // M4A: ALAC here; AAC (and anything else) falls through to MediaCodec.
+                AlacStream.sniff(head) -> runCatching { AlacStream(ra) }.getOrNull()?.let { return StreamDecoder.alac(it) }
             }
         } catch (e: Exception) {
             ra.close()
@@ -105,6 +107,12 @@ class StreamDecoder private constructor(
             f.sampleRate, f.channels, f.format, f.bitsPerSample, "FLAC",
             if (f.totalSamples > 0) f.totalSamples * 1_000_000 / f.sampleRate else 0,
             next = f::nextFrame, seekFrame = f::seekTo, closer = f::close,
+        )
+
+        fun alac(a: AlacStream) = StreamDecoder(
+            a.sampleRate, a.channels, a.format, a.bitDepth, "ALAC",
+            if (a.totalSamples > 0) a.totalSamples * 1_000_000 / a.sampleRate else 0,
+            next = a::nextFrame, seekFrame = a::seekTo, closer = a::close,
         )
 
         fun pcm(p: PcmFileStream) = StreamDecoder(

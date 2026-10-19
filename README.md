@@ -39,11 +39,12 @@ Notes:
 
 ## Decoding
 
-Lossless files are decoded by Side A itself: **FLAC** (all stereo modes, 8–32 bit, any rate,
+Lossless files are decoded by Side A itself: **ALAC** (Apple Lossless in .m4a, 16–32 bit; many
+phones have no decoder for it), **FLAC** (all stereo modes, 8–32 bit, any rate,
 seek table or not, and files with an ID3 tag stuck on the front, which Android's extractor rejects as
 "audio/unknown"), **WAV** (PCM, extensible, 32/64-bit float), **AIFF/AIFF-C** (incl. `sowt`, `fl32`)
 and **DSD**. They come out as the file's exact integer samples, so the bit-perfect path never detours
-through float. MP3, AAC, Opus, Vorbis and ALAC go through Android's MediaCodec. If the phone has
+through float. MP3, AAC (incl. AAC .m4a), Opus and Vorbis go through Android's MediaCodec. If the phone has
 no decoder for a file, the error says which format it is.
 
 ## Streaming quality
@@ -150,9 +151,15 @@ Side A looks in this order:
 
 1. The file's tags (`LYRICS`/`UNSYNCEDLYRICS`, ID3 `USLT`, MP4 `©lyr`).
 2. A `.lrc` file with the same name in the same folder (local, WebDAV and FTPS).
-3. [LRCLIB](https://lrclib.net), a free, open lyrics database with timed lyrics. Only the title,
-   artist, album and length are sent. Results, including "not found", are cached on the phone.
-   Settings → *Find lyrics online* turns this off.
+3. Online, in this order, each switchable in Settings:
+   * [LRCLIB](https://lrclib.net): free, open, timed lyrics.
+   * [Musixmatch](https://developer.musixmatch.com): the official API with **your own key** (free to
+     register). The free plan returns part of each song's lyrics; timed lyrics need a paid plan.
+   * [lyrics.ovh](https://lyrics.ovh): free, open, plain lyrics.
+
+   Only the title, artist, album and length are sent. Results, including "not found", are cached
+   on the phone. Sites without an API (AZLyrics, Genius pages) aren't scraped: their terms forbid
+   it and they block it.
 
 Lyrics work for the streaming apps too: they're looked up from what Spotify, Apple Music, TIDAL or YT
 Music report as playing, and follow that app's playback position. The apps' own lyrics (Spotify's,
