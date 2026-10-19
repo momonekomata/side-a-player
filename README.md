@@ -134,7 +134,11 @@ full sheet in place of the track list. Side A looks in this order:
    Settings → *Find lyrics online* turns this off.
 
 Lyrics work for the streaming apps too: they're looked up from what Spotify, Apple Music, TIDAL or YT
-Music report as playing, and follow that app's playback position.
+Music report as playing, and follow that app's playback position. The apps' own lyrics (Spotify's,
+Apple Music's) are licensed to them and can't be read by other apps, so these come from LRCLIB too.
+Streaming titles like "Song (feat. X) - 2011 Remaster" and artists like "A, B & C" are cleaned up
+before a second and third try, then searched. When nothing turns up, the deck says so and offers
+**Retry**. On a phone, the line being sung also shows in the mini player.
 
 ## Streaming apps
 

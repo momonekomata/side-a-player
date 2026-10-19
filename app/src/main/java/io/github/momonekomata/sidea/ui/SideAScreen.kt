@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.momonekomata.sidea.BrowseState
+import io.github.momonekomata.sidea.LyricsState
+import androidx.compose.material3.TextButton
 import io.github.momonekomata.sidea.MainViewModel
 import io.github.momonekomata.sidea.Settings
 import io.github.momonekomata.sidea.SourceTab
@@ -145,9 +147,9 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         Header(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
-                WideLayout(vm, ui.tab, deck, lyrics.lyrics, playing) { m -> SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m) }
+                WideLayout(vm, ui.tab, deck, lyrics, playing) { m -> SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m) }
             } else {
-                PhoneLayout(vm, ui.tab, deck, lyrics.lyrics, playing) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
+                PhoneLayout(vm, ui.tab, deck, lyrics, playing) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
             }
         }
     }
@@ -165,10 +167,11 @@ private fun WideLayout(
     vm: MainViewModel,
     tab: SourceTab,
     deck: DeckModel,
-    sheet: Lyrics?,
+    lyrics: LyricsState,
     playing: Set<SourceTab>,
     card: @Composable (Modifier) -> Unit,
 ) {
+    val sheet = lyrics.lyrics
     var lyricsOpen by remember { mutableStateOf(false) }
     val showSheet = lyricsOpen && sheet != null
     BackHandler(enabled = showSheet) { lyricsOpen = false }
@@ -184,6 +187,8 @@ private fun WideLayout(
                 Deck(deck)
                 if (sheet != null && !showSheet) {
                     LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f), compact = false) { lyricsOpen = true }
+                } else if (sheet == null) {
+                    LyricsStatus(lyrics, vm::retryLyrics)
                 }
             }
         }
@@ -201,7 +206,7 @@ private fun PhoneLayout(
     vm: MainViewModel,
     tab: SourceTab,
     deck: DeckModel,
-    sheet: Lyrics?,
+    lyrics: LyricsState,
     playing: Set<SourceTab>,
     card: @Composable (SourceTab, Modifier) -> Unit,
 ) {
@@ -220,21 +225,21 @@ private fun PhoneLayout(
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 pageSpacing = 12.dp,
             ) { page -> card(SourceTab.entries[page], Modifier.fillMaxSize()) }
-            MiniPlayer(deck, onExpand = { expanded = true })
+            MiniPlayer(deck, lyrics.lyrics, onExpand = { expanded = true })
         }
         AnimatedVisibility(
             visible = expanded,
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
-            ExpandedDeck(deck, sheet, onCollapse = { expanded = false })
+            ExpandedDeck(deck, lyrics, onRetry = vm::retryLyrics, onCollapse = { expanded = false })
         }
     }
 }
 
 /** Collapsed now-playing card: cover, title, quality, play/pause, next, and a thin progress line. */
 @Composable
-private fun MiniPlayer(deck: DeckModel, onExpand: () -> Unit) {
+private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
     var drag by remember { mutableFloatStateOf(0f) }
     Column(
         Modifier
@@ -265,7 +270,13 @@ private fun MiniPlayer(deck: DeckModel, onExpand: () -> Unit) {
             }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(deck.title.ifBlank { "Nothing playing" }, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(deck.subtitle.ifBlank { deck.status }, color = Retro.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // The line being sung, when there are timed lyrics; otherwise artist and album.
+                val line = sheet?.let { l -> l.lineAt(deck.positionMs).takeIf { it >= 0 }?.let { l.lines[it].text } }?.takeIf { it.isNotBlank() }
+                if (line != null) {
+                    Text(line, color = Retro.Orange, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    Text(deck.subtitle.ifBlank { deck.status }, color = Retro.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 deck.path?.quality?.let { q ->
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                         Box(Modifier.size(6.dp).clip(CircleShape).background(q.color()))
@@ -283,7 +294,8 @@ private fun MiniPlayer(deck: DeckModel, onExpand: () -> Unit) {
 
 /** The full deck over the cards, with lyrics filling what the deck leaves. */
 @Composable
-private fun ExpandedDeck(deck: DeckModel, sheet: Lyrics?, onCollapse: () -> Unit) {
+private fun ExpandedDeck(deck: DeckModel, lyrics: LyricsState, onRetry: () -> Unit, onCollapse: () -> Unit) {
+    val sheet = lyrics.lyrics
     var drag by remember { mutableFloatStateOf(0f) }
     Column(
         Modifier
@@ -312,8 +324,28 @@ private fun ExpandedDeck(deck: DeckModel, sheet: Lyrics?, onCollapse: () -> Unit
         if (sheet != null) {
             LyricsPanel(sheet, deck.positionMs, Modifier.fillMaxWidth().weight(1f).padding(vertical = 10.dp), compact = false) {}
         } else {
+            LyricsStatus(lyrics, onRetry)
             Spacer(Modifier.weight(1f))
         }
+    }
+}
+
+/** Says what happened when there are no lyrics to show, so a miss isn't a mystery. */
+@Composable
+private fun LyricsStatus(lyrics: LyricsState, onRetry: () -> Unit) {
+    if (lyrics.key == null) return
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 10.dp).clip(RoundedCornerShape(8.dp)).background(Retro.Panel).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val text = when {
+            lyrics.loading -> "Looking for lyrics…"
+            !Settings.current.onlineLyrics -> "No lyrics in the file. Online lookup is off in Settings."
+            lyrics.missed -> "No lyrics found on LRCLIB for ${lyrics.song}"
+            else -> ""
+        }
+        Text(text, color = Retro.Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        if (lyrics.missed) TextButton(onClick = onRetry) { Text("Retry", color = Retro.Orange) }
     }
 }
 

@@ -62,7 +62,14 @@ data class BrowseState(
 data class CertPrompt(val server: NasServer, val sha256: String, val subject: String)
 
 /** Lyrics for whatever the deck is showing. [key] identifies the song they belong to. */
-data class LyricsState(val key: String? = null, val lyrics: Lyrics? = null, val loading: Boolean = false)
+data class LyricsState(
+    val key: String? = null,
+    val lyrics: Lyrics? = null,
+    val loading: Boolean = false,
+    /** Looked up and found nothing; [song] says what was looked for. */
+    val missed: Boolean = false,
+    val song: String = "",
+)
 
 /** The song lyrics are wanted for, reduced to what identifies it. */
 private sealed interface Playing {
@@ -71,7 +78,8 @@ private sealed interface Playing {
         override val key get() = "local:${track.id}"
     }
     data class Remote(val app: StreamingApp, val title: String, val artist: String, val album: String, val durationMs: Long) : Playing {
-        override val key get() = "remote:${app.name}:$artist:$title"
+        // Duration is part of the key so the lookup runs again once the app reports it.
+        override val key get() = "remote:${app.name}:$artist:$title:${durationMs > 0}"
     }
 }
 
@@ -168,13 +176,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .distinctUntilChanged { a, b -> a?.key == b?.key }
             .collectLatest { playing ->
                 if (playing == null) {
+                    current = null
                     _lyrics.value = LyricsState()
                     return@collectLatest
                 }
-                _lyrics.value = LyricsState(key = playing.key, loading = true)
-                val found = lyricsRepo.find(query(playing), online = Settings.current.onlineLyrics)
-                _lyrics.value = LyricsState(key = playing.key, lyrics = found)
+                current = playing
+                lookUp(playing, force = false)
             }
+    }
+
+    private var current: Playing? = null
+
+    private suspend fun lookUp(playing: Playing, force: Boolean) {
+        val q = query(playing)
+        val song = listOf(q.title, q.artist).filter { it.isNotBlank() }.joinToString(" — ")
+        _lyrics.value = LyricsState(key = playing.key, loading = true, song = song)
+        val found = lyricsRepo.find(q, online = Settings.current.onlineLyrics, force = force)
+        if (current?.key == playing.key) _lyrics.value = LyricsState(key = playing.key, lyrics = found, missed = found == null, song = song)
+    }
+
+    fun retryLyrics() {
+        val p = current ?: return
+        viewModelScope.launch { lookUp(p, force = true) }
     }
 
     private suspend fun query(p: Playing): LyricsQuery = when (p) {
