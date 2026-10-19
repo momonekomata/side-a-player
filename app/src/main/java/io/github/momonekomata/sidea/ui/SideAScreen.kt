@@ -558,6 +558,7 @@ private fun SourceCard(
         }
         SourceTab.NAS -> NasCard(vm, ui.nas, ui.nasServers, queue, tags, modifier)
         SourceTab.FAVORITES -> FavoritesCard(vm, queue, modifier)
+        SourceTab.QUEUE -> QueueCard(vm, queue, tags, modifier)
         else -> {
             val app = tab.app!!
             StreamingCard(vm, app, remote[app], ui.streamingAccess, modifier)
@@ -706,6 +707,67 @@ private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifi
         }
     }
     if (creating) PlaylistNameDialog(onCreate = { vm.newPlaylist(it, null); creating = false }, onDismiss = { creating = false })
+}
+
+/** What plays next (tap to jump there, long-press for more), or what played. */
+@Composable
+private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
+    var history by rememberSaveable { mutableStateOf(false) }
+    val played by io.github.momonekomata.sidea.sources.PlayHistory.items.collectAsStateWithLifecycle()
+    val upcoming = (queue.tracks.size - queue.index - 1).coerceAtLeast(0)
+    val subtitle = if (history) "${played.size} songs played" else "${queue.tracks.size} songs · $upcoming to come${if (queue.shuffle) " · shuffled" else ""}"
+    JCard(if (history) "History" else "Queue", subtitle, modifier) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton({ history = false }) { Text("Queue", color = if (!history) Retro.Orange else Retro.InkFaint) }
+                TextButton({ history = true }) { Text("History", color = if (history) Retro.Orange else Retro.InkFaint) }
+            }
+        }
+        if (!history) {
+            if (queue.tracks.isEmpty()) item { JCardNote("Nothing queued. Play a song, or long-press one and pick Add to queue.") }
+            queue.tracks.forEachIndexed { i, t ->
+                item {
+                    val mark = when {
+                        i < queue.index -> "·"
+                        else -> "%02d".format(i - queue.index)
+                    }
+                    JCardRow(
+                        mark, t.displayTitle(tags), listOf(t.displayArtist(tags), t.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "),
+                        current = i == queue.index,
+                        action = if (i != queue.index) "✕" to { Player.removeAt(i) } else null,
+                        onLongClick = { vm.openSongMenu(t) },
+                        onClick = { Player.jumpTo(i) },
+                    )
+                }
+            }
+            if (upcoming > 0) item { JCardRow("", "Clear what's to come", onClick = Player::clearUpcoming) }
+        } else {
+            if (played.isEmpty()) item { JCardNote("Songs you play from Local, the NAS, Favourites and playlists show up here.") }
+            played.forEach { p ->
+                item {
+                    val f = p.song
+                    JCardRow(
+                        playedAgo(p.atMs), f.title, listOf(f.artist, f.album).filter { it.isNotBlank() }.joinToString(" · "),
+                        current = queue.current?.id == f.id,
+                        onLongClick = { vm.openSongMenu(f) },
+                        onClick = { vm.playPlayed(f) },
+                    )
+                }
+            }
+            if (played.isNotEmpty()) item { JCardRow("", "Clear history", onClick = io.github.momonekomata.sidea.sources.PlayHistory::clear) }
+        }
+    }
+}
+
+/** "now", "5m", "3h", "2d": how long ago, short enough for the number column. */
+private fun playedAgo(atMs: Long): String {
+    val m = (System.currentTimeMillis() - atMs) / 60_000
+    return when {
+        m < 1 -> "now"
+        m < 60 -> "${m}m"
+        m < 60 * 24 -> "${m / 60}h"
+        else -> "${m / (60 * 24)}d"
+    }
 }
 
 @Composable

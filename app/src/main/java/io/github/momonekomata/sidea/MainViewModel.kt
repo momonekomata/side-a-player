@@ -53,6 +53,7 @@ enum class SourceTab(val label: String, val short: String, val app: StreamingApp
     TIDAL("TIDAL", "TIDAL", StreamingApp.TIDAL),
     YT_MUSIC("YT Music", "YT", StreamingApp.YT_MUSIC),
     FAVORITES("Favourites", "♥"),
+    QUEUE("Queue", "QUEUE"),
 }
 
 /** A song or folder found by search, with the folders leading to it. */
@@ -425,6 +426,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun playFavorites(index: Int) = playSaved(_favorites.value, index)
+
+    /** Plays one song from the history. */
+    fun playPlayed(f: Favorite) = playSaved(listOf(f), 0)
 
     // ---- long-press menu: queue, playlists ----
 

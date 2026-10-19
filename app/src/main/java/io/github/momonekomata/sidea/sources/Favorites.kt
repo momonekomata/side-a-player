@@ -86,3 +86,44 @@ object TrackResolver {
         return base.copy(title = f.title.ifBlank { base.title }, artist = f.artist, album = f.album.ifBlank { base.album })
     }
 }
+
+/** A song that played, and when. */
+data class Played(val song: Favorite, val atMs: Long)
+
+/** The last few hundred songs played, newest first, kept on the phone. */
+object PlayHistory {
+    private const val LIMIT = 300
+    private var prefs: android.content.SharedPreferences? = null
+    private val _items = kotlinx.coroutines.flow.MutableStateFlow<List<Played>>(emptyList())
+    val items: kotlinx.coroutines.flow.StateFlow<List<Played>> = _items
+
+    fun init(context: Context) {
+        if (prefs != null) return
+        val p = context.getSharedPreferences("history", 0).also { prefs = it }
+        val arr = JSONArray(p.getString("list", "[]"))
+        val songs = arr.favorites()
+        _items.value = songs.mapIndexed { i, f -> Played(f, arr.getJSONObject(i).optLong("at")) }
+    }
+
+    fun record(t: Track) {
+        val tags = TagStore.tags.value
+        val f = Favorite(t.id, t.displayTitle(tags), t.displayArtist(tags).orEmpty(), t.displayAlbum(tags).orEmpty(), t.sizeBytes)
+        val now = System.currentTimeMillis()
+        // Playing the same song again straight away (repeat one, a restart) is one entry.
+        val rest = _items.value.let { if (it.firstOrNull()?.song?.id == t.id) it.drop(1) else it }
+        val next = (listOf(Played(f, now)) + rest).take(LIMIT)
+        _items.value = next
+        save(next)
+    }
+
+    fun clear() {
+        _items.value = emptyList()
+        save(emptyList())
+    }
+
+    private fun save(list: List<Played>) {
+        val arr = list.map { it.song }.toJson()
+        list.forEachIndexed { i, p -> arr.getJSONObject(i).put("at", p.atMs) }
+        prefs?.edit()?.putString("list", arr.toString())?.apply()
+    }
+}

@@ -19,6 +19,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -52,6 +54,16 @@ data class QueueState(
         val at = original.indexOfFirst { it === cur }
         val orig = if (at < 0) original + t else original.toMutableList().apply { add(at + 1, t) }
         return copy(tracks = tracks.toMutableList().apply { add(index + 1, t) }, original = orig)
+    }
+
+    /** Without the song at [i] (not the current one), in both orders. */
+    fun without(i: Int): QueueState {
+        val gone = tracks[i]
+        return copy(
+            tracks = tracks.filterIndexed { k, _ -> k != i },
+            index = if (i < index) index - 1 else index,
+            original = original.toMutableList().apply { indexOfFirst { it === gone }.takeIf { it >= 0 }?.let { removeAt(it) } },
+        )
     }
 
     /** [t] at the end of the queue. */
@@ -114,9 +126,11 @@ object Player {
                 park()
                 abandonFocus()
             }
-            // A call, a navigation prompt: pause and pick up afterwards. Ducking would mean
-            // changing the samples, so a bit-perfect player pauses instead.
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+            // A notification or a navigation prompt asks to duck: carry on. Android lowers
+            // its own mixer path for the moment; Side A's USB path doesn't change its samples.
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Unit
+            // A call, a voice assistant: pause and pick up afterwards.
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (engine.state.value.isPlaying) {
                     resumeOnGain = true
                     engine.pause()
@@ -135,7 +149,7 @@ object Player {
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build(),
             )
-            .setWillPauseWhenDucked(true)
+            .setWillPauseWhenDucked(false)
             .setOnAudioFocusChangeListener(focusListener, Handler(Looper.getMainLooper()))
             .build()
             .also { focus = it }
@@ -226,6 +240,11 @@ object Player {
             }
         }
         Settings.init(appContext)
+        io.github.momonekomata.sidea.sources.PlayHistory.init(appContext)
+        // Every song that comes up, by a tap or a gapless hand-over, goes into the history.
+        scope.launch {
+            _queue.map { it.current }.distinctUntilChanged().collect { t -> t?.let(io.github.momonekomata.sidea.sources.PlayHistory::record) }
+        }
         io.github.momonekomata.sidea.streaming.StreamingEq.start(appContext)
         engine = AudioEngine(appContext, callbacks)
         // Asked once per DAC per run; the song plays through Android until the user says yes.
@@ -263,6 +282,30 @@ object Player {
 
     /** Plays [t] after the current song; plays it now if nothing is queued. */
     fun playNext(t: Track) = edit { it.withNext(t) }
+
+    /** Jumps to the song at [index] in the queue. */
+    fun jumpTo(index: Int) {
+        val q = _queue.value
+        if (index !in q.tracks.indices) return
+        _queue.value = q.copy(index = index)
+        startCurrent()
+    }
+
+    /** Takes the song at [index] out of the queue; the one playing stays. */
+    fun removeAt(index: Int) {
+        val q = _queue.value
+        if (index == q.index || index !in q.tracks.indices) return
+        _queue.value = q.without(index)
+        engine.upNextChanged()
+    }
+
+    /** Clears everything after the song playing. */
+    fun clearUpcoming() {
+        val q = _queue.value
+        val cur = q.current ?: return
+        _queue.value = q.copy(tracks = q.tracks.take(q.index + 1), original = q.original.filter { o -> q.tracks.take(q.index + 1).any { it === o } }.ifEmpty { listOf(cur) })
+        engine.upNextChanged()
+    }
 
     /** Adds [t] to the end of the queue; plays it now if nothing is queued. */
     fun addToQueue(t: Track) = edit { it.withAdded(t) }

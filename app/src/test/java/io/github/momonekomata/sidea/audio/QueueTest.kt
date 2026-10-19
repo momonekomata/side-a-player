@@ -40,4 +40,12 @@ class QueueTest {
         assertEquals(0, fresh.index)
         assertEquals("x", fresh.current?.id)
     }
+
+    @Test
+    fun `removing a song before the current one keeps the current one playing`() {
+        val q = QueueState(tracks, 2).without(0)
+        assertEquals(listOf("t2", "t3"), q.tracks.map { it.id })
+        assertEquals("t3", q.current?.id)
+        assertEquals(listOf("t2", "t3"), q.original.map { it.id })
+    }
 }

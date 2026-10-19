@@ -109,6 +109,12 @@ returns to where you were scrolled. Long lists (20 entries or more) get an A–Z
 edge: touch or slide along it to jump to a letter; digits file under #, and Thai, kana, kanji and
 hangul get a mark each after Z.
 
+**Long-press a song** (in a folder, search, Favourites, a playlist, the queue or the history) for
+add to / remove from favourites, play next, add to queue and add to playlist. Playlists sit in the
+Favourites tab above the favourite songs. The **Queue** tab shows what plays next: tap a song to
+jump to it, ✕ to take it out, or clear what's to come. Its **History** side lists the last 300
+songs played, newest first.
+
 ## NAS playback
 
 Songs from WebDAV and FTPS are downloaded in one continuous transfer into a cache (up to 2 GB,
@@ -131,8 +137,10 @@ still mixed by Android, so it's never bit-perfect.
 ## Playing nicely with other apps
 
 Side A takes Android's audio focus like any music app. Starting a song pauses Spotify, TIDAL and
-the rest, and when another app starts playing Side A pauses. Calls and navigation prompts pause it
-(a bit-perfect player can't "duck" the volume without changing the samples) and it resumes after.
+the rest, and when another app starts playing Side A pauses. Calls and voice assistants pause it
+and it resumes after. Notifications and navigation prompts only ask other apps to duck, so Side A
+keeps playing through them: Android lowers its own mixer path for the moment, and Side A's USB
+path stays bit-perfect.
 Unplugging headphones or the DAC pauses instead of switching to the speaker.
 
 ## Phone layout
