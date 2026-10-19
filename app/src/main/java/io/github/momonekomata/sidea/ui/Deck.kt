@@ -88,8 +88,6 @@ data class DeckModel(
     val repeat: RepeatMode? = null,
     val onShuffle: () -> Unit = {},
     val onRepeat: () -> Unit = {},
-    val speed: Float = 1f,
-    val onSpeed: (Float) -> Unit = {},
     val onSkip: (Long) -> Unit = {},
     val onToggle: () -> Unit,
     val onNext: () -> Unit,
@@ -174,18 +172,19 @@ private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
         StatusLine(model.status, model.statusColor)
     }
     SeekBar(model)
-    TransportPager(model, if (compact) 42.dp else 48.dp)
+    TransportPager(model, compact)
 }
 
 /**
- * The transport keys; swipe them left for −10 −5 speed +5 +10. Two dots show which is up.
+ * The transport keys; swipe them left for −10 −5 +5 +10. Two dots show which is up.
  */
 @Composable
-private fun TransportPager(model: DeckModel, keyHeight: Dp) {
+private fun TransportPager(model: DeckModel, compact: Boolean) {
+    val keyHeight = if (compact) 44.dp else 52.dp
     val pager = rememberPagerState { 2 }
-    HorizontalPager(pager, Modifier.fillMaxWidth().height(maxOf(keyHeight, 48.dp))) { page ->
+    HorizontalPager(pager, Modifier.fillMaxWidth().height(keyHeight)) { page ->
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (page == 0) TransportRow(model, keyHeight) else SkipRow(model)
+            if (page == 0) TransportRow(model, keyHeight, compact) else SkipRow(model, compact)
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
@@ -196,19 +195,31 @@ private fun TransportPager(model: DeckModel, keyHeight: Dp) {
 }
 
 @Composable
-private fun TransportRow(model: DeckModel, h: Dp) {
+private fun TransportRow(model: DeckModel, h: Dp, compact: Boolean) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-        model.shuffle?.let { on ->
-            IconButton(onClick = model.onShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (on) Retro.Orange else Retro.Muted) }
-        }
+        // Beside a cover on a phone held sideways there's only room for the three keys;
+        // shuffle and repeat move to the second page there.
+        if (!compact) ShuffleKey(model)
         // Hold to rewind / fast-forward; tap for previous / next.
         DeckKey(Icons.Filled.SkipPrevious, "Previous", height = h, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
         DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", wide = true, lit = model.playing, height = h, onClick = model.onToggle)
         DeckKey(Icons.Filled.SkipNext, "Next", height = h, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
-        model.repeat?.let { r ->
-            IconButton(onClick = model.onRepeat) {
-                Icon(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", tint = if (r != RepeatMode.OFF) Retro.Orange else Retro.Muted)
-            }
+        if (!compact) RepeatKey(model)
+    }
+}
+
+@Composable
+private fun ShuffleKey(model: DeckModel) {
+    model.shuffle?.let { on ->
+        IconButton(onClick = model.onShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (on) Retro.Orange else Retro.Muted) }
+    }
+}
+
+@Composable
+private fun RepeatKey(model: DeckModel) {
+    model.repeat?.let { r ->
+        IconButton(onClick = model.onRepeat) {
+            Icon(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", tint = if (r != RepeatMode.OFF) Retro.Orange else Retro.Muted)
         }
     }
 }
@@ -261,26 +272,22 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier) {
     }
 }
 
-private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-
-/** −10 −5 [speed] +5 +10. The speed chip steps through 0.5×…2×; a long press returns to 1×. */
+/** −10 −5 +5 +10 seconds (with shuffle and repeat at the ends when the deck is compact). */
 @Composable
-private fun SkipRow(model: DeckModel) {
+private fun SkipRow(model: DeckModel, compact: Boolean) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        SmallKey("−10") { model.onSkip(-10_000) }
-        SmallKey("−5") { model.onSkip(-5_000) }
-        val label = "%.2f".format(model.speed).trimEnd('0').trimEnd('.') + "×"
-        SmallKey(label, lit = model.speed != 1f, onLong = { model.onSpeed(1f) }) {
-            model.onSpeed(SPEEDS[(SPEEDS.indexOf(model.speed).coerceAtLeast(0) + 1) % SPEEDS.size])
-        }
-        SmallKey("+5") { model.onSkip(5_000) }
-        SmallKey("+10") { model.onSkip(10_000) }
+        if (compact) ShuffleKey(model)
+        SmallKey("−10", compact) { model.onSkip(-10_000) }
+        SmallKey("−5", compact) { model.onSkip(-5_000) }
+        SmallKey("+5", compact) { model.onSkip(5_000) }
+        SmallKey("+10", compact) { model.onSkip(10_000) }
+        if (compact) RepeatKey(model)
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SmallKey(text: String, lit: Boolean = false, onLong: (() -> Unit)? = null, onClick: () -> Unit) {
+private fun SmallKey(text: String, compact: Boolean = false, lit: Boolean = false, onLong: (() -> Unit)? = null, onClick: () -> Unit) {
     Text(
         text,
         color = if (lit) Retro.Orange else Color(0xFFD0D0D0),
@@ -290,7 +297,7 @@ private fun SmallKey(text: String, lit: Boolean = false, onLong: (() -> Unit)? =
             .clip(RoundedCornerShape(6.dp))
             .border(1.dp, if (lit) Retro.Orange else Retro.ShellEdge, RoundedCornerShape(6.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLong)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = if (compact) 6.dp else 12.dp, vertical = 6.dp),
     )
 }
 
@@ -340,11 +347,12 @@ private fun SeekBar(model: DeckModel) {
 /** A chunky piano-key transport button like a tape deck's. */
 @Composable
 private fun DeckKey(icon: ImageVector, label: String, wide: Boolean = false, lit: Boolean = false, height: Dp = 52.dp, onHold: (() -> Unit)? = null, onClick: () -> Unit) {
+    val narrow = height < 48.dp
     val hold by rememberUpdatedState(onHold)
     val click by rememberUpdatedState(onClick)
     Box(
         Modifier
-            .size(width = if (wide) 88.dp else 64.dp, height = height)
+            .size(width = if (wide) (if (narrow) 68.dp else 88.dp) else (if (narrow) 52.dp else 64.dp), height = height)
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF2B2B2B))
             .border(1.dp, if (lit) Retro.Orange else Retro.ShellEdge, RoundedCornerShape(6.dp))

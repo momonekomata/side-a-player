@@ -23,14 +23,17 @@ object MediaCache {
         return File(dir, "$name.$extension")
     }
 
-    /** The cached file when it's complete, else a stream fed by [fetch] while it downloads. */
-    fun open(file: File, size: Long, fetch: ((ByteArray, Int) -> Boolean) -> Unit): PlayableSource {
+    /**
+     * The cached file when it's complete, else a stream fed by [fetch] while it downloads, or by
+     * [ranged] in parallel pieces when the server takes range requests.
+     */
+    fun open(file: File, size: Long, ranged: RangeFetch? = null, fetch: ((ByteArray, Int) -> Boolean) -> Unit): PlayableSource {
         if (size > 0 && file.length() == size) {
             file.setLastModified(System.currentTimeMillis())
             return PlayableSource.File(file.path)
         }
         trim(file.parentFile!!, keep = file)
-        return PlayableSource.Stream(GrowingFileDataSource(file, size, fetch))
+        return PlayableSource.Stream(GrowingFileDataSource(file, size, fetch, ranged))
     }
 
     /** Keeps the cache under ~2 GB by dropping the least recently played songs. */
@@ -58,6 +61,7 @@ class GrowingFileDataSource(
     private val file: File,
     private val expectedSize: Long,
     private val fetch: ((ByteArray, Int) -> Boolean) -> Unit,
+    private val ranged: RangeFetch? = null,
 ) : MediaDataSource(), Refilling {
     private val lock = Object()
     private var written = 0L
@@ -82,14 +86,14 @@ class GrowingFileDataSource(
                 Downloads.awaitTurn(this)
                 if (!closed) {
                     startedNs = System.nanoTime()
-                    RandomAccessFile(partial, "rw").use { out ->
-                        fetch(sink@{ buf, n ->
-                            if (closed) return@sink false
-                            out.write(buf, 0, n)
-                            synchronized(lock) { written += n; lock.notifyAll() }
-                            true
-                        })
+                    val r = ranged
+                    val inPieces = r != null && expectedSize > 2 * PIECE && try {
+                        downloadInPieces(r)
+                        true
+                    } catch (e: RangesUnsupported) {
+                        false
                     }
+                    if (!inPieces) downloadInOne()
                     if (!closed) partial.renameTo(file)
                 }
             } catch (t: Throwable) {
@@ -100,6 +104,95 @@ class GrowingFileDataSource(
             }
         }, "SideA-download").start()
     }
+
+    private fun downloadInOne() {
+        RandomAccessFile(partial, "rw").use { out ->
+            var pos = 0L
+            fetch(sink@{ buf, n ->
+                if (closed) return@sink false
+                out.seek(pos)
+                out.write(buf, 0, n)
+                pos += n
+                synchronized(lock) { written = maxOf(written, pos); lock.notifyAll() }
+                true
+            })
+        }
+    }
+
+    /**
+     * [WORKERS] connections, each taking the next [PIECE] in order, so the piece playback needs
+     * next is always among those coming in. Over Wi-Fi, TLS or a busy NAS one connection often
+     * tops out well below what the link can do; several together get much closer. Playback may
+     * read up to the first piece that isn't complete, plus what that piece already has.
+     */
+    private fun downloadInPieces(fetchRange: RangeFetch) {
+        val pieces = ((expectedSize + PIECE - 1) / PIECE).toInt()
+        val got = LongArray(pieces)
+        val next = java.util.concurrent.atomic.AtomicInteger(0)
+        val errors = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        fun advance() {
+            var k = (written / PIECE).toInt()
+            var end = written
+            while (k < pieces) {
+                val start = k * PIECE
+                val size = minOf(PIECE, expectedSize - start)
+                end = start + got[k]
+                if (got[k] < size) break
+                k++
+            }
+            written = maxOf(written, minOf(end, expectedSize))
+            lock.notifyAll()
+        }
+        val workers = (0 until WORKERS).map {
+            Thread({
+                try {
+                    RandomAccessFile(partial, "rw").use { out ->
+                        while (!closed && errors.get() == null) {
+                            val i = next.getAndIncrement()
+                            if (i >= pieces) break
+                            val start = i * PIECE
+                            val end = minOf(expectedSize, start + PIECE)
+                            var attempt = 0
+                            while (!closed) {
+                                // A dropped connection resumes the piece where it stopped.
+                                val from = start + synchronized(lock) { got[i] }
+                                if (from >= end) break
+                                try {
+                                    var pos = from
+                                    fetchRange(from, end) sink@{ buf, n ->
+                                        if (closed) return@sink false
+                                        val take = minOf(n.toLong(), end - pos).toInt()
+                                        out.seek(pos)
+                                        out.write(buf, 0, take)
+                                        pos += take
+                                        synchronized(lock) { got[i] = pos - start; advance() }
+                                        pos < end
+                                    }
+                                    if (!closed && pos < end) throw IOException("The NAS ended a piece early")
+                                } catch (e: RangesUnsupported) {
+                                    throw e
+                                } catch (e: IOException) {
+                                    if (++attempt >= 3) throw e
+                                }
+                            }
+                        }
+                    }
+                } catch (t: Throwable) {
+                    errors.compareAndSet(null, t)
+                    synchronized(lock) { lock.notifyAll() }
+                }
+            }, "SideA-download-$it").also { it.start() }
+        }
+        workers.forEach { it.join() }
+        errors.get()?.let { throw it }
+    }
+
+    /** How fast the NAS delivers, for the Buffering line. */
+    override val downloadBytesPerSecond: Long
+        get() {
+            val ns = System.nanoTime() - startedNs
+            return if (startedNs > 0 && ns > 500_000_000L) (synchronized(lock) { written } * 1e9 / ns).toLong() else 0
+        }
 
     override fun getSize(): Long = expectedSize
 
@@ -157,6 +250,15 @@ internal fun refillTarget(want: Long, size: Long, playRate: Long, written: Long,
     val inTime = size - (secondsLeft * downloadRate).toLong()
     return maxOf(ahead, inTime)
 }
+
+/** Fetches bytes from start until end (exclusive) of a file into the sink, which returns false to stop. */
+typealias RangeFetch = (start: Long, end: Long, sink: (ByteArray, Int) -> Boolean) -> Unit
+
+/** The server sent the whole file for a range request: download it in one go instead. */
+class RangesUnsupported : IOException("The server ignores range requests")
+
+private const val PIECE = 4L * 1024 * 1024
+private const val WORKERS = 4
 
 /** The order downloads run in: one at a time, oldest first; closed ones step aside. */
 private object Downloads {

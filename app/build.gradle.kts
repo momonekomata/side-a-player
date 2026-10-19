@@ -5,6 +5,8 @@ plugins {
 }
 
 android {
+    // GrowingFileDataSource extends MediaDataSource; its stub constructor must not throw in JVM tests.
+    testOptions.unitTests.isReturnDefaultValues = true
     namespace = "io.github.momonekomata.sidea"
     compileSdk = 35
 

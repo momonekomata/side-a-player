@@ -53,7 +53,6 @@ enum class SourceTab(val label: String, val short: String, val app: StreamingApp
     TIDAL("TIDAL", "TIDAL", StreamingApp.TIDAL),
     YT_MUSIC("YT Music", "YT", StreamingApp.YT_MUSIC),
     FAVORITES("Favourites", "♥"),
-    QUEUE("Queue", "QUEUE"),
 }
 
 /** A song or folder found by search, with the folders leading to it. */

@@ -356,7 +356,7 @@ object Player {
         engine.upNextChanged()
     }
 
-    // ---- skipping, speed ----
+    // ---- skipping ----
 
     /** Jumps by [deltaMs] within the song (±5 s, ±10 s, or held fast-forward/rewind). */
     fun skipBy(deltaMs: Long) {
@@ -364,17 +364,6 @@ object Player {
         if (_queue.value.current == null) return
         val to = (s.positionMs + deltaMs).coerceIn(0, if (s.durationMs > 0) s.durationMs - 500 else Long.MAX_VALUE)
         if (parkedAtMs != null) parkedAtMs = to else seekTo(to)
-    }
-
-    private val _speed = MutableStateFlow(1f)
-    val speed: StateFlow<Float> = _speed.asStateFlow()
-
-    /** Playback speed with the pitch kept. Anything but 1× goes through Side A's time-stretch, on whichever output is in use. */
-    fun setSpeed(v: Float) {
-        if (v == _speed.value) return
-        _speed.value = v
-        engine.speed = v
-        reopenOnNewOutput()
     }
 
     // ---- giving the DAC back while paused ----

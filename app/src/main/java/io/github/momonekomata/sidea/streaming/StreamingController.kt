@@ -168,10 +168,6 @@ class StreamingController(private val context: Context) {
     fun seekTo(app: StreamingApp, ms: Long) = controls(app)?.seekTo(ms)
     fun playQueueItem(app: StreamingApp, id: Long) = controls(app)?.skipToQueueItem(id)
 
-    /** Apps may ignore this; most music apps honour it, podcasts-style. */
-    fun setSpeed(app: StreamingApp, speed: Float) {
-        if (android.os.Build.VERSION.SDK_INT >= 29) controls(app)?.setPlaybackSpeed(speed)
-    }
 
     fun isInstalled(app: StreamingApp) = context.packageManager.getLaunchIntentForPackage(app.packageName) != null
 

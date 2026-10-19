@@ -99,10 +99,8 @@ and YT Music Side A shows what can be observed and says so where it can't:
 ## Playback controls
 
 Shuffle and repeat (all / one) beside the transport keys; hold ⏮/⏭ to rewind or fast-forward.
-Swipe the transport keys left for −10 / −5 / +5 / +10 s and the speed chip, which steps 0.5×…2×
-(long-press for 1×). Speeds other than 1× go through Side A's own time-stretch (WSOLA, pitch kept)
-on whichever output is playing, Side A's USB driver included; the samples change, so the badge says
-ENHANCED, and DSD plays as PCM rather than DoP while the speed isn't 1×. ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
+Swipe the transport keys left for −10 / −5 / +5 / +10 s (on a phone held sideways, shuffle and
+repeat are there too). ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
 local and NAS songs. **Search** (top of a folder card) indexes the whole local folder or NAS share
 the first time and finds songs and folders by title, artist, album or name. Going back up a folder
 returns to where you were scrolled. Long lists (20 entries or more) get an A–Z index down the right
@@ -111,9 +109,10 @@ hangul get a mark each after Z.
 
 **Long-press a song** (in a folder, search, Favourites, a playlist, the queue or the history) for
 add to / remove from favourites, play next, add to queue and add to playlist. Playlists sit in the
-Favourites tab above the favourite songs. The **Queue** tab is one list, like Apple Music's: the song
-playing in the middle, up next below it (tap to jump there, swipe left to take a song out,
-long-press and drag to move it), and the last 300 songs played above it; scroll up for older ones.
+Favourites tab above the favourite songs. Swipe the deck left for the **queue**, one list like
+Apple Music's: the song playing in the middle, up next below it (tap to jump there, swipe left to
+take a song out, long-press and drag to move it), and the last 300 songs played above it; scroll
+up for older ones. Under the deck, the next few songs fill the space the controls leave.
 
 ## NAS playback
 
@@ -125,7 +124,16 @@ If playback catches up with the download anyway (DSD256 is ~2.8 MB/s), it waits 
 are ahead, or, on a link slower than the song, until enough is in that the rest arrives before
 playback gets there, and the deck says "Buffering". One clean pause instead of a stutter.
 Downloads run one at a time, so the next song's early download for gapless never takes bandwidth
-from the song that's playing.
+from the song that's playing. The Buffering line says how fast the NAS sends against what the song
+needs.
+
+WebDAV downloads use four connections at once, each fetching the next 4 MB piece in order (servers
+that ignore range requests get one ordinary download). One HTTP connection often tops out well
+below the link: TLS on a NAS's small CPU, Wi-Fi latency, or the server's per-connection limits.
+A protocol change wouldn't help by itself: Subsonic/Navidrome streams over the same HTTP (and
+transcodes DSD unless told not to), and SFTP is usually slower than HTTP on a NAS because of its
+encryption and window sizes. If the NAS still can't keep up, plain HTTP on the home network (no
+TLS) is the next step, then a wired or 5/6 GHz link.
 
 ## EQ on streaming apps
 

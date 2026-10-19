@@ -139,7 +139,6 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     // Collected so the remote signal path redraws when another app's output changes.
     val remoteOut by vm.streaming.output.seen.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
-    val speed by Player.speed.collectAsStateWithLifecycle()
     var settingsOpen by remember { mutableStateOf(false) }
     var eqOpen by remember { mutableStateOf(false) }
     // Cover or lyrics in the square; kept across songs, so lyrics stay up once chosen.
@@ -166,7 +165,7 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
     val deck = (
         if (app != null) remoteDeck(vm, app, remote[app], tick, remoteArt, remoteOut)
-        else localDeck(queue, engine, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), speed, vm::toggleFavorite)
+        else localDeck(queue, engine, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite)
     ).copy(
         lyrics = lyrics,
         showLyrics = showLyrics,
@@ -187,6 +186,11 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         HeaderIcons(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
     }
 
+    // The queue lives beside the deck (swipe left); only for Side A's own songs, as streaming
+    // apps keep their queues in their cards.
+    val queuePage: (@Composable (Modifier) -> Unit)? = if (app == null) { m -> QueueCard(vm, queue, tags, m) } else null
+    val upNext: (@Composable (Modifier) -> Unit)? = if (app == null) { m -> UpNextPeek(queue, tags, m) } else null
+
     Column(
         Modifier
             .fillMaxSize()
@@ -196,11 +200,11 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         if (!landscape) Header(headerIcons)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
-                WideLayout(vm, ui.tab, deck, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null) { m ->
+                WideLayout(vm, ui.tab, deck, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage) { m ->
                     SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m)
                 }
             } else {
-                PhoneLayout(vm, ui.tab, deck, lyrics, playing) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
+                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage, upNext) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
             }
         }
     }
@@ -227,16 +231,20 @@ private fun WideLayout(
     playing: Set<SourceTab>,
     short: Boolean,
     trailing: (@Composable RowScope.() -> Unit)?,
+    queuePage: (@Composable (Modifier) -> Unit)?,
     card: @Composable (Modifier) -> Unit,
 ) {
     Column {
         Row(Modifier.weight(1f).padding(horizontal = if (trailing != null) 6.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(if (short) 8.dp else 16.dp)) {
-            card(Modifier.weight(1f).fillMaxHeight().padding(vertical = if (short) 4.dp else 8.dp))
-            if (short) {
-                Deck(deck, Modifier.weight(1.4f).fillMaxHeight().padding(vertical = 4.dp), compact = true)
-            } else {
-                Deck(deck, Modifier.weight(1.15f).fillMaxHeight().padding(vertical = 8.dp))
-            }
+            // Sideways the deck takes the larger share: the cover is as tall as the screen, and the
+            // controls beside it need room for all three keys.
+            card(Modifier.weight(if (short) 0.85f else 1f).fillMaxHeight().padding(vertical = if (short) 4.dp else 8.dp))
+            NowPlayingPager(
+                deck,
+                Modifier.weight(if (short) 1.6f else 1.15f).fillMaxHeight().padding(vertical = if (short) 4.dp else 8.dp),
+                compact = short,
+                queuePage = queuePage,
+            )
         }
         SourceTabs(tab, playing, vm::selectTab, trailing)
     }
@@ -254,6 +262,8 @@ private fun PhoneLayout(
     deck: DeckModel,
     lyrics: LyricsState,
     playing: Set<SourceTab>,
+    queuePage: (@Composable (Modifier) -> Unit)?,
+    upNext: (@Composable (Modifier) -> Unit)?,
     card: @Composable (SourceTab, Modifier) -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -278,7 +288,7 @@ private fun PhoneLayout(
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
-            ExpandedDeck(deck, onCollapse = { expanded = false })
+            ExpandedDeck(deck, queuePage, upNext, onCollapse = { expanded = false })
         }
     }
 }
@@ -340,7 +350,7 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
 
 /** The full deck over the cards. */
 @Composable
-private fun ExpandedDeck(deck: DeckModel, onCollapse: () -> Unit) {
+private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> Unit)?, upNext: (@Composable (Modifier) -> Unit)?, onCollapse: () -> Unit) {
     var drag by remember { mutableFloatStateOf(0f) }
     Column(
         Modifier
@@ -365,8 +375,9 @@ private fun ExpandedDeck(deck: DeckModel, onCollapse: () -> Unit) {
             Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = Retro.Muted)
             Text("NOW PLAYING", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 3.sp)
         }
-        // The cover shrinks to whatever the controls leave, so everything stays on screen.
-        Deck(deck, Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp))
+        // The deck takes the height it needs (the cover shrinks if the screen is short); what's
+        // left shows what plays next. Swipe left for the whole queue.
+        NowPlayingPager(deck, Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), compact = false, queuePage = queuePage, below = upNext)
     }
 }
 
@@ -452,7 +463,6 @@ private fun localDeck(
     eq: EqConfig,
     art: ImageBitmap?,
     favorites: Set<String>,
-    speed: Float,
     onFavorite: (io.github.momonekomata.sidea.sources.Track) -> Unit,
 ): DeckModel {
     val t = queue.current
@@ -461,7 +471,7 @@ private fun localDeck(
         t == null -> "Pick a song from Local or NAS"
         engine.error != null -> "ERROR · ${engine.error}"
         facts == null -> "Threading the tape…"
-        engine.isBuffering -> "Buffering from the NAS…"
+        engine.isBuffering -> "Buffering from the NAS…" + (engine.bufferNote?.let { "\n$it" } ?: "")
         else -> summary(facts, engine.outputNote)
     }
     return DeckModel(
@@ -480,8 +490,6 @@ private fun localDeck(
         repeat = queue.repeat,
         onShuffle = Player::toggleShuffle,
         onRepeat = Player::cycleRepeat,
-        speed = speed,
-        onSpeed = Player::setSpeed,
         onSkip = Player::skipBy,
         onToggle = Player::togglePlay,
         onNext = { Player.next() },
@@ -520,8 +528,6 @@ private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlayin
     onPrevious = { vm.streaming.previous(app) },
     onSeek = { vm.streaming.seekTo(app, it) },
     onSkip = { d -> np?.let { vm.streaming.seekTo(app, (it.positionMs + d).coerceAtLeast(0)) } },
-    speed = np?.speed ?: 1f,
-    onSpeed = { vm.streaming.setSpeed(app, it) },
 )
 
 /** As much of the stream's format as can be seen from outside the app. */
@@ -567,7 +573,6 @@ private fun SourceCard(
         }
         SourceTab.NAS -> NasCard(vm, ui.nas, ui.nasServers, queue, tags, modifier)
         SourceTab.FAVORITES -> FavoritesCard(vm, queue, modifier)
-        SourceTab.QUEUE -> QueueCard(vm, queue, tags, modifier)
         else -> {
             val app = tab.app!!
             StreamingCard(vm, app, remote[app], ui.streamingAccess, modifier)
@@ -716,6 +721,67 @@ private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifi
         }
     }
     if (creating) PlaylistNameDialog(onCreate = { vm.newPlaylist(it, null); creating = false }, onDismiss = { creating = false })
+}
+
+/**
+ * The deck, and the queue a swipe left of it. [below] fills the height the deck leaves (the
+ * next few songs) so the screen isn't half empty under the controls.
+ */
+@Composable
+private fun NowPlayingPager(
+    deck: DeckModel,
+    modifier: Modifier,
+    compact: Boolean,
+    queuePage: (@Composable (Modifier) -> Unit)?,
+    below: (@Composable (Modifier) -> Unit)? = null,
+) {
+    val pages = if (queuePage != null) 2 else 1
+    val pager = rememberPagerState { pages }
+    Column(modifier) {
+        HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), pageSpacing = 12.dp) { page ->
+            if (page == 1 && queuePage != null) {
+                queuePage(Modifier.fillMaxSize())
+            } else if (compact) {
+                Deck(deck, Modifier.fillMaxSize(), compact = true)
+            } else {
+                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Measured first, so it gets the height it needs; the peek gets the rest.
+                    Deck(deck, Modifier.fillMaxWidth())
+                    below?.invoke(Modifier.weight(1f).fillMaxWidth())
+                }
+            }
+        }
+        if (pages > 1) {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+                listOf("DECK", "QUEUE").forEachIndexed { i, label ->
+                    Text(label, color = if (pager.currentPage == i) Retro.Orange else Retro.Muted, fontFamily = Retro.Mono, fontSize = 10.sp, letterSpacing = 2.sp)
+                }
+            }
+        }
+    }
+}
+
+/** The next few songs under the deck; swipe left for the whole queue. */
+@Composable
+private fun UpNextPeek(queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
+    val next = if (queue.index >= 0) queue.tracks.drop(queue.index + 1) else emptyList()
+    if (next.isEmpty()) return
+    Column(
+        modifier.clip(RoundedCornerShape(10.dp)).background(Retro.Panel).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("UP NEXT · swipe left for the queue", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 10.sp, letterSpacing = 1.sp)
+        next.take(12).forEachIndexed { i, t ->
+            Row(Modifier.fillMaxWidth().clickable { Player.jumpTo(queue.index + 1 + i) }, verticalAlignment = Alignment.CenterVertically) {
+                Text("%02d".format(i + 1), color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, modifier = Modifier.width(28.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(t.displayTitle(tags), color = Color.White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val sub = t.displayArtist(tags)
+                    if (sub.isNotBlank()) Text(sub, color = Retro.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
 }
 
 /** An up-next row: its key outlives reordering, which a list index wouldn't. */

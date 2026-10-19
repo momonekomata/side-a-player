@@ -119,6 +119,25 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         }
     }
 
+    /** Bytes [from, to) over one range request; the parallel download runs several at once. */
+    private fun downloadRange(url: HttpUrl, from: Long, to: Long, sink: (ByteArray, Int) -> Boolean) {
+        val req = Request.Builder().url(url)
+            .header("Range", "bytes=$from-${to - 1}")
+            .apply { auth?.let { header("Authorization", it) } }
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.code == 200) throw RangesUnsupported()
+            if (resp.code != 206) throw IOException("HTTP ${resp.code} reading $url")
+            val input = resp.body!!.byteStream()
+            val buf = ByteArray(256 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                if (!sink(buf, n)) return
+            }
+        }
+    }
+
     private fun getBytes(url: HttpUrl): ByteArray {
         val req = Request.Builder().url(url).apply { auth?.let { header("Authorization", it) } }.build()
         client.newCall(req).execute().use { resp ->
@@ -153,7 +172,9 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         album = album,
         sizeBytes = size,
         // One continuous download into the cache, played as it arrives (see MediaCache).
-        opener = { ctx -> MediaCache.open(MediaCache.file(ctx, url.toString(), name.substringAfterLast('.', "bin")), size) { sink -> download(url, sink) } },
+        opener = { ctx ->
+            MediaCache.open(MediaCache.file(ctx, url.toString(), name.substringAfterLast('.', "bin")), size, ranged = { from, to, sink -> downloadRange(url, from, to, sink) }) { sink -> download(url, sink) }
+        },
         // Tags sit in the first few KB, so read them with small range requests.
         tagSource = { MediaDataSourceAccess(HttpRangeDataSource(client, url, auth, size, chunk = 64 * 1024)) },
     )
