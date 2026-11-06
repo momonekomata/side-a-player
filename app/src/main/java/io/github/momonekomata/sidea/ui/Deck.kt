@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -108,9 +109,10 @@ data class DeckModel(
 @Composable
 fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = false) {
     var showPath by remember { mutableStateOf(false) }
+    // The faceplate: brushed aluminium, printed in dark ink.
     val panel = modifier
         .clip(RoundedCornerShape(10.dp))
-        .background(Retro.Panel)
+        .brushedMetal()
     if (compact) {
         Row(panel.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             ArtSquare(model, Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true))
@@ -157,19 +159,19 @@ private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(
                 model.title.ifBlank { "Nothing playing" },
-                color = Color.White,
+                color = Retro.OnMetal,
                 fontSize = if (compact) 16.sp else 18.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (model.subtitle.isNotBlank()) {
-                Text(model.subtitle, color = Retro.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(model.subtitle, color = Retro.OnMetalMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         model.favorite?.let { fav ->
             IconButton(onClick = model.onFavorite, modifier = Modifier.size(40.dp)) {
-                Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else Retro.Muted)
+                Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else Retro.OnMetalMuted)
             }
         }
     }
@@ -181,7 +183,7 @@ private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
             // Two lines, so a long one (the Buffering speeds) wraps instead of being cut off.
             Text(
                 model.status.lines().first(),
-                color = Retro.Muted,
+                color = Retro.OnMetalMuted,
                 fontFamily = Retro.Mono,
                 fontSize = 11.sp,
                 maxLines = 2,
@@ -208,7 +210,7 @@ private fun TransportPager(model: DeckModel, compact: Boolean) {
     }
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
         repeat(2) { i ->
-            Box(Modifier.size(5.dp).clip(CircleShape).background(if (pager.currentPage == i) Retro.Orange else Retro.ShellEdge))
+            Box(Modifier.size(5.dp).clip(CircleShape).background(if (pager.currentPage == i) Retro.Orange else Retro.MetalEdge))
         }
     }
 }
@@ -220,9 +222,9 @@ private fun TransportRow(model: DeckModel, h: Dp, compact: Boolean) {
         // shuffle and repeat move to the second page there.
         if (!compact) ShuffleKey(model)
         // Hold to rewind / fast-forward; tap for previous / next.
-        DeckKey(Icons.Filled.SkipPrevious, "Previous", height = h, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
-        DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", wide = true, lit = model.playing, height = h, onClick = model.onToggle)
-        DeckKey(Icons.Filled.SkipNext, "Next", height = h, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
+        DeckKey(Icons.Filled.SkipPrevious, "Previous", "REW", height = h, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
+        DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", if (model.playing) "PAUSE" else "PLAY", wide = true, lit = model.playing, height = h, onClick = model.onToggle)
+        DeckKey(Icons.Filled.SkipNext, "Next", "FF", height = h, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
         if (!compact) RepeatKey(model)
     }
 }
@@ -230,7 +232,7 @@ private fun TransportRow(model: DeckModel, h: Dp, compact: Boolean) {
 @Composable
 private fun ShuffleKey(model: DeckModel) {
     model.shuffle?.let { on ->
-        IconButton(onClick = model.onShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (on) Retro.Orange else Retro.Muted) }
+        IconButton(onClick = model.onShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (on) Retro.Orange else Retro.OnMetalMuted) }
     }
 }
 
@@ -238,7 +240,7 @@ private fun ShuffleKey(model: DeckModel) {
 private fun RepeatKey(model: DeckModel) {
     model.repeat?.let { r ->
         IconButton(onClick = model.onRepeat) {
-            Icon(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", tint = if (r != RepeatMode.OFF) Retro.Orange else Retro.Muted)
+            Icon(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", tint = if (r != RepeatMode.OFF) Retro.Orange else Retro.OnMetalMuted)
         }
     }
 }
@@ -311,12 +313,15 @@ private fun SkipRow(model: DeckModel, compact: Boolean) {
 private fun SmallKey(text: String, compact: Boolean = false, lit: Boolean = false, onLong: (() -> Unit)? = null, onClick: () -> Unit) {
     Text(
         text,
-        color = if (lit) Retro.Orange else Color(0xFFD0D0D0),
+        color = if (lit) Retro.Orange else Retro.OnMetal,
         fontFamily = Retro.Mono,
         fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, if (lit) Retro.Orange else Retro.ShellEdge, RoundedCornerShape(6.dp))
+            .shadow(1.dp, RoundedCornerShape(5.dp))
+            .clip(RoundedCornerShape(5.dp))
+            .background(KeyFace)
+            .border(1.dp, if (lit) Retro.Orange else Retro.MetalEdge, RoundedCornerShape(5.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLong)
             .padding(horizontal = if (compact) 6.dp else 12.dp, vertical = 6.dp),
     )
@@ -355,53 +360,73 @@ private fun SeekBar(model: DeckModel) {
             colors = SliderDefaults.colors(
                 thumbColor = Retro.Orange,
                 activeTrackColor = Retro.Orange,
-                inactiveTrackColor = Retro.ShellEdge,
+                inactiveTrackColor = Retro.MetalEdge,
+                disabledInactiveTrackColor = Retro.MetalEdge.copy(alpha = 0.6f),
             ),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime((value * duration).toLong()), color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
-            Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
+            Text(formatTime((value * duration).toLong()), color = Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 11.sp)
+            Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 11.sp)
         }
     }
 }
 
-/** A chunky piano-key transport button like a tape deck's. */
+/**
+ * A silver piano key with its name printed under the symbol, as on a cassette player. It sinks a
+ * little while held; PLAY turns orange while the tape runs.
+ */
 @Composable
-private fun DeckKey(icon: ImageVector, label: String, wide: Boolean = false, lit: Boolean = false, height: Dp = 52.dp, onHold: (() -> Unit)? = null, onClick: () -> Unit) {
+private fun DeckKey(icon: ImageVector, label: String, caption: String, wide: Boolean = false, lit: Boolean = false, height: Dp = 52.dp, onHold: (() -> Unit)? = null, onClick: () -> Unit) {
     val narrow = height < 48.dp
     val hold by rememberUpdatedState(onHold)
     val click by rememberUpdatedState(onClick)
+    var pressed by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(5.dp)
     Box(
         Modifier
             .size(width = if (wide) (if (narrow) 68.dp else 88.dp) else (if (narrow) 52.dp else 64.dp), height = height)
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF2B2B2B))
-            .border(1.dp, if (lit) Retro.Orange else Retro.ShellEdge, RoundedCornerShape(6.dp))
+            .padding(top = if (pressed) 2.dp else 0.dp, bottom = if (pressed) 0.dp else 2.dp)
+            .shadow(if (pressed) 0.dp else 3.dp, shape)
+            .clip(shape)
+            .background(if (lit) KeyFaceLit else KeyFace)
+            .border(1.dp, if (lit) Color(0xFFB5520F) else Retro.MetalEdge, shape)
             .pointerInput(Unit) {
                 // A tap is a tap; holding repeats [onHold] every 250 ms like a tape deck's FF/REW.
                 awaitEachGesture {
                     awaitFirstDown()
-                    val holder = hold
-                    if (holder == null) {
-                        if (waitForUpOrCancellation() != null) click()
-                        return@awaitEachGesture
-                    }
-                    val released = withTimeoutOrNull(400) { waitForUpOrCancellation() }
-                    if (released != null) {
-                        click()
-                        return@awaitEachGesture
-                    }
-                    var up = false
-                    while (!up) {
-                        holder()
-                        up = withTimeoutOrNull(250) { waitForUpOrCancellation() } != null ||
-                            currentEvent.changes.all { !it.pressed }
+                    pressed = true
+                    try {
+                        keyGesture(hold, click)
+                    } finally {
+                        pressed = false
                     }
                 }
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = label, tint = if (lit) Retro.Orange else Color(0xFFE0E0E0))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = label, tint = if (lit) Color.White else Retro.OnMetal, modifier = Modifier.size(if (narrow) 20.dp else 22.dp))
+            Text(caption, color = if (lit) Color.White else Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        }
+    }
+}
+
+/** After the press: a tap, or (with [hold]) a hold that repeats every 250 ms. */
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.keyGesture(hold: (() -> Unit)?, click: () -> Unit) {
+    if (hold == null) {
+        if (waitForUpOrCancellation() != null) click()
+        return
+    }
+    val released = withTimeoutOrNull(400) { waitForUpOrCancellation() }
+    if (released != null) {
+        click()
+        return
+    }
+    var up = false
+    while (!up) {
+        hold()
+        up = withTimeoutOrNull(250) { waitForUpOrCancellation() } != null ||
+            currentEvent.changes.all { !it.pressed }
     }
 }
 

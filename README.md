@@ -1,11 +1,17 @@
 # Side A S26
 
-A bit-perfect music player for your own files, designed for the Samsung Galaxy S26 Ultra: a retro
-J-card track list, full-width cover art (tap it for lyrics), and Side A's own USB driver for DACs,
-since Samsung's Android has no bit-perfect USB mode. This edition plays only music you own, on
-the phone, a NAS or a cloud drive; the streaming-app remote control of the original
-[Side A](https://github.com/momonekomata/side-a-player) is gone. It installs as its own app
-(`io.github.momonekomata.sidea.s26`, "Side A S26"), beside the original if that's still there.
+A bit-perfect music player for your own files, designed for the Samsung Galaxy S26 Ultra and
+dressed like the classic blue-and-silver portable cassette player: an anodised blue body, a
+brushed-aluminium faceplate, silver piano keys with REW / PLAY / FF printed on them (PLAY turns
+orange while the tape runs, and the keys sink when pressed), the quality light in a small dark
+window, and the cream paper insert of the tape for the track lists. Full-width cover art (tap it
+for lyrics), and Side A's own USB driver for DACs, since Samsung's Android has no bit-perfect USB
+mode.
+
+This is the `s26` branch of Side A. It plays only music you own, on the phone, a NAS or a cloud
+drive; the streaming-app remote control on `main` is gone. It installs as its own app
+(`io.github.momonekomata.sidea.s26`, "Side A S26"), so it sits beside the `main` build rather than
+replacing it.
 
 | Source | How it's reached | How it plays |
 |---|---|---|

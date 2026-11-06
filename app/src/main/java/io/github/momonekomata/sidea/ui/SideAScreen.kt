@@ -47,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -285,7 +286,7 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Retro.Panel)
+            .brushedMetal()
             .clickable(onClick = onExpand)
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
@@ -295,7 +296,7 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
             },
     ) {
         val progress = if (deck.durationMs > 0) (deck.positionMs.toFloat() / deck.durationMs).coerceIn(0f, 1f) else 0f
-        Box(Modifier.fillMaxWidth().height(3.dp).background(Retro.ShellEdge)) {
+        Box(Modifier.fillMaxWidth().height(3.dp).background(Retro.MetalEdge)) {
             Box(Modifier.fillMaxWidth(progress).height(3.dp).background(Retro.Orange))
         }
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -308,25 +309,28 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
                 }
             }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(deck.title.ifBlank { "Nothing playing" }, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(deck.title.ifBlank { "Nothing playing" }, color = Retro.OnMetal, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 // The line being sung, when there are timed lyrics; otherwise artist and album.
                 val line = sheet?.let { l -> l.lineAt(deck.positionMs).takeIf { it >= 0 }?.let { l.lines[it].text } }?.takeIf { it.isNotBlank() }
                 if (line != null) {
-                    Text(line, color = Retro.Orange, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(line, color = Color(0xFFB4531A), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 } else {
-                    Text(deck.subtitle.ifBlank { deck.status }, color = Retro.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(deck.subtitle.ifBlank { deck.status }, color = Retro.OnMetalMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 deck.path?.quality?.let { q ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 3.dp).clip(RoundedCornerShape(50)).background(Retro.Lcd).padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
                         Box(Modifier.size(6.dp).clip(CircleShape).background(q.color()))
                         Text(q.label, color = q.color(), fontFamily = Retro.Mono, fontSize = 9.sp, letterSpacing = 1.sp, modifier = Modifier.padding(start = 5.dp))
                     }
                 }
             }
             IconButton(onClick = deck.onToggle) {
-                Icon(if (deck.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White)
+                Icon(if (deck.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = if (deck.playing) Retro.Orange else Retro.OnMetal)
             }
-            IconButton(onClick = deck.onNext) { Icon(Icons.Filled.SkipNext, "Next", tint = Retro.Muted) }
+            IconButton(onClick = deck.onNext) { Icon(Icons.Filled.SkipNext, "Next", tint = Retro.OnMetalMuted) }
         }
     }
 }
@@ -365,8 +369,15 @@ private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> 
 @Composable
 private fun Header(icons: @Composable RowScope.() -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("Side A", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
-        Text("+", color = Retro.Orange, fontSize = 16.sp, fontWeight = FontWeight.Black, modifier = Modifier.align(Alignment.Top))
+        // Lettered like the name on a portable cassette player's lid: heavy italic capitals and a
+        // small spec line, with the orange stripe.
+        Column {
+            Text("SIDE A", color = Color(0xFFE9EDF3), fontSize = 26.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(22.dp).height(3.dp).background(Retro.Orange))
+                Text("STEREO · BIT-PERFECT", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 9.sp, letterSpacing = 2.sp, modifier = Modifier.padding(start = 6.dp))
+            }
+        }
         Spacer(Modifier.weight(1f))
         icons()
     }
@@ -410,13 +421,14 @@ private fun SourceTabs(selected: SourceTab, playing: Set<SourceTab>, onSelect: (
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) Retro.Panel else Color.Transparent)
+                    // The chosen source is a silver slider, the others printed on the blue.
+                    .then(if (on) Modifier.brushedMetal() else Modifier)
                     .clickable { onSelect(tab) }
                     .padding(vertical = 8.dp),
             ) {
                 Text(
                     tab.short,
-                    color = if (on) Retro.Orange else Retro.Muted,
+                    color = if (on) Retro.OnMetal else Retro.Muted,
                     fontFamily = Retro.Mono,
                     fontSize = 10.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
@@ -463,7 +475,7 @@ private fun localDeck(
         durationMs = engine.durationMs,
         playing = engine.isPlaying,
         status = status,
-        statusColor = if (engine.error != null) Retro.Amber else Retro.Muted,
+        statusColor = if (engine.error != null) Color(0xFFB4531A) else Retro.OnMetalMuted,
         path = if (engine.error == null) facts?.let { SignalPaths.describe(it, eq) } else null,
         art = art,
         favorite = t?.let { it.id in favorites },

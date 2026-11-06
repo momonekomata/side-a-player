@@ -39,12 +39,13 @@ private fun Quality.meaning() = when (this) {
     Quality.LOSSY -> "Part of the path throws information away (a compressed file, or Bluetooth)."
 }
 
-/** A lit pill like Roon's signal-path light; tap for the whole path. */
+/** A lit pill like Roon's signal-path light, in a small dark window on the faceplate; tap for the whole path. */
 @Composable
 fun QualityBadge(q: Quality, onClick: () -> Unit) {
     Row(
         Modifier
             .clip(RoundedCornerShape(50))
+            .background(Retro.Lcd)
             .border(1.dp, q.color(), RoundedCornerShape(50))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp),
