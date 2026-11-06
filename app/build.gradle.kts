@@ -64,6 +64,7 @@ android {
             "/META-INF/LICENSE*",
             "/META-INF/NOTICE*",
             "/META-INF/INDEX.LIST",
+            "/META-INF/*.md",
         )
     }
 }
