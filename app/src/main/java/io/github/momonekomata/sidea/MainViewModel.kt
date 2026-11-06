@@ -18,8 +18,6 @@ import io.github.momonekomata.sidea.sources.NasServer
 import io.github.momonekomata.sidea.sources.NasStore
 import io.github.momonekomata.sidea.sources.WebDavBrowser
 import io.github.momonekomata.sidea.sources.findUnpinned
-import io.github.momonekomata.sidea.streaming.StreamingApp
-import io.github.momonekomata.sidea.streaming.StreamingController
 import io.github.momonekomata.sidea.lyrics.Lyrics
 import io.github.momonekomata.sidea.lyrics.LyricsQuery
 import io.github.momonekomata.sidea.lyrics.LyricsRepository
@@ -48,13 +46,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class SourceTab(val label: String, val short: String, val app: StreamingApp? = null) {
+enum class SourceTab(val label: String, val short: String) {
     LOCAL("Local", "LOCAL"),
-    NAS("NAS", "NAS"),
-    SPOTIFY("Spotify", "SPOTIFY", StreamingApp.SPOTIFY),
-    APPLE_MUSIC("Apple Music", "APPLE", StreamingApp.APPLE_MUSIC),
-    TIDAL("TIDAL", "TIDAL", StreamingApp.TIDAL),
-    YT_MUSIC("YT Music", "YT", StreamingApp.YT_MUSIC),
+    NAS("NAS & cloud", "REMOTE"),
     FAVORITES("Favourites", "♥"),
 }
 
@@ -107,10 +101,6 @@ private sealed interface Playing {
     data class Local(val track: io.github.momonekomata.sidea.sources.Track, val durationMs: Long) : Playing {
         override val key get() = "local:${track.id}"
     }
-    data class Remote(val app: StreamingApp, val title: String, val artist: String, val album: String, val durationMs: Long) : Playing {
-        // Duration is part of the key so the lookup runs again once the app reports it.
-        override val key get() = "remote:${app.name}:$artist:$title:${durationMs > 0}"
-    }
 }
 
 data class UiState(
@@ -120,47 +110,16 @@ data class UiState(
     val nas: BrowseState? = null,
     val nasServer: NasServer? = null,
     val certPrompt: CertPrompt? = null,
-    val streamingAccess: Boolean = false,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("sidea", 0)
     private val nasStore = NasStore(app)
-    val streaming = StreamingController(app)
 
     private val _ui = MutableStateFlow(UiState())
     val ui = _ui.asStateFlow()
     private var loadJob: Job? = null
     private var tagJob: Job? = null
-
-    /**
-     * What the now-playing card shows: null for Side A's own player, or a streaming app. It
-     * follows what is actually playing; the tab only decides when nothing is.
-     */
-    val deckSource: StateFlow<StreamingApp?>
-
-    private fun deckSourceFlow(): StateFlow<StreamingApp?> {
-        // Whatever played last stays on the card when it pauses; only something else starting
-        // to play takes the card over (pausing Spotify mustn't flip it to Side A's own song).
-        var last: StreamingApp? = null
-        var lastKnown = false
-        return combine(_ui.map { it.tab }.distinctUntilChanged(), Player.state.map { it.isPlaying }.distinctUntilChanged(), streaming.nowPlaying) { tab, localPlaying, remote ->
-            val playingApps = remote.values.filter { it.isPlaying }.map { it.app }
-            val pick = when {
-                localPlaying -> null
-                tab.app != null && tab.app in playingApps -> tab.app
-                playingApps.isNotEmpty() -> playingApps.first()
-                lastKnown && (last == null || remote[last] != null) -> last
-                tab.app != null && remote[tab.app] != null && Player.queue.value.current == null -> tab.app
-                else -> if (Player.queue.value.current == null) tab.app else null
-            }
-            if (localPlaying || playingApps.isNotEmpty()) {
-                last = pick
-                lastKnown = true
-            }
-            pick
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    }
 
     private val _nowArt = MutableStateFlow<Bitmap?>(null)
     /** Cover of the local song playing. */
@@ -187,7 +146,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         Player.init(app)
-        deckSource = deckSourceFlow()
         _ui.update {
             it.copy(
                 tab = runCatching { SourceTab.valueOf(prefs.getString("tab", null)!!) }.getOrDefault(SourceTab.LOCAL),
@@ -195,8 +153,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         prefs.getString("localTree", null)?.let { openLocal(Uri.parse(it), remember = false) }
-        onResume()
-        streaming.output.start()
         followLyrics()
         followArtwork()
     }
@@ -214,21 +170,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Looks lyrics up for the song on the deck: the local queue, or the streaming app it shows.
-     * Waits for the duration so the online match can use it.
+     * Looks lyrics up for the song playing. Waits for the duration so the online match can use it.
      */
     private fun followLyrics() = viewModelScope.launch {
-        combine(
-            deckSource,
-            Player.queue,
-            Player.state.map { it.durationMs }.distinctUntilChanged(),
-            streaming.nowPlaying,
-        ) { app, queue, duration, remote ->
-            if (app != null) {
-                remote[app]?.takeIf { it.title.isNotBlank() }?.let { Playing.Remote(app, it.title, it.artist, it.album, it.durationMs) }
-            } else {
-                queue.current?.takeIf { duration > 0 }?.let { Playing.Local(it, duration) }
-            }
+        combine(Player.queue, Player.state.map { it.durationMs }.distinctUntilChanged()) { queue, duration ->
+            queue.current?.takeIf { duration > 0 }?.let { Playing.Local(it, duration) }
         }
             .distinctUntilChanged { a, b -> a?.key == b?.key }
             .collectLatest { playing ->
@@ -290,7 +236,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun query(p: Playing): LyricsQuery = when (p) {
-        is Playing.Remote -> LyricsQuery(p.title, p.artist, p.album, p.durationMs)
         is Playing.Local -> {
             val ctx = getApplication<Application>()
             val tags = TagStore.load(ctx, p.track)
@@ -304,18 +249,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 sidecar = p.track.lyricsFile?.let { read -> { read(ctx) } },
             )
         }
-    }
-
-    /** Notification access is granted in system settings, so re-check whenever we come back. */
-    fun onResume() {
-        streaming.start()
-        _ui.update { it.copy(streamingAccess = streaming.hasAccess()) }
-    }
-
-    /** Play/pause for a streaming app; playing it first hands the DAC back from Side A's driver. */
-    fun toggleRemote(app: io.github.momonekomata.sidea.streaming.StreamingApp) {
-        if (streaming.nowPlaying.value[app]?.isPlaying == true) streaming.playPause(app)
-        else Player.releaseDacThen { streaming.playPause(app) }
     }
 
     fun selectTab(tab: SourceTab) {
@@ -342,10 +275,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveServer(server: NasServer) {
         nasStore.save(server)
+        // Edited settings: the next listing connects afresh.
+        io.github.momonekomata.sidea.sources.RemoteStores.forget(server.id)
         _ui.update { it.copy(nasServers = nasStore.all()) }
     }
 
+    /** What a store learns while working (a pinned SSH host key, a new cloud token) is kept, quietly. */
+    private val keepServer: (NasServer) -> Unit = { s ->
+        nasStore.save(s)
+        io.github.momonekomata.sidea.sources.RemoteStores.update(s)
+        _ui.update { it.copy(nasServers = nasStore.all()) }
+    }
+
+    /** Opens the cloud's sign-in page in the browser, keeps the token it gives, and opens the server. */
+    fun signInCloud(server: NasServer) {
+        nasStore.save(server)
+        _ui.update { it.copy(nasServers = nasStore.all()) }
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            try {
+                val token = io.github.momonekomata.sidea.sources.CloudSignIn.signIn(ctx, server)
+                val signed = server.copy(refreshToken = token)
+                saveServer(signed)
+                android.widget.Toast.makeText(ctx, "Signed in to ${server.kind.label}", android.widget.Toast.LENGTH_SHORT).show()
+                openServer(signed)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                android.widget.Toast.makeText(ctx, e.message ?: "Signing in failed", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     fun deleteServer(server: NasServer) {
+        io.github.momonekomata.sidea.sources.RemoteStores.forget(server.id)
         nasStore.delete(server.id)
         _ui.update { it.copy(nasServers = nasStore.all(), nas = if (it.nasServer?.id == server.id) null else it.nas) }
     }
@@ -357,6 +319,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 return failNas(server, e)
             }
             NasKind.FTPS -> FtpsBrowser(getApplication(), server)
+            else -> io.github.momonekomata.sidea.sources.RemoteBrowser(
+                getApplication(), server, io.github.momonekomata.sidea.sources.RemoteStores.get(getApplication(), server, keepServer),
+            )
         }
         _ui.update { it.copy(nasServer = server, nas = BrowseState(b, listOf(server.name to b.rootPath))) }
         load(isNas = true)
@@ -636,9 +601,4 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun indexKey(isNas: Boolean, b: BrowseState, folder: String) = (if (isNas) "nas:" else "local:") + b.browser.title + ":" + folder
-
-    override fun onCleared() {
-        streaming.stop()
-        streaming.output.stop()
-    }
 }

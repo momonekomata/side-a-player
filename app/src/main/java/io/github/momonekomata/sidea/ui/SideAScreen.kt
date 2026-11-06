@@ -94,9 +94,6 @@ import io.github.momonekomata.sidea.sources.TagStore
 import io.github.momonekomata.sidea.sources.displayAlbum
 import io.github.momonekomata.sidea.sources.displayArtist
 import io.github.momonekomata.sidea.sources.displayTitle
-import io.github.momonekomata.sidea.streaming.RemoteNowPlaying
-import io.github.momonekomata.sidea.streaming.OutputSeen
-import io.github.momonekomata.sidea.streaming.StreamingApp
 import io.github.momonekomata.sidea.lyrics.Lyrics
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -130,21 +127,17 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val queue by Player.queue.collectAsStateWithLifecycle()
     val engine by Player.state.collectAsStateWithLifecycle()
-    val remote by vm.streaming.nowPlaying.collectAsStateWithLifecycle()
     val tags by TagStore.tags.collectAsStateWithLifecycle()
     val lyrics by vm.lyrics.collectAsStateWithLifecycle()
-    val deckApp by vm.deckSource.collectAsStateWithLifecycle()
     val prefs by Settings.prefs.collectAsStateWithLifecycle()
     val localArt by vm.nowArt.collectAsStateWithLifecycle()
-    // Collected so the remote signal path redraws when another app's output changes.
-    val remoteOut by vm.streaming.output.seen.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     var settingsOpen by remember { mutableStateOf(false) }
     var eqOpen by remember { mutableStateOf(false) }
     // Cover or lyrics in the square; kept across songs, so lyrics stay up once chosen.
     var showLyrics by rememberSaveable { mutableStateOf(false) }
 
-    // Drives the position readout and the reels; remote positions are extrapolated per frame.
+    // Drives the position readout.
     var tick by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -159,14 +152,8 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         vm.up(isNas)
     }
 
-    val app = deckApp
-    val remoteBitmap = app?.let { remote[it]?.art }
-    val remoteArt = remember(remoteBitmap) { remoteBitmap?.asImageBitmap() }
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
-    val deck = (
-        if (app != null) remoteDeck(vm, app, remote[app], tick, remoteArt, remoteOut)
-        else localDeck(queue, engine, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite)
-    ).copy(
+    val deck = localDeck(queue, engine, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite).copy(
         lyrics = lyrics,
         showLyrics = showLyrics,
         onToggleLyrics = { showLyrics = !showLyrics },
@@ -175,7 +162,6 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     // A dot on the tab of whatever is playing, so it's easy to find again.
     val playing = buildSet {
         if (engine.isPlaying) queue.current?.let { add(if (ui.nas?.entries?.any { e -> e is Entry.Song && e.track.id == it.id } == true) SourceTab.NAS else SourceTab.LOCAL) }
-        remote.values.filter { it.isPlaying }.forEach { np -> SourceTab.entries.firstOrNull { it.app == np.app }?.let(::add) }
     }
 
     // Landscape: full screen. The system bars hide (swipe from an edge to peek), and the header's
@@ -186,9 +172,8 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         HeaderIcons(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
     }
 
-    // The queue lives beside the deck (swipe left); only for Side A's own songs, as streaming
-    // apps keep their queues in their cards.
-    val queuePage: (@Composable (Modifier) -> Unit)? = if (app == null) { m -> QueueCard(vm, queue, tags, m) } else null
+    // The queue lives beside the deck (swipe left).
+    val queuePage: @Composable (Modifier) -> Unit = { m -> QueueCard(vm, queue, tags, m) }
 
     Column(
         Modifier
@@ -200,10 +185,10 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
                 WideLayout(vm, ui.tab, deck, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage) { m ->
-                    SourceCard(vm, ui.tab, queue, remote, tags, pickFolder, m)
+                    SourceCard(vm, ui.tab, queue, tags, pickFolder, m)
                 }
             } else {
-                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage) { tab, m -> SourceCard(vm, tab, queue, remote, tags, pickFolder, m) }
+                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage) { tab, m -> SourceCard(vm, tab, queue, tags, pickFolder, m) }
             }
         }
     }
@@ -508,44 +493,11 @@ private fun summary(f: StreamFacts, note: String?): String {
     return "$src\n$out"
 }
 
-// tick and seen force recomposition: the position is extrapolated, and the output can change.
-@Suppress("UNUSED_PARAMETER")
-private fun remoteDeck(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlaying?, tick: Long, art: ImageBitmap?, seen: OutputSeen) = DeckModel(
-    title = np?.title.orEmpty(),
-    subtitle = listOf(np?.artist, np?.album).filter { !it.isNullOrBlank() }.joinToString(" · "),
-    positionMs = np?.positionMs ?: 0,
-    durationMs = np?.durationMs ?: 0,
-    playing = np?.isPlaying == true,
-    status = if (np == null) "${app.label} is not playing" else remoteSummary(app, np, seen),
-    statusColor = Retro.Muted,
-    path = np?.let { SignalPaths.describeRemote(vm.streaming.output.facts(app, it)) },
-    art = art,
-    onToggle = { vm.toggleRemote(app) },
-    onNext = { vm.streaming.next(app) },
-    onPrevious = { vm.streaming.previous(app) },
-    onSeek = { vm.streaming.seekTo(app, it) },
-    onSkip = { d -> np?.let { vm.streaming.seekTo(app, (it.positionMs + d).coerceAtLeast(0)) } },
-)
-
-/** As much of the stream's format as can be seen from outside the app. */
-private fun remoteSummary(app: StreamingApp, np: RemoteNowPlaying, seen: OutputSeen): String {
-    val dest = seen.deviceName ?: seen.device?.label ?: "phone"
-    val rate = seen.bitPerfectRate
-    return when {
-        rate != null -> "${app.label} stream\n→ $dest · bit-perfect ${SignalPaths.khz(rate)}${seen.bitPerfectFormat?.let { " ${it.label}" } ?: ""}"
-        np.qualityHint != null -> "${app.label} · ${np.qualityHint}\n→ $dest"
-        else -> "${app.label} · up to ${app.ceiling.substringBefore(" (")}\n→ Android mixer${seen.mixerRate?.let { " · ${SignalPaths.khz(it)}" } ?: ""} → $dest"
-    }
-}
-
-// ---- J-card contents per source ----
-
 @Composable
 private fun SourceCard(
     vm: MainViewModel,
     tab: SourceTab,
     queue: QueueState,
-    remote: Map<StreamingApp, RemoteNowPlaying>,
     tags: Map<String, Tags>,
     pickFolder: () -> Unit,
     modifier: Modifier,
@@ -570,10 +522,6 @@ private fun SourceCard(
         }
         SourceTab.NAS -> NasCard(vm, ui.nas, ui.nasServers, queue, tags, modifier)
         SourceTab.FAVORITES -> FavoritesCard(vm, queue, modifier)
-        else -> {
-            val app = tab.app!!
-            StreamingCard(vm, app, remote[app], ui.streamingAccess, modifier)
-        }
     }
 }
 
@@ -932,50 +880,19 @@ private fun NasCard(vm: MainViewModel, nas: BrowseState?, servers: List<NasServe
             item { JCardRow("⏏", "Disconnect", onClick = vm::closeServer) }
         }
     } else {
-        JCard("NAS", "${servers.size} servers · WebDAV / FTPS", modifier) {
+        JCard("NAS & cloud", "${servers.size} · SMB, SFTP, FTP(S), WebDAV, Drive, OneDrive, Dropbox", modifier) {
             servers.forEach { s ->
                 item {
-                    JCardRow(s.kind.name.take(3), s.name, s.address, action = "Edit" to { editing = s }, onClick = { vm.openServer(s) })
+                    val detail = if (s.kind.cloud) s.kind.label + if (s.refreshToken.isBlank()) " · not signed in" else "" else "${s.kind.label} · ${s.address}"
+                    JCardRow(s.kind.name.take(3), s.name, detail, action = "Edit" to { editing = s }, onClick = { if (s.kind.cloud && s.refreshToken.isBlank()) editing = s else vm.openServer(s) })
                 }
             }
-            item { JCardRow("+", "Add server", onClick = { adding = true }) }
+            item { JCardRow("+", "Add a NAS or cloud storage", onClick = { adding = true }) }
         }
     }
-    if (adding) NasServerDialog(null, servers, onSave = { vm.saveServer(it); adding = false }, onDelete = {}, onDismiss = { adding = false })
+    if (adding) NasServerDialog(null, servers, onSave = { vm.saveServer(it); adding = false }, onSignIn = { vm.signInCloud(it); adding = false }, onDelete = {}, onDismiss = { adding = false })
     editing?.let { s ->
-        NasServerDialog(s, servers, onSave = { vm.saveServer(it); editing = null }, onDelete = { vm.deleteServer(it); editing = null }, onDismiss = { editing = null })
-    }
-}
-
-@Composable
-private fun StreamingCard(vm: MainViewModel, app: StreamingApp, np: RemoteNowPlaying?, access: Boolean, modifier: Modifier) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    JCard(app.label, if (np != null && np.queue.isNotEmpty()) "${np.queue.size} in queue" else "via ${app.label}", modifier) {
-        when {
-            !access -> item {
-                JCardNote("To show and control what ${app.label} plays, Side A needs notification access. It only uses it to find music players; it never reads your notifications.") {
-                    CardButton("Allow access") { context.startActivity(vm.streaming.accessSettingsIntent()) }
-                }
-            }
-            !vm.streaming.isInstalled(app) -> item {
-                JCardNote("${app.label} isn't installed.") { CardButton("Get ${app.label}") { vm.streaming.launch(app) } }
-            }
-            np == null || np.queue.isEmpty() -> item {
-                val msg = if (np == null) "Start a playlist in ${app.label}; the deck follows along."
-                else "${app.label} doesn't share its up-next list, so only the current song shows here."
-                JCardNote(msg) { CardButton("Open ${app.label}") { vm.streaming.launch(app) } }
-            }
-            else -> {
-                np.queue.forEachIndexed { i, q ->
-                    item {
-                        JCardRow("%02d".format(i + 1), q.title, q.subtitle, current = q.id == np.activeQueueId) {
-                            Player.releaseDacThen { vm.streaming.playQueueItem(app, q.id) }
-                        }
-                    }
-                }
-                item { JCardRow("↗", "Open ${app.label}", onClick = { vm.streaming.launch(app) }) }
-            }
-        }
+        NasServerDialog(s, servers, onSave = { vm.saveServer(it); editing = null }, onSignIn = { vm.signInCloud(it); editing = null }, onDelete = { vm.deleteServer(it); editing = null }, onDismiss = { editing = null })
     }
 }
 

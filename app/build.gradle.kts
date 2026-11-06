@@ -11,7 +11,8 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.github.momonekomata.sidea"
+        // Its own id: this edition installs beside the original Side A rather than over it.
+        applicationId = "io.github.momonekomata.sidea.s26"
         minSdk = 29
         targetSdk = 35
         // Each CI build counts up, so a newer APK always installs over an older one.
@@ -56,7 +57,14 @@ android {
         }
     }
     packaging {
-        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources.excludes += listOf(
+            "/META-INF/{AL2.0,LGPL2.1}",
+            "/META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+            "/META-INF/DEPENDENCIES",
+            "/META-INF/LICENSE*",
+            "/META-INF/NOTICE*",
+            "/META-INF/INDEX.LIST",
+        )
     }
 }
 
@@ -75,6 +83,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("commons-net:commons-net:3.11.1")
+    // SMB 2/3 (brings BouncyCastle, which also gives NTLM its MD4) and SFTP.
+    implementation("com.hierynomus:smbj:0.14.0")
+    implementation("com.github.mwiede:jsch:0.2.26")
 
     testImplementation("junit:junit:4.13.2")
 }

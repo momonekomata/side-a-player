@@ -1,13 +1,23 @@
-# Side A
+# Side A S26
 
-A music player for Android with a retro J-card track list, full-size cover art (tap it for
-lyrics), and a bit-perfect audio path. Laid out for phones and foldables. It has three kinds of source.
+A bit-perfect music player for your own files, designed for the Samsung Galaxy S26 Ultra: a retro
+J-card track list, full-width cover art (tap it for lyrics), and Side A's own USB driver for DACs,
+since Samsung's Android has no bit-perfect USB mode. This edition plays only music you own, on
+the phone, a NAS or a cloud drive; the streaming-app remote control of the original
+[Side A](https://github.com/momonekomata/side-a-player) is gone. It installs as its own app
+(`io.github.momonekomata.sidea.s26`, "Side A S26"), beside the original if that's still there.
 
-| Source | How it plays | Audio quality |
+| Source | How it's reached | How it plays |
 |---|---|---|
-| **Local** (any folder, SD card or USB drive) | Side A decodes the file itself | Native sample rate and bit depth. **Bit-perfect** to a USB DAC on Android 14+ |
-| **NAS** over WebDAV (http/https) or FTPS (explicit or implicit TLS) | WebDAV streams with range requests; FTPS downloads to cache and starts playing while it downloads | Same as Local |
-| **Spotify, Apple Music, TIDAL, YT Music** | Side A remote-controls the official app through its media session and shows it on the deck | Whatever that app outputs (its own lossless/exclusive settings apply) |
+| **Local** (any folder on the phone, SD card or USB drive) | Android's folder picker | Decoded by Side A at the file's own rate and depth |
+| **SMB** (Windows shares, Samba on most NAS boxes) | SMB 2/3, user name and password or guest | Downloaded into the cache on four connections at once, playing as it arrives |
+| **SFTP** | SSH, user name and password; host key pinned on first use | Same |
+| **FTP** and **FTPS** | FTP plain (home network only) or FTPS with TLS | Same (FTPS on one connection) |
+| **WebDAV** | http/https, Basic auth (Synology, QNAP, Nextcloud) | Same |
+| **Google Drive**, **OneDrive**, **Dropbox** | Their official APIs, signed in through the browser | Same |
+
+Every source gets the same treatment: tags, covers, `.lrc` lyrics (read and saved), search, favourites
+and playlists, and bit-perfect output.
 
 ## Bit-perfect output
 
@@ -54,8 +64,7 @@ driver, and if Android doesn't list the DAC a few seconds later, Side A says so.
 
 A reset looks like a replug to Android too, so Android asks once which app should open for the
 DAC: pick Side A and tick **Always**. That's what keeps Side A's USB access for good; Side A then
-receives the replug silently and doesn't come to the front. Pressing play on a streaming app's deck
-in Side A waits until Android has the DAC back before telling the app to play.
+receives the replug silently and doesn't come to the front.
 
 ### Android's bit-perfect mode
 
@@ -84,19 +93,6 @@ seek table or not, and files with an ID3 tag stuck on the front, which Android's
 and **DSD**. They come out as the file's exact integer samples, so the bit-perfect path never detours
 through float. MP3, AAC (incl. AAC .m4a), Opus and Vorbis go through Android's MediaCodec. If the phone has
 no decoder for a file, the error says which format it is.
-
-## Streaming quality
-
-Android doesn't let one app read another app's stream format, so for Spotify, Apple Music, TIDAL
-and YT Music Side A shows what can be observed and says so where it can't:
-
-* **The real format, when the app owns the DAC.** On Android 14+, an app that takes a USB DAC
-  bit-perfect (e.g. TIDAL's exclusive USB mode) sets the DAC's mixer to the stream's own rate and
-  depth. Side A reads that back: `TIDAL · bit-perfect 96 kHz 24-bit → KA17`.
-* **The output device** of the playback (USB DAC, Bluetooth, speaker) and the mixer rate.
-* **A quality hint** if the app publishes one in its media metadata (few do).
-* Otherwise, **the service's ceiling** (e.g. "FLAC up to 24-bit/192 kHz"), marked *not reported*
-  in the signal path. Unverified steps never raise the badge.
 
 ## Playback controls
 
@@ -145,17 +141,10 @@ transcodes DSD unless told not to), and SFTP is usually slower than HTTP on a NA
 encryption and window sizes. If the NAS still can't keep up, plain HTTP on the home network (no
 TLS) is the next step, then a wired or 5/6 GHz link.
 
-## EQ on streaming apps
-
-Apps that announce their audio to system equalisers (Spotify and YouTube Music do; Apple Music and
-TIDAL may not) get Side A's EQ through an Android effect on their audio, a 32-band version of the
-parametric curve plus the preamp. The signal path shows it when it's attached. Their audio is
-still mixed by Android, so it's never bit-perfect.
-
 ## Playing nicely with other apps
 
-Side A takes Android's audio focus like any music app. Starting a song pauses Spotify, TIDAL and
-the rest, and when another app starts playing Side A pauses. Calls and voice assistants pause it
+Side A takes Android's audio focus like any music app. Starting a song pauses other players, and
+when another app starts playing Side A pauses and hands the DAC back. Calls and voice assistants pause it
 and it resumes after. Notifications and navigation prompts only ask other apps to duck, so Side A
 keeps playing through them: Android lowers its own mixer path for the moment, and Side A's USB
 path stays bit-perfect.
@@ -163,11 +152,10 @@ Unplugging headphones or the DAC pauses instead of switching to the speaker.
 
 ## Phone layout
 
-On a phone, the sources are cards: swipe between them or tap the tab row (all six fit, no
-scrolling, and a green dot marks what's playing). What's playing sits in a mini player at the bottom,
+On the phone, the sources are cards: swipe between them or tap the tab row (Local, Remote and
+Favourites; a green dot marks what's playing). What's playing sits in a mini player at the bottom,
 showing cover, title, quality, play/pause and next. Tap it or swipe up for the full deck (cover and
-lyrics); swipe down or press Back to put it away. The now-playing card follows what's actually
-playing, local or streaming, not just the tab you're on. Unfolded (≥600 dp wide), it's the
+lyrics); swipe down or press Back to put it away. Unfolded (≥600 dp wide), it's the
 two-page case layout. Turned sideways, Side A goes full screen: the system bars hide (swipe
 from an edge to peek), the title bar goes, and EQ and Settings move to the end of the tab row. On a
 phone's short landscape screen it's three columns: cards, a compact deck, and lyrics.
@@ -197,7 +185,7 @@ floating point at the file's own sample rate, *before* the output. Bit-perfect U
 bit-perfect, but carries your EQ'd signal in at least a 24-bit container (the badge says
 ENHANCED). Auto preamp lowers the level by the biggest boost so nothing clips. A flat or switched-off EQ
 is fully bypassed. While the EQ is on, DSD is converted to PCM so it can be equalised (DoP can't
-be). The EQ applies to local and NAS playback; streaming apps' audio is theirs.
+be).
 
 ## Now playing
 
@@ -207,8 +195,7 @@ sung is lit and kept in view), and tap again for the cover. The choice sticks fr
 ## Artwork
 
 Covers come from the file (FLAC pictures, ID3 APIC, MP4 `covr`, DSF's ID3), else from the folder
-(`cover.jpg`, `folder.jpg`, `front.jpg`, `AlbumArt*.jpg`, or a lone image). Streaming apps
-supply their own. The cover fills the deck, and shows in the J-card header, the mini player, on the lock screen
+(`cover.jpg`, `folder.jpg`, `front.jpg`, `AlbumArt*.jpg`, or a lone image). The cover fills the deck, and shows in the J-card header, the mini player, on the lock screen
 and in the notification.
 
 ## Gapless playback
@@ -267,30 +254,20 @@ Side A still looks online for timed ones, and if it finds them they replace the 
 lyrics never replace anything). Settings → "Save found lyrics beside the songs" turns it off. For the local folder this needs write access,
 which the folder picker grants; a folder chosen with an older version may need choosing again.
 
-Lyrics work for the streaming apps too: they're looked up from what Spotify, Apple Music, TIDAL or YT
-Music report as playing, and follow that app's playback position. The apps' own lyrics (Spotify's,
-Apple Music's) are licensed to them and can't be read by other apps, so these come from LRCLIB too.
-Streaming titles like "Song (feat. X) - 2011 Remaster" and artists like "A, B & C" are cleaned up
-before a second and third try, then searched. When nothing turns up, the deck says so and offers
-**Retry**. On a phone, the line being sung also shows in the mini player.
+## NAS and cloud storage
 
-## Streaming apps
+Add servers and cloud accounts in the Remote tab (+). Passwords and sign-in tokens are kept with
+EncryptedSharedPreferences (Android Keystore).
 
-Android lets an app control another app's playback only through media sessions, the channel the
-lock screen and Android Auto use. To see them, Side A needs **notification access** (Settings → Notifications →
-Device & app notifications); it doesn't read any notification. Then:
-
-* Play/pause, next, previous and seek drive the streaming app; the deck shows title, artist, cover and progress.
-* If the app shares its queue (it varies), the J-card lists it and tapping a song jumps to it.
-* To pick a playlist, open the app (the J-card has a button); Side A follows what it plays.
-
-Deeper integrations (browsing playlists inside Side A) need each service's SDK and developer
-credentials: Spotify App Remote (client ID + app fingerprint), Apple MusicKit for Android (Apple
-Developer Program), TIDAL's SDK (developer.tidal.com credentials). YouTube Music has no public API, so it stays
-remote-control only.
-
-## NAS
-
+* **SMB**: host (or IP), and the share as the folder, e.g. `Music` or `Media/Music` (SMB can't list
+  shares without extra RPC, so name the one you want). User name and password; leave the user
+  name blank for guest access; `DOMAIN\user` works for Windows domains. SMB 2 and 3; SMB 1 isn't
+  supported (it's switched off on current Windows and NAS firmware for security).
+* **SFTP**: host, port (blank for 22), start folder, user name and password. The server's SSH host
+  key is trusted the first time and pinned; a different key later is refused. Key-based login isn't
+  supported yet.
+* **FTP**: like FTPS but unencrypted, password included. For a NAS on the home network that has
+  nothing better switched on; prefer SMB, SFTP or FTPS.
 * **WebDAV**: enter the full URL, e.g. `https://nas.local:5006/music` (Synology), `https://nas/dav`
   (QNAP), or a Nextcloud `remote.php/dav/files/<user>/` URL. Basic auth over HTTPS.
 * **FTPS**: host, port (blank for 21/990), implicit or explicit TLS, start folder. Passive mode,
@@ -298,11 +275,46 @@ remote-control only.
   `require_ssl_reuse=YES`); if listing fails, turn that off on the server.
 * **Self-signed certificates**: turn on the option, connect once, and compare the SHA-256
   fingerprint shown with the one on your NAS. After you accept it, only that certificate is trusted for that server.
-* Passwords are stored with EncryptedSharedPreferences (Android Keystore).
+
+### Cloud storage
+
+Google, Microsoft and Dropbox only let registered apps in, and an app's registration (its client ID)
+belongs to whoever made it. So Side A signs in as an app *you* register, once, for free, and nothing
+passes through anyone else's servers. Sign-in happens in the phone's browser on the cloud's own
+page; the cloud then sends the browser back to a small web server Side A runs on the phone only
+(127.0.0.1, port 53682) with a one-time code (OAuth with PKCE). Side A never sees your password.
+
+**Google Drive**
+1. [console.cloud.google.com](https://console.cloud.google.com): create a project, then APIs &
+   Services → Library → **Google Drive API** → Enable.
+2. OAuth consent screen: External; add your Google account as a test user. Then **Publish app**,
+   or sign-ins expire after 7 days while it's in testing (Google will warn that the app isn't
+   verified; that's expected for an app only you use).
+3. Credentials → Create credentials → OAuth client ID → **Desktop app**. Copy the client ID and
+   client secret into Side A (Remote → + → Google Drive) and tap **Save & sign in**.
+
+**OneDrive** (personal, work or school)
+1. [portal.azure.com](https://portal.azure.com) → App registrations → New registration. Account
+   types: *any organizational directory and personal Microsoft accounts*.
+2. Authentication → Add a platform → **Mobile and desktop applications** → custom redirect URI
+   `http://localhost`. Under Advanced settings, allow public client flows.
+3. API permissions: Microsoft Graph → delegated `Files.ReadWrite` and `offline_access`.
+4. Copy the Application (client) ID into Side A and tap **Save & sign in**.
+
+**Dropbox**
+1. [dropbox.com/developers/apps](https://www.dropbox.com/developers/apps) → Create app → Scoped
+   access → Full Dropbox (or App folder, if your music is in it).
+2. Permissions: `files.metadata.read`, `files.content.read`, `files.content.write` → Submit.
+3. Settings → OAuth 2 → Redirect URIs: add `http://127.0.0.1:53682/`.
+4. Copy the App key into Side A and tap **Save & sign in**.
+
+The sign-in page says "Signed in. Go back to Side A" when it's done. Songs download through the
+same cache as a NAS, four ranges at a time, and found lyrics are saved as `.lrc` next to the song in
+the cloud too.
 
 ## Build
 
-GitHub Actions builds a debug APK on every push (Actions → latest run → `side-a-debug-apk`).
+GitHub Actions builds a debug APK on every push (Actions → latest run → `side-a-s26-apk`).
 Locally: open in Android Studio, or `./gradlew assembleDebug` with the Android SDK installed.
 
 Every build is signed with the debug key in `app/side-a-debug.keystore` and numbered from the CI

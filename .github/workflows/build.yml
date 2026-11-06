@@ -21,5 +21,5 @@ jobs:
         run: ./gradlew --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: side-a-debug-apk
+          name: side-a-s26-apk
           path: app/build/outputs/apk/debug/app-debug.apk

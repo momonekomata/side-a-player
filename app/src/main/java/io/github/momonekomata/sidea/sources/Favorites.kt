@@ -57,6 +57,12 @@ private fun List<Favorite>.toJson() = JSONArray(map {
  */
 object TrackResolver {
     fun resolve(context: Context, f: Favorite, servers: List<NasServer>): Track? {
+        RemoteIds.parse(f.id)?.let { (serverId, folder, _, name) ->
+            val server = servers.firstOrNull { it.id == serverId } ?: return null
+            val keep: (NasServer) -> Unit = { s -> NasStore(context).save(s); RemoteStores.update(s) }
+            val t = RemoteBrowser(context, server, RemoteStores.get(context, server, keep)).songFromIndex(f.id, name, f.sizeBytes, folder, f.album) ?: return null
+            return t.copy(title = f.title.ifBlank { t.title }, artist = f.artist, album = f.album.ifBlank { t.album })
+        }
         val base = when {
             f.id.startsWith("content://") -> {
                 val uri = Uri.parse(f.id)

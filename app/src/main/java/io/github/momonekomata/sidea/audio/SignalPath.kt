@@ -25,24 +25,6 @@ data class SignalPath(val stages: List<PathStage>) {
     val quality: Quality get() = stages.filter { it.verified }.minOfOrNull { it.quality } ?: Quality.HIGH_QUALITY
 }
 
-/** What can be seen of a streaming app's playback from outside it. */
-data class RemoteFacts(
-    val appLabel: String,
-    /** The service's best format, e.g. "FLAC up to 24-bit/192 kHz". */
-    val ceiling: String,
-    /** True for services that only stream lossy audio. */
-    val lossyOnly: Boolean,
-    /** A quality string the app published in its media metadata, if any. */
-    val hint: String?,
-    val device: DeviceKind?,
-    val deviceName: String?,
-    /** Set when the app holds the USB DAC in bit-perfect mode: the real stream format. */
-    val bitPerfectRate: Int?,
-    val bitPerfectFormat: SampleFormat?,
-    val mixerRate: Int?,
-    /** Side A's EQ is attached to this app's audio session. */
-    val eq: EqConfig? = null,
-)
 
 /** What the engine knows about one playing stream, enough to describe its path. */
 data class StreamFacts(
@@ -127,42 +109,6 @@ object SignalPaths {
         }
         return SignalPath(stages)
     }
-
-    fun describeRemote(r: RemoteFacts): SignalPath {
-        val stages = mutableListOf<PathStage>()
-        stages += when {
-            r.lossyOnly -> PathStage("Source", "${r.appLabel} stream · ${r.ceiling}", Quality.LOSSY)
-            r.hint != null -> PathStage("Source", "${r.appLabel} reports: ${r.hint}", if (looksLossy(r.hint)) Quality.LOSSY else Quality.LOSSLESS)
-            else -> PathStage(
-                "Source",
-                "${r.appLabel} · ${r.ceiling} at best; the streaming quality you set in ${r.appLabel} isn't reported to other apps",
-                Quality.LOSSLESS,
-                verified = false,
-            )
-        }
-        r.eq?.takeIf { it.isActive }?.let { eq ->
-            stages += PathStage("Parametric EQ", "${eq.activeBands.size} bands on ${r.appLabel}'s audio (Android effect, before the mixer)", Quality.ENHANCED)
-        }
-        val rate = r.bitPerfectRate
-        stages += when {
-            rate != null -> PathStage(
-                "Output",
-                "${r.deviceName ?: "USB DAC"} · bit-perfect ${khz(rate)}${r.bitPerfectFormat?.let { " ${it.label}" } ?: ""}, held by ${r.appLabel}",
-                Quality.LOSSLESS,
-            )
-            r.device == DeviceKind.BLUETOOTH -> PathStage("Bluetooth", "${r.deviceName ?: "Headphones"} · re-encoded by the Bluetooth codec", Quality.LOSSY)
-            r.device != null -> PathStage(
-                "Android mixer",
-                "${r.mixerRate?.let { "mixed at ${khz(it)}" } ?: "mixed"} → ${r.deviceName ?: r.device.label}",
-                Quality.HIGH_QUALITY,
-            )
-            else -> PathStage("Output", "Not reported", Quality.HIGH_QUALITY, verified = false)
-        }
-        return SignalPath(stages)
-    }
-
-    private fun looksLossy(hint: String) = Regex("""\b(aac|mp3|ogg|opus|vorbis|kbps|low|normal|high quality)\b""", RegexOption.IGNORE_CASE).containsMatchIn(hint) &&
-        !Regex("""lossless|flac|alac|hi-?res|24.?bit""", RegexOption.IGNORE_CASE).containsMatchIn(hint)
 
     private fun codecName(c: String) = when (c.uppercase()) {
         "RAW" -> "PCM"

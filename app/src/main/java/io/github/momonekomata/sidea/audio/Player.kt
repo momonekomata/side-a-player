@@ -253,7 +253,6 @@ object Player {
         scope.launch {
             _queue.map { it.current }.distinctUntilChanged().collect { t -> t?.let(io.github.momonekomata.sidea.sources.PlayHistory::record) }
         }
-        io.github.momonekomata.sidea.streaming.StreamingEq.start(appContext)
         engine = AudioEngine(appContext, callbacks)
         // Asked once per DAC per run; the song plays through Android until the user says yes.
         engine.onUsbPermissionNeeded = { d ->
@@ -268,7 +267,6 @@ object Player {
             Settings.prefs.collect {
                 engine.gapless = it.gapless
                 engine.eq = it.eq
-                io.github.momonekomata.sidea.streaming.StreamingEq.setConfig(it.eq)
                 engine.usbVolume = it.usbVolume
                 if (engine.exclusiveUsb != it.exclusiveUsb) {
                     engine.exclusiveUsb = it.exclusiveUsb
@@ -367,32 +365,6 @@ object Player {
     }
 
     // ---- giving the DAC back while paused ----
-
-    /**
-     * For playing a streaming app from Side A: gives the DAC back to Android first and runs
-     * [then] once Android has it again, so the other app's first notes don't go to a DAC that's
-     * still changing hands (after a USB reset Android sees it unplugged and replugged).
-     */
-    fun releaseDacThen(then: () -> Unit) {
-        if (!UsbExclusive.holding) {
-            then()
-            return
-        }
-        resumeOnGain = false
-        park()
-        abandonFocus()
-        val deadline = System.currentTimeMillis() + 8_000
-        var sawGone = false
-        val check = object : Runnable {
-            override fun run() {
-                val listed = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.isUsb() }
-                if (!listed) sawGone = true
-                val settled = listed && (sawGone || UsbExclusive.handBack != "reset")
-                if (settled || System.currentTimeMillis() > deadline) main.postDelayed({ then() }, 500) else main.postDelayed(this, 250)
-            }
-        }
-        main.postDelayed(check, 400)
-    }
 
     /** Where a parked song resumes: the DAC was handed back while it sat paused. */
     private var parkedAtMs: Long? = null
