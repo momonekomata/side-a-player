@@ -120,7 +120,7 @@ object CloudSignIn {
             .build()
         http.newCall(Request.Builder().url(p.tokenUrl).post(form).build()).execute().ensure("Signing in to ${server.kind.label}").use { resp ->
             val o = JSONObject(resp.body!!.string())
-            o.optString("refresh_token").ifBlank { throw IOException("${server.kind.label} gave no long-lived token; remove Side A from your account's connected apps and sign in again") }
+            o.optString("refresh_token").ifBlank { throw IOException("${server.kind.label} gave no long-lived token; remove WALKDECK from your account's connected apps and sign in again") }
         }
     }
 
@@ -139,7 +139,7 @@ object CloudSignIn {
                     out.write(body)
                     out.flush()
                 }
-                val page = { msg: String -> "<html><body style=\"font-family:sans-serif;padding:2em;background:#111;color:#eee\"><h2>Side A</h2><p>$msg</p></body></html>" }
+                val page = { msg: String -> "<html><body style=\"font-family:sans-serif;padding:2em;background:#111;color:#eee\"><h2>WALKDECK</h2><p>$msg</p></body></html>" }
                 when {
                     query["error"] != null -> {
                         reply("200 OK", page("Signing in didn't finish (${query["error"]}). You can close this tab."))
@@ -147,10 +147,10 @@ object CloudSignIn {
                     }
                     query["code"] != null -> {
                         if (query["state"] != state) {
-                            reply("400 Bad Request", page("This sign-in doesn't match the one Side A started."))
+                            reply("400 Bad Request", page("This sign-in doesn't match the one WALKDECK started."))
                             throw IOException("Sign-in answer didn't match; try again")
                         }
-                        reply("200 OK", page("Signed in. Go back to Side A."))
+                        reply("200 OK", page("Signed in. Go back to WALKDECK."))
                         return query["code"]!!
                     }
                     else -> reply("404 Not Found", page("Nothing here."))

@@ -469,7 +469,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             channelMask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
             device = null,
             bitPerfect = true,
-            note = "Side A USB driver",
+            note = "WALKDECK USB driver",
             exclusive = ExclusiveTarget(d, alt),
         )
     }

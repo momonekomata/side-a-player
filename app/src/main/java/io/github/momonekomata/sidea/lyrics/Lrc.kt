@@ -30,7 +30,7 @@ object Lrc {
         if (artist.isNotBlank()) append("[ar:").append(artist).append("]\n")
         if (title.isNotBlank()) append("[ti:").append(title).append("]\n")
         if (album.isNotBlank()) append("[al:").append(album).append("]\n")
-        append("[re:Side A · ").append(l.source).append("]\n")
+        append("[re:WALKDECK · ").append(l.source).append("]\n")
         for (line in l.lines) {
             if (l.synced) {
                 val t = line.timeMs.coerceAtLeast(0)

@@ -81,7 +81,7 @@ data class BrowseState(
 }
 
 /** The long-press menu for a song; [playlistId]/[index] when it was opened inside a playlist. */
-data class SongMenu(val track: io.github.momonekomata.sidea.sources.Track, val playlistId: String? = null, val index: Int = -1)
+data class SongMenu(val track: io.github.momonekomata.sidea.sources.Track, val playlistId: String? = null, val index: Int = -1, val queueIndex: Int = -1)
 
 data class CertPrompt(val server: NasServer, val sha256: String, val subject: String)
 
@@ -118,7 +118,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _ui = MutableStateFlow(UiState())
     val ui = _ui.asStateFlow()
-    private var loadJob: Job? = null
+    /** One listing at a time per side, so restoring Local and the NAS together doesn't cancel one. */
+    private val loadJobs = arrayOfNulls<Job>(2)
     private var tagJob: Job? = null
 
     private val _nowArt = MutableStateFlow<Bitmap?>(null)
@@ -153,6 +154,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         prefs.getString("localTree", null)?.let { openLocal(Uri.parse(it), remember = false) }
+        // The NAS server and folder you were in last time.
+        prefs.getString("place:nasServer", null)?.let { id -> nasStore.all().firstOrNull { it.id == id } }
+            ?.takeIf { !it.kind.cloud || it.refreshToken.isNotBlank() }
+            ?.let { openServer(it, resume = true) }
+        // The last queue, paused where it was, if the player has nothing (the app was closed).
+        viewModelScope.launch(Dispatchers.IO) {
+            val ctx = getApplication<Application>()
+            val servers = nasStore.all()
+            Player.restore { io.github.momonekomata.sidea.sources.TrackResolver.resolve(ctx, it, servers) }
+        }
         followLyrics()
         followArtwork()
     }
@@ -267,9 +278,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             prefs.edit().putString("localTree", tree.toString()).apply()
         }
         val b = LocalBrowser(getApplication(), tree)
-        _ui.update { it.copy(local = BrowseState(b, listOf("Music" to b.rootPath))) }
+        val root = listOf("Music" to b.rootPath)
+        // Back where you were last time, if that folder is still inside the one chosen.
+        val path = savedPlace(false)?.takeIf { !remember && it.firstOrNull()?.second == b.rootPath } ?: root
+        _ui.update { it.copy(local = BrowseState(b, path)) }
         load(isNas = false)
     }
+
+    // ---- where each side was left ----
+
+    private fun rememberPlace(isNas: Boolean, b: BrowseState) {
+        val crumbs = org.json.JSONArray(b.path.map { (n, p) -> org.json.JSONArray().put(n).put(p) })
+        prefs.edit().putString(if (isNas) "place:nas" else "place:local", crumbs.toString()).apply()
+        if (isNas) _ui.value.nasServer?.let { prefs.edit().putString("place:nasServer", it.id).apply() }
+    }
+
+    private fun savedPlace(isNas: Boolean): List<Pair<String, String>>? = runCatching {
+        val a = org.json.JSONArray(prefs.getString(if (isNas) "place:nas" else "place:local", null) ?: return null)
+        (0 until a.length()).map { a.getJSONArray(it).let { c -> c.getString(0) to c.getString(1) } }.takeIf { it.isNotEmpty() }
+    }.getOrNull()
 
     // ---- NAS ----
 
@@ -281,7 +308,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** What a store learns while working (a pinned SSH host key, a new cloud token) is kept, quietly. */
-    private val keepServer: (NasServer) -> Unit = { s ->
+    // A function, not a lambda property: start-up opens the last server before properties
+    // declared down here would be set.
+    private fun keepServer(s: NasServer) {
         nasStore.save(s)
         io.github.momonekomata.sidea.sources.RemoteStores.update(s)
         _ui.update { it.copy(nasServers = nasStore.all()) }
@@ -312,7 +341,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(nasServers = nasStore.all(), nas = if (it.nasServer?.id == server.id) null else it.nas) }
     }
 
-    fun openServer(server: NasServer) {
+    fun openServer(server: NasServer, resume: Boolean = false) {
         val b = when (server.kind) {
             NasKind.WEBDAV -> runCatching { WebDavBrowser(server) }.getOrElse { e ->
                 _ui.update { it.copy(nasServer = server, nas = null) }
@@ -320,14 +349,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             NasKind.FTPS -> FtpsBrowser(getApplication(), server)
             else -> io.github.momonekomata.sidea.sources.RemoteBrowser(
-                getApplication(), server, io.github.momonekomata.sidea.sources.RemoteStores.get(getApplication(), server, keepServer),
+                getApplication(), server, io.github.momonekomata.sidea.sources.RemoteStores.get(getApplication(), server, ::keepServer),
             )
         }
-        _ui.update { it.copy(nasServer = server, nas = BrowseState(b, listOf(server.name to b.rootPath))) }
+        val root = listOf(server.name to b.rootPath)
+        val path = if (resume) savedPlace(true)?.takeIf { it.firstOrNull()?.second == b.rootPath } ?: root else root
+        _ui.update { it.copy(nasServer = server, nas = BrowseState(b, path)) }
         load(isNas = true)
     }
 
-    fun closeServer() = _ui.update { it.copy(nas = null, nasServer = null) }
+    fun closeServer() {
+        prefs.edit().remove("place:nasServer").remove("place:nas").apply()
+        _ui.update { it.copy(nas = null, nasServer = null) }
+    }
 
     fun trustCertificate(prompt: CertPrompt) {
         val pinned = prompt.server.copy(pinnedSha256 = prompt.sha256)
@@ -381,8 +415,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val b = browse(isNas) ?: return
         val path = b.currentPath
         updateBrowse(isNas) { it.copy(loading = true, error = null) }
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        rememberPlace(isNas, b)
+        val slot = if (isNas) 1 else 0
+        loadJobs[slot]?.cancel()
+        loadJobs[slot] = viewModelScope.launch {
             try {
                 val entries = b.browser.list(path)
                 updateBrowse(isNas) { if (it.currentPath == path) it.copy(entries = entries, loading = false) else it }
@@ -442,8 +478,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _songMenu = MutableStateFlow<SongMenu?>(null)
     val songMenu = _songMenu.asStateFlow()
 
-    fun openSongMenu(t: io.github.momonekomata.sidea.sources.Track, playlistId: String? = null, index: Int = -1) {
-        _songMenu.value = SongMenu(t, playlistId, index)
+    fun openSongMenu(t: io.github.momonekomata.sidea.sources.Track, playlistId: String? = null, index: Int = -1, queueIndex: Int = -1) {
+        _songMenu.value = SongMenu(t, playlistId, index, queueIndex)
     }
 
     fun openSongMenu(f: Favorite, playlistId: String? = null, index: Int = -1) {

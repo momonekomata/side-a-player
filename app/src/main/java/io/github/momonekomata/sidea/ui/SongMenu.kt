@@ -56,8 +56,10 @@ fun SongMenuDialog(vm: MainViewModel, menu: SongMenu) {
                 if (!picking) {
                     val fav = favorites.any { it.id == t.id }
                     MenuItem(if (fav) "♥" else "♡", if (fav) "Remove from favourites" else "Add to favourites") { vm.toggleFavorite(t); done() }
-                    MenuItem("⏭", "Play next") { vm.playNext(t); done() }
-                    MenuItem("≡", "Add to queue") { vm.addToQueue(t); done() }
+                    // As Apple Music names them: right after this song, or at the end of the queue.
+                    MenuItem("⏭", "Play Next") { vm.playNext(t); done() }
+                    MenuItem("≡", "Play Last") { vm.addToQueue(t); done() }
+                    if (menu.queueIndex >= 0) MenuItem("✕", "Remove from Queue") { io.github.momonekomata.sidea.audio.Player.removeAt(menu.queueIndex); done() }
                     MenuItem("▤", "Add to playlist…") { picking = true }
                     menu.playlistId?.let { id -> MenuItem("✕", "Remove from this playlist") { vm.removeFromPlaylist(id, menu.index); done() } }
                 } else {

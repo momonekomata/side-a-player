@@ -41,12 +41,12 @@ class PlaylistStore(context: Context) {
     }
 }
 
-private fun JSONArray.favorites(): List<Favorite> = (0 until length()).map {
+internal fun JSONArray.favorites(): List<Favorite> = (0 until length()).map {
     val o = getJSONObject(it)
     Favorite(o.getString("id"), o.optString("title"), o.optString("artist"), o.optString("album"), o.optLong("size", -1))
 }
 
-private fun List<Favorite>.toJson() = JSONArray(map {
+internal fun List<Favorite>.toJson() = JSONArray(map {
     JSONObject().put("id", it.id).put("title", it.title).put("artist", it.artist).put("album", it.album).put("size", it.sizeBytes)
 })
 
@@ -132,4 +132,10 @@ object PlayHistory {
         list.forEachIndexed { i, p -> arr.getJSONObject(i).put("at", p.atMs) }
         prefs?.edit()?.putString("list", arr.toString())?.apply()
     }
+}
+
+/** The favourites' JSON form, for other places that keep songs (the saved queue). */
+object FavoritesJson {
+    fun List<Favorite>.json(): JSONArray = toJson()
+    fun JSONArray.list(): List<Favorite> = favorites()
 }

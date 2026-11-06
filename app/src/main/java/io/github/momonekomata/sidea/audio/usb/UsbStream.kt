@@ -1,31 +1,46 @@
 package io.github.momonekomata.sidea.audio.usb
 
 import io.github.momonekomata.sidea.audio.PcmSink
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /** JNI bridge to usb_audio.c: one isochronous playback stream on a claimed interface. */
 class UsbStream private constructor(private val handle: Long, val frameBytes: Int) : PcmSink {
-    override fun play() = nativeSetPaused(handle, false)
-    override fun pause() = nativeSetPaused(handle, true)
-    override fun flush() = nativeFlush(handle)
+    // Unplugging the DAC releases the stream from the main thread while the player thread may be
+    // in the middle of a write. Every native call holds the read lock and release the write lock,
+    // so the native stream is never freed under a call, and calls after release do nothing.
+    // (A write waits at most 100 ms for room, so release never waits long.)
+    private val lock = ReentrantReadWriteLock()
+    @Volatile private var released = false
+    @Volatile private var lastFrames = 0L
 
-    override fun write(data: ByteArray, offset: Int, length: Int): Int = nativeWrite(handle, data, offset, length)
+    private inline fun <T> live(dead: T, block: () -> T): T = lock.read { if (released) dead else block() }
 
-    override val framesPlayed: Long get() = nativeFramesPlayed(handle)
+    override fun play() = live(Unit) { nativeSetPaused(handle, false) }
+    override fun pause() = live(Unit) { nativeSetPaused(handle, true) }
+    override fun flush() = live(Unit) { nativeFlush(handle) }
+
+    /** -19 (ENODEV) once the stream is gone, like a DAC that was pulled out. */
+    override fun write(data: ByteArray, offset: Int, length: Int): Int = live(-19) { nativeWrite(handle, data, offset, length) }
+
+    override val framesPlayed: Long get() = live(lastFrames) { nativeFramesPlayed(handle).also { lastFrames = it } }
 
     /** Silence to send when the buffer runs dry or while paused; DoP needs its idle pattern. */
-    fun setSilence(pattern: ByteArray) = nativeSetSilence(handle, pattern)
+    fun setSilence(pattern: ByteArray) = live(Unit) { nativeSetSilence(handle, pattern) }
 
     /** (underruns, feedback ratio vs nominal, error) for the signal path. */
-    fun stats(): Triple<Long, Double, Long> {
+    fun stats(): Triple<Long, Double, Long> = live(Triple(0L, 1.0, 0L)) {
         val s = nativeStats(handle)
-        return Triple(s[0], if (s[2] > 0) s[1].toDouble() / s[2] else 1.0, s[3])
+        Triple(s[0], if (s[2] > 0) s[1].toDouble() / s[2] else 1.0, s[3])
     }
 
-    private var released = false
     override fun release() {
-        if (released) return
-        released = true
-        nativeClose(handle)
+        lock.write {
+            if (released) return
+            released = true
+            nativeClose(handle)
+        }
     }
 
     companion object {

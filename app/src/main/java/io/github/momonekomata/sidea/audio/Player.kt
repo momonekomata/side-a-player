@@ -233,6 +233,7 @@ object Player {
     fun init(context: Context) {
         if (::engine.isInitialized) return
         appContext = context.applicationContext
+        saved = appContext.getSharedPreferences("queue", 0)
         audioManager = appContext.getSystemService(AudioManager::class.java)
         audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
         UsbExclusive.init(appContext)
@@ -248,6 +249,13 @@ object Player {
             }
         }
         Settings.init(appContext)
+        scope.launch { _queue.collect { saveQueue() } }
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(10_000)
+                if (engine.state.value.isPlaying) saveQueue()
+            }
+        }
         io.github.momonekomata.sidea.sources.PlayHistory.init(appContext)
         // Every song that comes up, by a tap or a gapless hand-over, goes into the history.
         scope.launch {
@@ -364,10 +372,74 @@ object Player {
         if (parkedAtMs != null) parkedAtMs = to else seekTo(to)
     }
 
+    // ---- remembering the queue between runs ----
+
+    private lateinit var saved: android.content.SharedPreferences
+    private var saveJob: Job? = null
+
+    /** The queue, the song's place in it, where it had got to and its length, kept on the phone. */
+    private fun saveQueue() {
+        if (!::saved.isInitialized || !::engine.isInitialized) return
+        val q = _queue.value
+        // Nothing queued is the state at start-up, before [restore]; it mustn't wipe what's kept.
+        if (q.current == null) return
+        val tags = io.github.momonekomata.sidea.sources.TagStore.tags.value
+        // At most 500 songs around the current one; a whole library queued would be a lot to keep.
+        val from = (q.index - 100).coerceAtLeast(0)
+        val kept = q.tracks.drop(from).take(500)
+        val songs = kept.map { t ->
+            io.github.momonekomata.sidea.sources.Favorite(t.id, t.displayTitleFor(tags), t.displayArtistFor(tags), t.displayAlbumFor(tags), t.sizeBytes)
+        }
+        val s = engine.state.value
+        val pos = parkedAtMs ?: s.positionMs
+        val dur = s.durationMs.takeIf { it > 0 } ?: _parked.value?.durationMs ?: 0
+        val json = org.json.JSONObject()
+            .put("index", q.index - from)
+            .put("position", pos)
+            .put("duration", dur)
+            .put("repeat", q.repeat.name)
+            .put("songs", with(io.github.momonekomata.sidea.sources.FavoritesJson) { songs.json() })
+        saved.edit().putString("queue", json.toString()).apply()
+    }
+
+    /**
+     * Brings back the last queue, paused where it was, if nothing is queued yet. [resolve] finds
+     * each song again (local file, NAS, cloud); songs that can't be found are left out.
+     */
+    fun restore(resolve: (io.github.momonekomata.sidea.sources.Favorite) -> Track?) {
+        if (_queue.value.current != null || !::saved.isInitialized) return
+        val o = runCatching { org.json.JSONObject(saved.getString("queue", null) ?: return) }.getOrNull() ?: return
+        val songs = with(io.github.momonekomata.sidea.sources.FavoritesJson) { o.optJSONArray("songs")?.list() }.orEmpty()
+        val want = o.optInt("index", 0)
+        val tracks = ArrayList<Track>()
+        var index = 0
+        songs.forEachIndexed { i, f ->
+            val t = resolve(f) ?: return@forEachIndexed
+            if (i == want) index = tracks.size
+            tracks += t
+        }
+        if (tracks.isEmpty()) return
+        main.post {
+            if (_queue.value.current != null) return@post
+            _queue.value = QueueState(tracks, index.coerceIn(0, tracks.size - 1), repeat = runCatching { RepeatMode.valueOf(o.optString("repeat")) }.getOrDefault(RepeatMode.OFF))
+            _parked.value = Resume(o.optLong("position"), o.optLong("duration"))
+        }
+    }
+
     // ---- giving the DAC back while paused ----
 
-    /** Where a parked song resumes: the DAC was handed back while it sat paused. */
-    private var parkedAtMs: Long? = null
+    /**
+     * Where a parked song resumes: the DAC was handed back while it sat paused, or the queue was
+     * brought back from the last time the app ran. The deck shows the song paused at that spot.
+     */
+    private val _parked = MutableStateFlow<Resume?>(null)
+    val parked: StateFlow<Resume?> = _parked.asStateFlow()
+    private var parkedAtMs: Long?
+        get() = _parked.value?.positionMs
+        set(v) {
+            val known = if (::engine.isInitialized) engine.state.value.durationMs else 0
+            _parked.value = v?.let { Resume(it, known.takeIf { d -> d > 0 } ?: _parked.value?.durationMs ?: 0) }
+        }
     private val parkLater = Runnable { if (!engine.state.value.isPlaying) park() }
 
     /** Releases the output (and the USB DAC) but remembers the song and the spot. */
@@ -381,6 +453,7 @@ object Player {
 
     private fun pauseAndPark() {
         engine.pause()
+        saveQueue()
         // Other apps get the DAC back ten seconds into a pause.
         main.removeCallbacks(parkLater)
         if (UsbExclusive.holding) main.postDelayed(parkLater, 10_000)
@@ -430,7 +503,10 @@ object Player {
         startCurrent()
     }
 
-    fun seekTo(ms: Long) = engine.seekTo(ms)
+    /** While parked, moves where Play will carry on from. */
+    fun seekTo(ms: Long) {
+        if (parkedAtMs != null) parkedAtMs = ms else engine.seekTo(ms)
+    }
 
     fun ownsMixer() = ::engine.isInitialized && engine.holdsBitPerfectMixer
 
@@ -467,3 +543,10 @@ object Player {
         }
     }
 }
+
+/** A song waiting to carry on from [positionMs]; [durationMs] is 0 when not known. */
+data class Resume(val positionMs: Long, val durationMs: Long)
+
+private fun Track.displayTitleFor(tags: Map<String, io.github.momonekomata.sidea.sources.Tags>) = tags[id]?.title?.takeIf { it.isNotBlank() } ?: title
+private fun Track.displayArtistFor(tags: Map<String, io.github.momonekomata.sidea.sources.Tags>) = tags[id]?.artist?.takeIf { it.isNotBlank() } ?: artist
+private fun Track.displayAlbumFor(tags: Map<String, io.github.momonekomata.sidea.sources.Tags>) = tags[id]?.album?.takeIf { it.isNotBlank() } ?: album

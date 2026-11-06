@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The anodised blue of the player's body. -->
+    <color name="walkdeck_blue">#1B2D52</color>
+</resources>

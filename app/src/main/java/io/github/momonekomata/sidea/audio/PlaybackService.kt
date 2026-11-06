@@ -151,7 +151,7 @@ class PlaybackService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(t?.displayTitle(tags) ?: "Side A")
+            .setContentTitle(t?.displayTitle(tags) ?: "WALKDECK")
             .setContentText(listOf(t?.displayArtist(tags), t?.displayAlbum(tags)).filter { !it.isNullOrBlank() }.joinToString(" · "))
             .setContentIntent(open)
             .setLargeIcon(t?.let { ArtworkStore.cached(it) })

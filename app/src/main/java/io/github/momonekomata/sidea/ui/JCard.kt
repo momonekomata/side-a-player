@@ -57,9 +57,15 @@ fun JCard(
     art: ImageBitmap? = null,
     listState: LazyListState? = null,
     letters: List<Pair<Char, Int>> = emptyList(),
+    /** Stays put above the list while it scrolls (search, the queue's buttons). */
+    pinned: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     JCardFrame(title, subtitle, modifier, art) {
+        pinned?.let {
+            it()
+            HorizontalDivider(color = Retro.CreamShade, thickness = 1.dp)
+        }
         val list = listState ?: rememberLazyListState()
         var active by remember { mutableStateOf<Char?>(null) }
         Box(Modifier.fillMaxSize()) {
@@ -211,6 +217,8 @@ fun JCardRow(
     current: Boolean = false,
     action: Pair<String, () -> Unit>? = null,
     onLongClick: (() -> Unit)? = null,
+    /** Drawn at the end of the line, e.g. a drag handle. */
+    trailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -243,6 +251,7 @@ fun JCardRow(
                 modifier = Modifier.clickable(onClick = run).padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
             )
         }
+        trailing?.invoke()
     }
     HorizontalDivider(color = Retro.CreamShade, thickness = 1.dp, modifier = Modifier.padding(horizontal = 18.dp))
 }

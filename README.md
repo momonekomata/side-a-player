@@ -1,21 +1,21 @@
-# Side A S26
+# WALKDECK
 
 A bit-perfect music player for your own files, designed for the Samsung Galaxy S26 Ultra and
 dressed like the classic blue-and-silver portable cassette player: an anodised blue body, a
 brushed-aluminium faceplate, silver piano keys with REW / PLAY / FF printed on them (PLAY turns
 orange while the tape runs, and the keys sink when pressed), the quality light in a small dark
 window, and the cream paper insert of the tape for the track lists. Full-width cover art (tap it
-for lyrics), and Side A's own USB driver for DACs, since Samsung's Android has no bit-perfect USB
+for lyrics), and WALKDECK's own USB driver for DACs, since Samsung's Android has no bit-perfect USB
 mode.
 
-This is the `s26` branch of Side A. It plays only music you own, on the phone, a NAS or a cloud
+This is the `s26` branch of Side A, renamed WALKDECK. It plays only music you own, on the phone, a NAS or a cloud
 drive; the streaming-app remote control on `main` is gone. It installs as its own app
-(`io.github.momonekomata.sidea.s26`, "Side A S26"), so it sits beside the `main` build rather than
+(`io.github.momonekomata.sidea.s26`, "WALKDECK", with its own cassette-player icon), so it sits beside the `main` build rather than
 replacing it.
 
 | Source | How it's reached | How it plays |
 |---|---|---|
-| **Local** (any folder on the phone, SD card or USB drive) | Android's folder picker | Decoded by Side A at the file's own rate and depth |
+| **Local** (any folder on the phone, SD card or USB drive) | Android's folder picker | Decoded by WALKDECK at the file's own rate and depth |
 | **SMB** (Windows shares, Samba on most NAS boxes) | SMB 2/3, user name and password or guest | Downloaded into the cache on four connections at once, playing as it arrives |
 | **SFTP** | SSH, user name and password; host key pinned on first use | Same |
 | **FTP** and **FTPS** | FTP plain (home network only) or FTPS with TLS | Same (FTPS on one connection) |
@@ -27,7 +27,7 @@ and playlists, and bit-perfect output.
 
 ## Bit-perfect output
 
-Android normally mixes everything at 48 kHz. On **Android 14+ with a USB DAC**, Side A asks the
+Android normally mixes everything at 48 kHz. On **Android 14+ with a USB DAC**, WALKDECK asks the
 platform for a bit-perfect mixer (`AudioManager.setPreferredMixerAttributes`,
 `MIXER_BEHAVIOR_BIT_PERFECT`) at the file's own rate, then writes samples in the DAC's integer
 format with no resampling, dithering or volume scaling. The status lines under the cover say
@@ -39,37 +39,37 @@ what actually happened:
 
 ### Exclusive USB driver (phones without bit-perfect, e.g. Samsung)
 
-When Android can't send to the DAC bit-perfect at a file's rate, Side A drives the DAC itself,
+When Android can't send to the DAC bit-perfect at a file's rate, WALKDECK drives the DAC itself,
 like USB Audio Player Pro (Settings → *Exclusive USB driver*, on by default):
 
-1. The first time, Android asks *"Allow Side A to access <DAC>?"*. Plugging the DAC in can also
-   offer to open Side A, which grants the same access.
-2. Side A takes the DAC's audio interfaces from Android's USB audio driver, picks the DAC's
+1. The first time, Android asks *"Allow WALKDECK to access <DAC>?"*. Plugging the DAC in can also
+   offer to open WALKDECK, which grants the same access.
+2. WALKDECK takes the DAC's audio interfaces from Android's USB audio driver, picks the DAC's
    format for the file (16/24/32-bit, the narrowest that holds every bit), sets the DAC's clock
    to the file's own rate (UAC2 clock source or UAC1 endpoint), and streams the samples over
    isochronous USB itself (native code over usbfs, `app/src/main/cpp/usb_audio.c`). For async DACs
    it follows the DAC's feedback endpoint, so the DAC's clock sets the pace.
-3. The badge reads LOSSLESS and the signal path says *Side A USB driver, exclusive*.
-4. When playback stops, the DAC goes back to Android. Between songs it stays with Side A, and only
+3. The badge reads LOSSLESS and the signal path says *WALKDECK USB driver, exclusive*.
+4. When playback stops, the DAC goes back to Android. Between songs it stays with WALKDECK, and only
    the rate changes. Unplugging stops cleanly.
 
-**Volume.** With Android bypassed, the phone's volume can't reach the DAC, so Side A applies its
+**Volume.** With Android bypassed, the phone's volume can't reach the DAC, so WALKDECK applies its
 own volume (the phone's volume keys and a DAC's own buttons drive it). It starts at
 100 %, which is bit-perfect (the badge says LOSSLESS straight away), so keep the DAC or amp's own
 volume sensible before the first song. Anything lower is digital attenuation in 64-bit float into a 24-bit or
 wider slot, and the badge says ENHANCED. DoP always plays at 100 %, so set the level on the DAC or amp.
 
-Other apps can't play through the DAC while Side A holds it (that's what exclusive means). Side A
+Other apps can't play through the DAC while WALKDECK holds it (that's what exclusive means). WALKDECK
 gives it back as soon as another app starts playing, and ten seconds into a pause. Play
-picks up from the same spot. To give it back, Side A takes every audio interface
+picks up from the same spot. To give it back, WALKDECK takes every audio interface
 of the DAC while it holds it, and on release resets the DAC over USB, which looks like a replug to
 Linux and to Android, so both set the DAC up from scratch. (Only handing Linux's driver back
 rebuilds Linux's sound card, but Android keeps using the old one: the DAC stays listed in other
-apps and they play into silence.) If a reset isn't allowed, Side A falls back to reattaching the
-driver, and if Android doesn't list the DAC a few seconds later, Side A says so.
+apps and they play into silence.) If a reset isn't allowed, WALKDECK falls back to reattaching the
+driver, and if Android doesn't list the DAC a few seconds later, WALKDECK says so.
 
 A reset looks like a replug to Android too, so Android asks once which app should open for the
-DAC: pick Side A and tick **Always**. That's what keeps Side A's USB access for good; Side A then
+DAC: pick WALKDECK and tick **Always**. That's what keeps WALKDECK's USB access for good; WALKDECK then
 receives the replug silently and doesn't come to the front.
 
 ### Android's bit-perfect mode
@@ -92,7 +92,7 @@ Notes:
 
 ## Decoding
 
-Lossless files are decoded by Side A itself: **ALAC** (Apple Lossless in .m4a, 16–32 bit; many
+Lossless files are decoded by WALKDECK itself: **ALAC** (Apple Lossless in .m4a, 16–32 bit; many
 phones have no decoder for it; also when an ID3 tag sits in front), **FLAC** (all stereo modes, 8–32 bit, any rate,
 seek table or not, and files with an ID3 tag stuck on the front, which Android's extractor rejects as
 "audio/unknown"), **WAV** (PCM, extensible, 32/64-bit float), **AIFF/AIFF-C** (incl. `sowt`, `fl32`)
@@ -115,12 +115,17 @@ hangul get a mark each after Z.
 
 **Long-press a song** (in a folder, search, Favourites, a playlist, the queue or the history) for
 add to / remove from favourites, play next, add to queue and add to playlist. Playlists sit in the
-Favourites tab above the favourite songs. Swipe the deck left for the **queue**, one list like
-Apple Music's: the song playing in the middle, up next below it (tap to jump there, swipe left to
-take a song out, long-press and drag to move it), and the last 300 songs played above it; scroll
-up for older ones. On the deck the cover runs edge to edge across the screen, the
-song and its badge sit under it (tap the badge for the signal path), and the transport keys are
-at the bottom.
+Favourites tab above the favourite songs. Swipe the deck left for the **queue**, laid out like Apple Music's: Shuffle, Repeat and Clear stay
+at the top; what played is above (scroll up for more), then the song playing with its cover, then
+**Playing Next**. Drag a song by its ≡ handle to move it, swipe it left to remove it, tap it to
+jump there, or long-press it for the song menu (Play Next, Play Last, Remove from Queue,
+favourites, playlists). Long-press any song elsewhere for **Play Next** (right after this song) or
+**Play Last** (end of the queue).
+
+The queue, the song and where it had got to are kept on the phone: after the app is closed (or a
+DAC is pulled out), the deck shows the last song paused at that spot, and Play carries on. Local
+and NAS folders reopen where you left them, the NAS server included, and the search bar stays
+pinned at the top of every folder card.
 
 ## NAS playback
 
@@ -149,10 +154,10 @@ TLS) is the next step, then a wired or 5/6 GHz link.
 
 ## Playing nicely with other apps
 
-Side A takes Android's audio focus like any music app. Starting a song pauses other players, and
-when another app starts playing Side A pauses and hands the DAC back. Calls and voice assistants pause it
-and it resumes after. Notifications and navigation prompts only ask other apps to duck, so Side A
-keeps playing through them: Android lowers its own mixer path for the moment, and Side A's USB
+WALKDECK takes Android's audio focus like any music app. Starting a song pauses other players, and
+when another app starts playing WALKDECK pauses and hands the DAC back. Calls and voice assistants pause it
+and it resumes after. Notifications and navigation prompts only ask other apps to duck, so WALKDECK
+keeps playing through them: Android lowers its own mixer path for the moment, and WALKDECK's USB
 path stays bit-perfect.
 Unplugging headphones or the DAC pauses instead of switching to the speaker.
 
@@ -162,7 +167,7 @@ On the phone, the sources are cards: swipe between them or tap the tab row (Loca
 Favourites; a green dot marks what's playing). What's playing sits in a mini player at the bottom,
 showing cover, title, quality, play/pause and next. Tap it or swipe up for the full deck (cover and
 lyrics); swipe down or press Back to put it away. Unfolded (≥600 dp wide), it's the
-two-page case layout. Turned sideways, Side A goes full screen: the system bars hide (swipe
+two-page case layout. Turned sideways, WALKDECK goes full screen: the system bars hide (swipe
 from an edge to peek), the title bar goes, and EQ and Settings move to the end of the tab row. On a
 phone's short landscape screen it's three columns: cards, a compact deck, and lyrics.
 
@@ -215,7 +220,7 @@ that is what keeps the bit-perfect path honest. Settings → Gapless playback tu
 
 ## Tags
 
-Titles, artists, albums and track numbers come from the files' own tags, read by Side A's own
+Titles, artists, albums and track numbers come from the files' own tags, read by WALKDECK's own
 parser: FLAC/Ogg/Opus Vorbis comments, ID3v2.2–2.4 (MP3, AIFF, WAV, DSF), MP4/M4A atoms, WAV INFO
 and DSDIFF. Only the few kilobytes that hold the tags are read, which keeps NAS folders quick
 (WebDAV uses small range requests; FTPS songs get their tags once cached). Until a file's tags
@@ -226,7 +231,7 @@ arrive, the file name is shown.
 * **DoP (native DSD)**: with Settings → *DSD as DoP* on and a bit-perfect USB path at the DoP
   rate (176.4 kHz for DSD64, 352.8 kHz for DSD128), the DSD bits are sent to the DAC inside 24-bit
   PCM frames with the standard 0x05/0xFA markers. Your DAC should show DSD. DoP is never sent
-  through Android's mixer, where it would be noise; without the bit-perfect path Side A converts instead.
+  through Android's mixer, where it would be noise; without the bit-perfect path WALKDECK converts instead.
 * **DSD → PCM** (default): a 384-tap (DSD64) linear-phase low-pass filter, decimated to
   176.4 kHz float. It's flat to about 25 kHz, and DSD's ultrasonic noise is filtered out above
   ~64 kHz. Level is unity, so 0 dB SACD lands at −6 dBFS, leaving headroom.
@@ -237,7 +242,7 @@ arrive, the file name is shown.
 Tap the cover to see the lyrics in its place (tap the COVER chip to go back); the line being sung is
 lit. Scroll them freely: they follow the song again four seconds after you let go. With timed
 lyrics, tap a line to play from there.
-Side A looks in this order:
+WALKDECK looks in this order:
 
 1. The file's tags (`LYRICS`/`UNSYNCEDLYRICS`, ID3 `USLT`, MP4 `©lyr`).
 2. A `.lrc` file with the same name in the same folder (local, WebDAV and FTPS).
@@ -253,10 +258,10 @@ Side A looks in this order:
 
 Lyrics found online are saved as a `.lrc` with the song's name in the song's folder (on the phone
 or the NAS, over WebDAV or FTPS), timed when the lyrics are, so step 2 finds them next time and
-other players can use them too. Side A never writes into the audio files themselves: rewriting a
+other players can use them too. WALKDECK never writes into the audio files themselves: rewriting a
 multi-hundred-megabyte file over the network to add a few kilobytes risks the file for little gain,
 and DSD and WAV have no common lyrics tag anyway. When the file or its `.lrc` only has plain lyrics,
-Side A still looks online for timed ones, and if it finds them they replace the plain `.lrc` (plain
+WALKDECK still looks online for timed ones, and if it finds them they replace the plain `.lrc` (plain
 lyrics never replace anything). Settings → "Save found lyrics beside the songs" turns it off. For the local folder this needs write access,
 which the folder picker grants; a folder chosen with an older version may need choosing again.
 
@@ -285,10 +290,10 @@ EncryptedSharedPreferences (Android Keystore).
 ### Cloud storage
 
 Google, Microsoft and Dropbox only let registered apps in, and an app's registration (its client ID)
-belongs to whoever made it. So Side A signs in as an app *you* register, once, for free, and nothing
+belongs to whoever made it. So WALKDECK signs in as an app *you* register, once, for free, and nothing
 passes through anyone else's servers. Sign-in happens in the phone's browser on the cloud's own
-page; the cloud then sends the browser back to a small web server Side A runs on the phone only
-(127.0.0.1, port 53682) with a one-time code (OAuth with PKCE). Side A never sees your password.
+page; the cloud then sends the browser back to a small web server WALKDECK runs on the phone only
+(127.0.0.1, port 53682) with a one-time code (OAuth with PKCE). WALKDECK never sees your password.
 
 **Google Drive**
 1. [console.cloud.google.com](https://console.cloud.google.com): create a project, then APIs &
@@ -297,7 +302,7 @@ page; the cloud then sends the browser back to a small web server Side A runs on
    or sign-ins expire after 7 days while it's in testing (Google will warn that the app isn't
    verified; that's expected for an app only you use).
 3. Credentials → Create credentials → OAuth client ID → **Desktop app**. Copy the client ID and
-   client secret into Side A (Remote → + → Google Drive) and tap **Save & sign in**.
+   client secret into WALKDECK (Remote → + → Google Drive) and tap **Save & sign in**.
 
 **OneDrive** (personal, work or school)
 1. [portal.azure.com](https://portal.azure.com) → App registrations → New registration. Account
@@ -305,16 +310,16 @@ page; the cloud then sends the browser back to a small web server Side A runs on
 2. Authentication → Add a platform → **Mobile and desktop applications** → custom redirect URI
    `http://localhost`. Under Advanced settings, allow public client flows.
 3. API permissions: Microsoft Graph → delegated `Files.ReadWrite` and `offline_access`.
-4. Copy the Application (client) ID into Side A and tap **Save & sign in**.
+4. Copy the Application (client) ID into WALKDECK and tap **Save & sign in**.
 
 **Dropbox**
 1. [dropbox.com/developers/apps](https://www.dropbox.com/developers/apps) → Create app → Scoped
    access → Full Dropbox (or App folder, if your music is in it).
 2. Permissions: `files.metadata.read`, `files.content.read`, `files.content.write` → Submit.
 3. Settings → OAuth 2 → Redirect URIs: add `http://127.0.0.1:53682/`.
-4. Copy the App key into Side A and tap **Save & sign in**.
+4. Copy the App key into WALKDECK and tap **Save & sign in**.
 
-The sign-in page says "Signed in. Go back to Side A" when it's done. Songs download through the
+The sign-in page says "Signed in. Go back to WALKDECK" when it's done. Songs download through the
 same cache as a NAS, four ranges at a time, and found lyrics are saved as `.lrc` next to the song in
 the cloud too.
 

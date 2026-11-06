@@ -75,12 +75,12 @@ object SignalPaths {
         }
         val vol = f.exclusive?.volumePercent
         if (vol != null && vol < 100) {
-            stages += PathStage("Volume", "$vol% in Side A (the DAC is driven directly, so this is where volume happens)", Quality.ENHANCED)
+            stages += PathStage("Volume", "$vol% in WALKDECK (the DAC is driven directly, so this is where volume happens)", Quality.ENHANCED)
         }
         stages += when {
             f.exclusive != null -> PathStage(
                 "Output",
-                "${f.deviceName ?: "USB DAC"} · Side A USB driver, exclusive · ${khz(f.outputRate)} ${f.exclusive.dacBits}-bit",
+                "${f.deviceName ?: "USB DAC"} · WALKDECK USB driver, exclusive · ${khz(f.outputRate)} ${f.exclusive.dacBits}-bit",
                 Quality.LOSSLESS,
             )
             f.bitPerfect -> PathStage(
@@ -97,7 +97,7 @@ object SignalPaths {
         f.usb?.let { u ->
             val why = when {
                 !u.apiAvailable -> "Connected, but bit-perfect output needs Android 14 or newer"
-                u.bitPerfectRates.isEmpty() -> "Connected, but this phone's Android offers no bit-perfect USB mode (a limit of the phone, not the DAC), so Android's mixer is in the path. Turn on Settings → Exclusive USB driver for Side A to drive the DAC itself"
+                u.bitPerfectRates.isEmpty() -> "Connected, but this phone's Android offers no bit-perfect USB mode (a limit of the phone, not the DAC), so Android's mixer is in the path. Turn on Settings → Exclusive USB driver for WALKDECK to drive the DAC itself"
                 else -> "Bit-perfect is offered at ${u.bitPerfectRates.joinToString(", ") { khz(it) }}, not at this file's ${khz(f.outputRate)}"
             }
             stages += PathStage(u.name, why, Quality.HIGH_QUALITY)

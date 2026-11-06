@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.Color
@@ -30,8 +31,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.mutableStateListOf
@@ -128,6 +130,7 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val queue by Player.queue.collectAsStateWithLifecycle()
     val engine by Player.state.collectAsStateWithLifecycle()
+    val parked by Player.parked.collectAsStateWithLifecycle()
     val tags by TagStore.tags.collectAsStateWithLifecycle()
     val lyrics by vm.lyrics.collectAsStateWithLifecycle()
     val prefs by Settings.prefs.collectAsStateWithLifecycle()
@@ -154,7 +157,7 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
-    val deck = localDeck(queue, engine, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite).copy(
+    val deck = localDeck(queue, engine, parked, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite).copy(
         lyrics = lyrics,
         showLyrics = showLyrics,
         onToggleLyrics = { showLyrics = !showLyrics },
@@ -174,7 +177,7 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     }
 
     // The queue lives beside the deck (swipe left).
-    val queuePage: @Composable (Modifier) -> Unit = { m -> QueueCard(vm, queue, tags, m) }
+    val queuePage: @Composable (Modifier) -> Unit = { m -> QueueCard(vm, queue, tags, localImage, m) }
 
     Column(
         Modifier
@@ -372,7 +375,15 @@ private fun Header(icons: @Composable RowScope.() -> Unit) {
         // Lettered like the name on a portable cassette player's lid: heavy italic capitals and a
         // small spec line, with the orange stripe.
         Column {
-            Text("SIDE A", color = Color(0xFFE9EDF3), fontSize = 26.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp)
+            Text(
+                androidx.compose.ui.text.buildAnnotatedString {
+                    append("WALK")
+                    pushStyle(androidx.compose.ui.text.SpanStyle(color = Retro.Orange))
+                    append("DECK")
+                    pop()
+                },
+                color = Color(0xFFE9EDF3), fontSize = 26.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.width(22.dp).height(3.dp).background(Retro.Orange))
                 Text("STEREO · BIT-PERFECT", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 9.sp, letterSpacing = 2.sp, modifier = Modifier.padding(start = 6.dp))
@@ -452,6 +463,7 @@ private fun SourceTabs(selected: SourceTab, playing: Set<SourceTab>, onSelect: (
 private fun localDeck(
     queue: QueueState,
     engine: EngineState,
+    parked: io.github.momonekomata.sidea.audio.Resume?,
     tags: Map<String, Tags>,
     eq: EqConfig,
     art: ImageBitmap?,
@@ -465,14 +477,16 @@ private fun localDeck(
         engine.error != null -> "ERROR · ${engine.error}"
         // Before Threading: a NAS refill can be what's holding the song up.
         engine.bufferNote != null -> engine.bufferNote!!
+        // Paused with the DAC handed back, or brought back from last time: Play carries on.
+        parked != null && !engine.isPlaying && !engine.isBuffering -> "Paused · press play to carry on"
         facts == null -> "Threading the tape…"
         else -> summary(facts, engine.outputNote)
     }
     return DeckModel(
         title = t?.displayTitle(tags).orEmpty(),
         subtitle = listOf(t?.displayArtist(tags), t?.displayAlbum(tags)).filter { !it.isNullOrBlank() }.joinToString(" · "),
-        positionMs = engine.positionMs,
-        durationMs = engine.durationMs,
+        positionMs = parked?.positionMs ?: engine.positionMs,
+        durationMs = parked?.durationMs?.takeIf { it > 0 } ?: engine.durationMs,
         playing = engine.isPlaying,
         status = status,
         statusColor = if (engine.error != null) Color(0xFFB4531A) else Retro.OnMetalMuted,
@@ -567,7 +581,7 @@ private fun BrowserCard(
         snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }
             .collect { (i, o) -> vm.saveScroll(scrollKey, i, o) }
     }
-    val headerItems = if (state.path.size > 1) 2 else 1
+    val headerItems = if (state.path.size > 1) 1 else 0
     val letters = remember(state.entries, tags, ready) {
         if (!ready || state.entries.size < LETTERS_FROM) emptyList()
         else letterIndex(state.entries.map { e -> if (e is Entry.Song) e.track.displayTitle(tags) else e.name }, headerItems)
@@ -579,9 +593,11 @@ private fun BrowserCard(
     val cover by produceState<ImageBitmap?>(null, firstSong?.track?.id) {
         value = firstSong?.let { ArtworkStore.load(context, it.track)?.asImageBitmap() }
     }
-    JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier, art = cover, listState = list, letters = letters) {
-        // Searches this folder and everything in it; open it in the music folder to skip the rest of the share.
-        item { JCardRow("⌕", if (state.path.size > 1) "Search ${state.currentName}…" else "Search ${state.browser.title.lowercase()}…", onClick = { vm.openSearch(isNas) }) }
+    JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier, art = cover, listState = list, letters = letters, pinned = {
+        // Always in reach, however far down the folder is scrolled. Searches this folder and
+        // everything in it; open it in the music folder to skip the rest of the share.
+        SearchBar(if (state.path.size > 1) "Search ${state.currentName}…" else "Search ${state.browser.title.lowercase()}…") { vm.openSearch(isNas) }
+    }) {
         if (state.path.size > 1) item { JCardRow("‹", "Back to ${state.path[state.path.size - 2].first}", onClick = onUp) }
         when {
             state.loading -> item { JCardNote("Reading…") }
@@ -719,13 +735,13 @@ private fun NowPlayingPager(
 private class QueueSlot(val track: io.github.momonekomata.sidea.sources.Track, val key: Long)
 
 /**
- * One list, like Apple Music's: what played above (scroll up for more), the song playing in the
- * middle, and up next below it. Swipe an up-next song left to take it out; long-press and drag
- * to move it.
+ * The queue as Apple Music lays it out: shuffle, repeat and clear always on top; what played
+ * above (scroll up for more), the song playing with its cover, then Playing Next. Drag an up-next
+ * song by its handle to move it, swipe it left to take it out, long-press it for more.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
+private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Tags>, art: ImageBitmap?, modifier: Modifier) {
     val played by io.github.momonekomata.sidea.sources.PlayHistory.items.collectAsStateWithLifecycle()
     val current = queue.current
     // Oldest first, ending just above the song playing (which history already holds).
@@ -743,6 +759,7 @@ private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Ta
         }
     }
     val list = rememberLazyListState()
+    // History header + its songs come before the song playing.
     val nowItem = if (past.isNotEmpty()) past.size + 1 else 0
     // Opens on the song playing, history out of sight above it.
     LaunchedEffect(current?.id) { if (dragKey == null && current != null) list.scrollToItem(nowItem) }
@@ -768,10 +785,20 @@ private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Ta
         dragOffset += me.offset - over.offset
     }
 
-    val subtitle = "${past.size} played · ${upcoming.size} up next${if (queue.shuffle) " · shuffled" else ""}"
-    JCard("Queue", subtitle, modifier, listState = list) {
+    JCard("Queue", "${upcoming.size} playing next", modifier, listState = list, pinned = {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            QueueToggle("⇄ Shuffle", queue.shuffle, Modifier.weight(1f), Player::toggleShuffle)
+            val repeat = when (queue.repeat) {
+                io.github.momonekomata.sidea.audio.RepeatMode.OFF -> "↻ Repeat"
+                io.github.momonekomata.sidea.audio.RepeatMode.ALL -> "↻ All"
+                io.github.momonekomata.sidea.audio.RepeatMode.ONE -> "↻ One"
+            }
+            QueueToggle(repeat, queue.repeat != io.github.momonekomata.sidea.audio.RepeatMode.OFF, Modifier.weight(1f), Player::cycleRepeat)
+            QueueToggle("Clear", false, Modifier.weight(0.8f), Player::clearUpcoming)
+        }
+    }) {
         if (past.isNotEmpty()) {
-            item(key = "clear-history") { JCardRow("", "Clear history", onClick = io.github.momonekomata.sidea.sources.PlayHistory::clear) }
+            item(key = "history") { QueueSection("History", "Clear", io.github.momonekomata.sidea.sources.PlayHistory::clear) }
             past.forEachIndexed { i, p ->
                 item(key = "h$i:${p.atMs}") {
                     val f = p.song
@@ -785,17 +812,14 @@ private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Ta
         }
         item(key = "now") {
             if (current == null) {
-                JCardNote("Nothing playing. Play a song, or long-press one and pick Add to queue.")
+                JCardNote("Nothing playing. Play a song, or long-press one and pick Play Next or Play Last.")
             } else {
-                JCardRow(
-                    "▶", current.displayTitle(tags),
-                    "NOW PLAYING · " + listOf(current.displayArtist(tags), current.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "),
-                    current = true,
-                    onLongClick = { vm.openSongMenu(current) },
-                    onClick = {},
-                )
+                NowPlayingRow(current.displayTitle(tags), listOf(current.displayArtist(tags), current.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "), art) {
+                    vm.openSongMenu(current)
+                }
             }
         }
+        if (upcoming.isNotEmpty()) item(key = "next") { QueueSection("Playing Next", null, null) }
         upcoming.forEachIndexed { i, slot ->
             item(key = slot.key) {
                 val dragging = dragKey == slot.key
@@ -812,33 +836,97 @@ private fun QueueCard(vm: MainViewModel, queue: QueueState, tags: Map<String, Ta
                     swipe,
                     enableDismissFromStartToEnd = false,
                     backgroundContent = {
-                        Box(Modifier.fillMaxSize().background(Retro.Orange).padding(end = 18.dp), contentAlignment = Alignment.CenterEnd) {
-                            Text("REMOVE", color = Retro.Cream, fontFamily = Retro.Mono, fontSize = 12.sp)
+                        Box(Modifier.fillMaxSize().background(Color(0xFFD64545)).padding(end = 18.dp), contentAlignment = Alignment.CenterEnd) {
+                            Text("Remove", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     },
                     modifier = Modifier
                         .zIndex(if (dragging) 1f else 0f)
-                        .graphicsLayer { translationY = if (dragging) dragOffset else 0f }
-                        .then(if (dragging) Modifier else Modifier.animateItem())
-                        .pointerInput(slot.key) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { dragKey = slot.key; dragOffset = 0f },
-                                onDrag = { change, d -> change.consume(); drag(d.y) },
-                                onDragEnd = ::commit,
-                                onDragCancel = ::commit,
-                            )
-                        },
+                        .graphicsLayer {
+                            translationY = if (dragging) dragOffset else 0f
+                            shadowElevation = if (dragging) 12f else 0f
+                        }
+                        .then(if (dragging) Modifier else Modifier.animateItem()),
                 ) {
                     val t = slot.track
                     JCardRow(
-                        "%02d".format(i + 1), t.displayTitle(tags), listOf(t.displayArtist(tags), t.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "),
-                        // A long press that turned into a drag isn't a tap.
+                        "", t.displayTitle(tags), listOf(t.displayArtist(tags), t.displayAlbum(tags)).filter { it.isNotBlank() }.joinToString(" · "),
+                        onLongClick = { vm.openSongMenu(t, queueIndex = queue.index + 1 + upcoming.indexOf(slot)) },
+                        trailing = {
+                            // The handle drags at once, as in Apple Music; the rest of the row taps and swipes.
+                            Icon(
+                                Icons.Filled.DragHandle, "Move",
+                                tint = Retro.InkFaint,
+                                modifier = Modifier
+                                    .padding(start = 8.dp)
+                                    .size(28.dp)
+                                    .pointerInput(slot.key) {
+                                        detectDragGestures(
+                                            onDragStart = { dragKey = slot.key; dragOffset = 0f },
+                                            onDrag = { change, d -> change.consume(); drag(d.y) },
+                                            onDragEnd = ::commit,
+                                            onDragCancel = ::commit,
+                                        )
+                                    },
+                            )
+                        },
                         onClick = { if (dragKey == null) Player.jumpTo(queue.index + 1 + upcoming.indexOf(slot)) },
                     )
                 }
             }
         }
-        if (upcoming.isNotEmpty()) item(key = "clear-next") { JCardRow("", "Clear up next", onClick = Player::clearUpcoming) }
+    }
+}
+
+/** A button along the top of the queue, lit when it's on. */
+@Composable
+private fun QueueToggle(label: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (on) Retro.Orange else Retro.CreamShade)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = if (on) Color.White else Retro.Ink, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+    }
+}
+
+/** "History", "Playing Next": a heading in the list, with an optional action at the end. */
+@Composable
+private fun QueueSection(title: String, action: String?, onAction: (() -> Unit)?) {
+    Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, color = Retro.Ink, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f))
+        if (action != null && onAction != null) {
+            Text(action, color = Retro.Orange, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onAction).padding(6.dp))
+        }
+    }
+}
+
+/** The song playing, larger and with its cover, between what played and what's next. */
+@Composable
+private fun NowPlayingRow(title: String, detail: String, art: ImageBitmap?, onLongClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Retro.Orange.copy(alpha = 0.16f))
+            .pointerInput(Unit) { detectTapGestures(onLongPress = { onLongClick() }) }
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (art != null) {
+            Image(art, "Cover", contentScale = ContentScale.Crop, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(4.dp)))
+        } else {
+            Box(Modifier.size(52.dp).clip(RoundedCornerShape(4.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
+                Text("▶", color = Retro.Orange, fontSize = 20.sp)
+            }
+        }
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text("NOW PLAYING", color = Retro.Orange, fontFamily = Retro.Mono, fontSize = 10.sp, letterSpacing = 2.sp)
+            Text(title, color = Retro.Ink, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (detail.isNotBlank()) Text(detail, color = Retro.InkFaint, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -928,5 +1016,23 @@ private fun agoText(atMs: Long): String {
         m < 60 -> "$m min ago"
         m < 60 * 24 -> "${m / 60} h ago"
         else -> "${m / (60 * 24)} days ago"
+    }
+}
+
+/** A search field drawn on the card; tapping it opens the search. */
+@Composable
+private fun SearchBar(hint: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Retro.CreamShade)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.Search, null, tint = Retro.InkFaint, modifier = Modifier.size(18.dp))
+        Text(hint, color = Retro.InkFaint, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp))
     }
 }

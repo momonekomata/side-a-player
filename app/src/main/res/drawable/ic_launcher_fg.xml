@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WALKDECK: a portable cassette player seen from the front. Silver body with two keys on top
+  (the orange one is PLAY), a dark window with the tape's two reels, and the orange stripe.
+  Kept inside the adaptive icon's safe zone (the middle 66 of 108).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Keys standing up from the top edge. -->
+    <path android:fillColor="#8C939C" android:pathData="M38,25h11v6h-11z" />
+    <path android:fillColor="#E8742A" android:pathData="M52,24h14v7h-14z" />
+    <!-- Body: brushed silver, a little darker along the bottom. -->
+    <path android:fillColor="#C9CED5" android:pathData="M27,29h54a5,5 0,0 1,5 5v40a5,5 0,0 1,-5 5h-54a5,5 0,0 1,-5 -5v-40a5,5 0,0 1,5 -5z" />
+    <path android:fillColor="#AEB4BC" android:pathData="M22,66h64v8a5,5 0,0 1,-5 5h-54a5,5 0,0 1,-5 -5z" />
+    <path android:fillColor="#E9ECEF" android:pathData="M27,29h54a5,5 0,0 1,5 5v1h-64v-1a5,5 0,0 1,5 -5z" />
+    <!-- The cassette window. -->
+    <path android:fillColor="#1A1F27" android:pathData="M31,37h46a3,3 0,0 1,3 3v18a3,3 0,0 1,-3 3h-46a3,3 0,0 1,-3 -3v-18a3,3 0,0 1,3 -3z" />
+    <!-- Tape between the reels. -->
+    <path android:fillColor="#5A3E2B" android:pathData="M42,54h24v3h-24z" />
+    <!-- Reels with their hubs. -->
+    <path android:fillColor="#C9CED5" android:pathData="M42,49m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path android:fillColor="#C9CED5" android:pathData="M66,49m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path android:fillColor="#1A1F27" android:pathData="M42,49m-2.6,0a2.6,2.6 0,1 1,5.2 0a2.6,2.6 0,1 1,-5.2 0" />
+    <path android:fillColor="#1A1F27" android:pathData="M66,49m-2.6,0a2.6,2.6 0,1 1,5.2 0a2.6,2.6 0,1 1,-5.2 0" />
+    <!-- The orange stripe and the volume wheel's edge. -->
+    <path android:fillColor="#E8742A" android:pathData="M30,68h26v3h-26z" />
+    <path android:fillColor="#6E757F" android:pathData="M70,66h8v10h-8z" />
+    <path android:fillColor="#8C939C" android:pathData="M70,68h8v1h-8z M70,71h8v1h-8z M70,74h8v1h-8z" />
+</vector>
