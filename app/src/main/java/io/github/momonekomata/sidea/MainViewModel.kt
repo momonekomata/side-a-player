@@ -522,6 +522,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun playFavorites(index: Int) = playSaved(_favorites.value, index)
 
+    /** The 50 songs played most, from anywhere, for the Favourites tab. */
+    val mostPlayed: StateFlow<List<io.github.momonekomata.sidea.library.LibraryDb.Played>> by lazy {
+        library // opens the database
+        val flow = MutableStateFlow<List<io.github.momonekomata.sidea.library.LibraryDb.Played>>(emptyList())
+        viewModelScope.launch {
+            io.github.momonekomata.sidea.library.Library.version.collectLatest {
+                flow.value = withContext(Dispatchers.IO) { io.github.momonekomata.sidea.library.Library.db.mostPlayed(50) }
+            }
+        }
+        flow.asStateFlow()
+    }
+
+    fun playMostPlayed(index: Int) = playSaved(mostPlayed.value.map { Favorite(it.id, it.title, it.artist, it.album, it.size) }, index)
+
     /** Plays one song from the history. */
     fun playPlayed(f: Favorite) = playSaved(listOf(f), 0)
 

@@ -256,7 +256,7 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
     ) {
         Crossfade(model.showLyrics, label = "art-lyrics") { lyricsSide ->
             if (lyricsSide) {
-                LyricsSquare(model.lyrics, model.positionMs, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize())
+                LyricsSquare(model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize())
             } else {
                 val art = model.art
                 if (art != null) {

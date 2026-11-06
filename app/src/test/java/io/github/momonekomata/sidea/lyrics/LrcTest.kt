@@ -63,4 +63,39 @@ class LrcTest {
         assertFalse(back.synced)
         assertEquals(listOf("One", "Two"), back.lines.map { it.text })
     }
+
+    @Test
+    fun enhancedLrcKeepsWordTimesAndFormatsThemBack() {
+        val l = Lrc.parse("[00:10.00]<00:10.00>Hello <00:10.50>bright <00:11.20>world<00:12.00>\n[00:13.00]Next", "LRCLIB")!!
+        val first = l.lines[0]
+        assertEquals("Hello bright world", first.text)
+        assertEquals(listOf(WordTime(0, 10_000), WordTime(6, 10_500), WordTime(13, 11_200)), first.words)
+        val back = Lrc.parse(Lrc.format(l, "", "", ""), ".lrc file")!!
+        assertEquals(l.lines, back.lines)
+    }
+
+    @Test
+    fun karaokeFollowsWordsWhenThereAreSome() {
+        val l = Lrc.parse("[00:10.00]<00:10.00>Hello <00:10.50>bright <00:11.20>world\n[00:13.00]Next", "x")!!
+        assertEquals(0f, l.sungChars(0, 9_000), 0.01f)
+        assertEquals(3f, l.sungChars(0, 10_250), 0.01f) // half of "Hello "
+        assertEquals(6f, l.sungChars(0, 10_500), 0.01f) // "bright" starts
+        assertEquals(18f, l.sungChars(0, 13_000), 0.01f) // done
+    }
+
+    @Test
+    fun karaokeSpreadsALineWithoutWordsOverItsTime() {
+        // Japanese: no spaces, so the sweep goes character by character.
+        val l = Lrc.parse("[00:20.00]さくらさくら\n[00:23.00]次", "x")!!
+        assertEquals(3f, l.sungChars(0, 21_500), 0.01f)
+        assertEquals(6f, l.sungChars(0, 23_000), 0.01f)
+    }
+
+    @Test
+    fun aLongBreakAfterALineDoesntStretchItsSweep() {
+        val l = Lrc.parse("[00:10.00]Hi\n[01:00.00]After the solo", "x")!!
+        // "Hi" is done within 3 s, not over the 50 s until the next line.
+        assertEquals(1f, l.sungChars(0, 11_500), 0.01f)
+        assertEquals(2f, l.sungChars(0, 13_100), 0.01f)
+    }
 }

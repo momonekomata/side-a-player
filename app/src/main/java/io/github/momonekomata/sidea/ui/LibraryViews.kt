@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +54,7 @@ import io.github.momonekomata.sidea.audio.SignalPaths
 import io.github.momonekomata.sidea.library.LibAlbum
 import io.github.momonekomata.sidea.library.LibDrill
 import io.github.momonekomata.sidea.library.LibFacets
+import io.github.momonekomata.sidea.library.INSPECT
 import io.github.momonekomata.sidea.library.LibFilter
 import io.github.momonekomata.sidea.library.LibSegment
 import io.github.momonekomata.sidea.library.LibTrack
@@ -78,6 +81,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, pickFolder: () -> Unit, mo
     val ui by model.ui.collectAsStateWithLifecycle()
     val scan by Library.scan.collectAsStateWithLifecycle()
     var filtering by remember { mutableStateOf(false) }
+    var grid by rememberSaveable { mutableStateOf(true) }
     val top = ui.stack.lastOrNull()
     val view = ui.view
     val list = rememberLazyListState()
@@ -92,7 +96,15 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, pickFolder: () -> Unit, mo
     val labels: List<String> = view.artists?.map { it.name } ?: view.albums?.map { it.title } ?: view.tracks?.takeIf { !view.albumOrder }?.map { it.title } ?: view.genres?.map { it.name } ?: emptyList()
     // Rows above the list itself: Back, and Play/Shuffle under an artist or genre.
     val above = (if (top != null) 1 else 0) + (if (top is LibDrill.Artist || top is LibDrill.Genre) 1 else 0)
-    val letters = remember(labels, above) { if (labels.size < 20) emptyList() else letterIndex(labels, above) }
+    val gridded = grid && view.albums != null
+    val letters = remember(labels, above, gridded) {
+        when {
+            labels.size < 20 -> emptyList()
+            // Three albums to a row in the grid.
+            gridded -> letterIndex(labels, 0).map { (c, i) -> c to above + i / 3 }
+            else -> letterIndex(labels, above)
+        }
+    }
 
     JCard(top?.title ?: "Library", subtitle, modifier, listState = list, letters = letters, pinned = {
         Column {
@@ -112,10 +124,11 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, pickFolder: () -> Unit, mo
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 LibSegment.entries.forEach { s -> Chip(s.label, ui.segment == s && top == null) { model.segment(s) } }
-                Chip(if (ui.filter.count > 0) "Filter · ${ui.filter.count}" else "Filter", ui.filter.count > 0) {
+                Chip(if (ui.filter.count > 0) "Focus · ${ui.filter.count}" else "Focus", ui.filter.count > 0) {
                     model.loadFacets()
                     filtering = true
                 }
+                if (view.albums != null) Chip(if (grid) "☰ List" else "▦ Grid", false) { grid = !grid }
             }
         }
     }) {
@@ -140,7 +153,21 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, pickFolder: () -> Unit, mo
                 )
             }
         }
-        view.albums?.forEach { al -> item(key = "al:" + al.key) { AlbumRow(model, al, showBy = top !is LibDrill.Artist) { model.open(LibDrill.Album(al.key, al.title, al.by)) } } }
+        view.albums?.let { albums ->
+            if (grid) {
+                // Three covers to a row: about 120 dp each on the phone's width.
+                albums.chunked(3).forEachIndexed { r, row ->
+                    item(key = "alg:$r:" + row.first().key) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            row.forEach { al -> AlbumTile(model, al, showBy = top !is LibDrill.Artist, Modifier.weight(1f)) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
+                            repeat(3 - row.size) { Box(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+            } else {
+                albums.forEach { al -> item(key = "al:" + al.key) { AlbumRow(model, al, showBy = top !is LibDrill.Artist) { model.open(LibDrill.Album(al.key, al.title, al.by)) } } }
+            }
+        }
         view.tracks?.let { tracks ->
             if (view.albumOrder && tracks.isNotEmpty()) {
                 item(key = "albumhead") {
@@ -238,14 +265,41 @@ private fun PlayRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
     }
 }
 
-/** An album: its cover (read the first time it's on screen), title, who by, year and format. */
+/** An album's cover, read the first time it's on screen. */
 @Composable
-private fun AlbumRow(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, onClick: () -> Unit) {
+private fun albumCover(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum): ImageBitmap? {
     val context = LocalContext.current
     val cover by produceState<ImageBitmap?>(null, al.sampleId) {
         val track = withContext(Dispatchers.IO) { Library.db.tracks(LibFilter(), album = al.key, limit = 1).firstOrNull()?.let(model::trackOf) }
         value = track?.let { ArtworkStore.load(context, it)?.asImageBitmap() }
     }
+    return cover
+}
+
+/** An album in the grid: a big square cover with the title and who it's by under it. */
+@Composable
+private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val cover = albumCover(model, al)
+    Column(modifier.clickable(onClick = onClick)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(4.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
+            if (cover != null) {
+                Image(cover, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
+            } else {
+                Text(al.title.take(1).uppercase(), color = Retro.InkFaint, fontWeight = FontWeight.Bold, fontSize = 28.sp)
+            }
+        }
+        Text(al.title, color = Retro.Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+        Text(
+            listOfNotNull(al.by.takeIf { showBy }, al.year?.toString().takeIf { !showBy }).joinToString(" · ").ifBlank { formatLabel(al.codec, al.bestRate, al.bestBits) },
+            color = Retro.InkFaint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** An album in the list: its cover, title, who by, year and format. */
+@Composable
+private fun AlbumRow(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, onClick: () -> Unit) {
+    val cover = albumCover(model, al)
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -266,53 +320,69 @@ private fun AlbumRow(model: io.github.momonekomata.sidea.library.LibraryModel, a
     }
 }
 
-/** Every filter the Library has, from what's actually in it. */
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * Focus, after Roon's: every way to narrow the Library that its scan can back up, with counts
+ * from what's actually in it. Each section shows its top few; View more shows the rest.
+ */
 @Composable
 private fun FilterSheet(current: LibFilter, facets: LibFacets?, sources: List<Pair<String, String>>, onApply: (LibFilter) -> Unit, onDismiss: () -> Unit) {
     var f by remember(current) { mutableStateOf(current) }
     var from by remember(current) { mutableStateOf(current.yearFrom?.toString().orEmpty()) }
     var to by remember(current) { mutableStateOf(current.yearTo?.toString().orEmpty()) }
+    val periods = listOf(1 to "Day", 7 to "Week", 30 to "Month", 91 to "3 months", 182 to "6 months", 365 to "Year")
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Filter the Library") },
+        title = { Text("Focus") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (facets == null) {
                     Text("Reading what's in the Library…")
                     return@Column
                 }
                 LabeledSwitch("Lossless only", f.losslessOnly) { f = f.copy(losslessOnly = it) }
-                Section("Format") {
-                    facets.codecs.forEach { c -> Toggle(c, c in f.codecs) { f = f.copy(codecs = f.codecs.flip(c)) } }
-                }
-                Section("Sample rate") {
-                    facets.rates.forEach { r ->
-                        val label = if (r >= 2_822_400) "DSD${r / 44_100}" else SignalPaths.khz(r)
-                        Toggle(label, r in f.rates) { f = f.copy(rates = f.rates.flip(r)) }
+                Facet("Genres", facets.genres) { (g, n) -> Toggle("$g ($n)", g in f.genres) { f = f.copy(genres = f.genres.flip(g)) } }
+                if (facets.decades.isNotEmpty()) {
+                    Facet("Release date", facets.decades) { (d, n) ->
+                        Toggle("${d}s ($n)", from == "$d" && to == "${d + 9}") {
+                            if (from == "$d" && to == "${d + 9}") { from = ""; to = "" } else { from = "$d"; to = "${d + 9}" }
+                        }
                     }
-                }
-                Section("Bit depth") {
-                    facets.bits.forEach { b -> Toggle(if (b == 1) "1-bit (DSD)" else "$b-bit", b in f.bits) { f = f.copy(bits = f.bits.flip(b)) } }
-                }
-                facets.years?.let { years ->
-                    Text("Year (${years.first}–${years.last})", fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(from, { from = it.filter(Char::isDigit).take(4) }, label = { Text("From") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                        OutlinedTextField(to, { to = it.filter(Char::isDigit).take(4) }, label = { Text("To") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        // Decades, for a quick pick.
-                        (years.first / 10 * 10..years.last step 10).toList().takeLast(6).forEach { d ->
-                            Toggle("${d % 100}s".padStart(3, '0'), from == "$d" && to == "${d + 9}") { from = "$d"; to = "${d + 9}" }
+                    facets.years?.let { years ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(from, { from = it.filter(Char::isDigit).take(4) }, label = { Text("From ${years.first}") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                            OutlinedTextField(to, { to = it.filter(Char::isDigit).take(4) }, label = { Text("To ${years.last}") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                         }
                     }
                 }
-                Section("Genre") {
-                    facets.genres.take(40).forEach { (g, n) -> Toggle("$g · $n", g in f.genres) { f = f.copy(genres = f.genres.flip(g)) } }
+                Facet("Performers", facets.artists) { (a, n) -> Toggle("$a ($n)", a in f.artists) { f = f.copy(artists = f.artists.flip(a)) } }
+                Facet("Composers", facets.composers) { (c, n) -> Toggle("$c ($n)", c in f.composers) { f = f.copy(composers = f.composers.flip(c)) } }
+                Facet("Labels", facets.labels) { (l, n) -> Toggle("$l ($n)", l in f.labels) { f = f.copy(labels = f.labels.flip(l)) } }
+                if (facets.played > 0) {
+                    Facet("Most played", listOf(25, 50, 100, 250, 500, 1000).filter { it / 2 < facets.played }) { n ->
+                        Toggle("Top $n played", f.topPlayed == n) { f = f.copy(topPlayed = if (f.topPlayed == n) null else n) }
+                    }
+                    Facet("Played in the last", periods) { (d, label) ->
+                        Toggle(label, f.playedWithinDays == d) { f = f.copy(playedWithinDays = if (f.playedWithinDays == d) null else d) }
+                    }
+                }
+                Facet("Added in the last", periods) { (d, label) ->
+                    Toggle(label, f.addedWithinDays == d) { f = f.copy(addedWithinDays = if (f.addedWithinDays == d) null else d) }
+                }
+                if (facets.compilations > 0) {
+                    Facet("Other", listOf(Unit)) { Toggle("Compilation (${facets.compilations})", f.compilationsOnly) { f = f.copy(compilationsOnly = !f.compilationsOnly) } }
                 }
                 if (sources.size > 1) {
-                    Section("Source") { sources.forEach { (id, name) -> Toggle(name, id in f.sources) { f = f.copy(sources = f.sources.flip(id)) } } }
+                    Facet("Storage locations", sources) { (id, name) -> Toggle(name, id in f.sources) { f = f.copy(sources = f.sources.flip(id)) } }
+                }
+                Facet("Inspector", INSPECT.entries.toList()) { (k, label) -> Toggle(label, k in f.inspect) { f = f.copy(inspect = f.inspect.flip(k)) } }
+                Facet("Format", facets.codecs) { (c, n) -> Toggle("$c ($n)", c in f.codecs) { f = f.copy(codecs = f.codecs.flip(c)) } }
+                Facet("Sample rate", facets.rates) { (r, n) ->
+                    val label = if (r >= 2_822_400) "DSD${r / 44_100}" else SignalPaths.khz(r)
+                    Toggle("$label ($n)", r in f.rates) { f = f.copy(rates = f.rates.flip(r)) }
+                }
+                Facet("Bit depth", facets.bits) { (b, n) -> Toggle((if (b == 1) "DSD" else "$b-bit") + " ($n)", b in f.bits) { f = f.copy(bits = f.bits.flip(b)) } }
+                Facet("Channel layout", facets.channels) { (c, n) ->
+                    Toggle((when (c) { 1 -> "1.0 mono"; 2 -> "2.0 stereo"; else -> "Multichannel" }) + " ($n)", c in f.channels) { f = f.copy(channels = f.channels.flip(c)) }
                 }
             }
         },
@@ -325,11 +395,19 @@ private fun FilterSheet(current: LibFilter, facets: LibFacets?, sources: List<Pa
     )
 }
 
+/** A Focus section: its title, the first six choices, and View more for the rest. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
-    Text(title, fontWeight = FontWeight.Bold)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) { content() }
+private fun <T> Facet(title: String, items: List<T>, item: @Composable (T) -> Unit) {
+    if (items.isEmpty()) return
+    var all by remember { mutableStateOf(false) }
+    Text(title.uppercase(), fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp, modifier = Modifier.padding(top = 4.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        (if (all) items else items.take(6)).forEach { item(it) }
+    }
+    if (items.size > 6) {
+        Text(if (all) "View less" else "View more (${items.size - 6})", color = Retro.Orange, fontSize = 12.sp, modifier = Modifier.clickable { all = !all }.padding(vertical = 2.dp))
+    }
 }
 
 @Composable

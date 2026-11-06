@@ -27,6 +27,9 @@ data class LibTrack(
     val sampleRate: Int,
     val bits: Int?,
     val channels: Int,
+    val composer: String = "",
+    val label: String = "",
+    val compilation: Boolean = false,
 ) {
     /** Who the album is by: the album artist, else the track's artist. */
     val albumBy: String get() = albumArtist.ifBlank { artist }.ifBlank { UNKNOWN_ARTIST }
@@ -54,6 +57,19 @@ data class LibGenre(val name: String, val tracks: Int, val albums: Int)
  */
 data class LibFilter(
     val query: String = "",
+    /** Performers: the track's own artist. */
+    val artists: Set<String> = emptySet(),
+    val composers: Set<String> = emptySet(),
+    val labels: Set<String> = emptySet(),
+    /** 1 for mono, 2 for stereo, 3 for anything with more. */
+    val channels: Set<Int> = emptySet(),
+    val compilationsOnly: Boolean = false,
+    /** Only the N most played songs. */
+    val topPlayed: Int? = null,
+    val playedWithinDays: Int? = null,
+    val addedWithinDays: Int? = null,
+    /** Inspector checks: see [INSPECT]. */
+    val inspect: Set<String> = emptySet(),
     val genres: Set<String> = emptySet(),
     val codecs: Set<String> = emptySet(),
     val rates: Set<Int> = emptySet(),
@@ -64,28 +80,87 @@ data class LibFilter(
     val losslessOnly: Boolean = false,
 ) {
     /** How many filters (not the search) are set, for the Filter button. */
-    val count get() = listOf(genres.isNotEmpty(), codecs.isNotEmpty(), rates.isNotEmpty(), bits.isNotEmpty(), sources.isNotEmpty(), yearFrom != null || yearTo != null, losslessOnly).count { it }
+    val count get() = listOf(
+        genres.isNotEmpty(), codecs.isNotEmpty(), rates.isNotEmpty(), bits.isNotEmpty(), sources.isNotEmpty(),
+        yearFrom != null || yearTo != null, losslessOnly, artists.isNotEmpty(), composers.isNotEmpty(), labels.isNotEmpty(),
+        channels.isNotEmpty(), compilationsOnly, topPlayed != null, playedWithinDays != null, addedWithinDays != null,
+    ).count { it } + inspect.size
 }
 
-/** Everything the filter sheet can offer, from what's actually in the Library. */
-data class LibFacets(val genres: List<Pair<String, Int>>, val codecs: List<String>, val rates: List<Int>, val bits: List<Int>, val years: IntRange?)
+/** The inspector's checks, by key: what each finds. */
+val INSPECT = linkedMapOf(
+    "nogenre" to "No genre",
+    "nodate" to "No year",
+    "noartist" to "No artist",
+    "untagged" to "Untagged (title from the file name)",
+    "dupes" to "Duplicates",
+    "multiformat" to "Albums in several formats",
+)
 
-class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null, 1) {
+/** Everything the filter sheet can offer, from what's actually in the Library. */
+data class LibFacets(
+    val genres: List<Pair<String, Int>>,
+    val codecs: List<Pair<String, Int>>,
+    val rates: List<Pair<Int, Int>>,
+    val bits: List<Pair<Int, Int>>,
+    val years: IntRange?,
+    val decades: List<Pair<Int, Int>>,
+    val artists: List<Pair<String, Int>>,
+    val composers: List<Pair<String, Int>>,
+    val labels: List<Pair<String, Int>>,
+    val channels: List<Pair<Int, Int>>,
+    val compilations: Int,
+    val played: Int,
+)
+
+class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE tracks (
                 id TEXT PRIMARY KEY, source TEXT NOT NULL, folder TEXT, folderName TEXT, file TEXT, size INTEGER,
                 title TEXT, artist TEXT, albumArtist TEXT, album TEXT, genre TEXT, year INTEGER, track INTEGER, disc INTEGER,
                 duration INTEGER, codec TEXT, rate INTEGER, bits INTEGER, channels INTEGER,
-                albumBy TEXT, haystack TEXT, probed INTEGER, seen INTEGER, added INTEGER)""",
+                albumBy TEXT, haystack TEXT, probed INTEGER, seen INTEGER, added INTEGER,
+                composer TEXT, label TEXT, compilation INTEGER)""",
         )
+        createPlays(db)
         db.execSQL("CREATE INDEX t_source ON tracks(source)")
         db.execSQL("CREATE INDEX t_albumBy ON tracks(albumBy COLLATE NOCASE)")
         db.execSQL("CREATE INDEX t_album ON tracks(album COLLATE NOCASE)")
         db.execSQL("CREATE INDEX t_genre ON tracks(genre COLLATE NOCASE)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE tracks ADD COLUMN composer TEXT")
+            db.execSQL("ALTER TABLE tracks ADD COLUMN label TEXT")
+            db.execSQL("ALTER TABLE tracks ADD COLUMN compilation INTEGER")
+            // The next scan reads every song again, for the tags read now that weren't before.
+            db.execSQL("UPDATE tracks SET probed = 0")
+            createPlays(db)
+        }
+    }
+
+    /** Plays of any song, in the Library or not: how many, the last one, and its names to show. */
+    private fun createPlays(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS plays (id TEXT PRIMARY KEY, count INTEGER, last INTEGER, title TEXT, artist TEXT, album TEXT, size INTEGER)")
+    }
+
+    // ---- plays ----
+
+    fun played(id: String, title: String, artist: String, album: String, size: Long) {
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        // Two statements rather than an upsert, which Android 10's SQLite doesn't have.
+        db.execSQL("INSERT OR IGNORE INTO plays (id, count, last, title, artist, album, size) VALUES (?, 0, ?, ?, ?, ?, ?)", arrayOf(id, now, title, artist, album, size))
+        db.execSQL("UPDATE plays SET count = count + 1, last = ?, title = ?, artist = ?, album = ? WHERE id = ?", arrayOf(now, title, artist, album, id))
+    }
+
+    data class Played(val id: String, val count: Int, val last: Long, val title: String, val artist: String, val album: String, val size: Long)
+
+    fun mostPlayed(n: Int): List<Played> = readableDatabase.rawQuery(
+        "SELECT id, count, last, title, artist, album, size FROM plays ORDER BY count DESC, last DESC LIMIT $n", null,
+    ).use { c -> buildList { while (c.moveToNext()) add(Played(c.getString(0), c.getInt(1), c.getLong(2), c.getString(3).orEmpty(), c.getString(4).orEmpty(), c.getString(5).orEmpty(), c.getLong(6))) } }
 
     // ---- writing, for the scanner ----
 
@@ -126,7 +201,8 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
                     put("albumArtist", t.albumArtist); put("album", t.album); put("genre", t.genre); put("year", t.year)
                     put("track", t.track); put("disc", t.disc); put("duration", t.durationMs); put("codec", t.codec)
                     put("rate", t.sampleRate); put("bits", t.bits); put("channels", t.channels); put("albumBy", t.albumBy)
-                    put("haystack", listOf(t.title, t.artist, t.albumArtist, t.album, t.genre, t.file, t.folderName, t.codec, t.year?.toString().orEmpty()).joinToString(" ").lowercase())
+                    put("composer", t.composer); put("label", t.label); put("compilation", if (t.compilation) 1 else 0)
+                    put("haystack", listOf(t.title, t.artist, t.albumArtist, t.album, t.genre, t.composer, t.label, t.file, t.folderName, t.codec, t.year?.toString().orEmpty()).joinToString(" ").lowercase())
                     put("probed", if (probed[i]) 1 else 0); put("seen", generation)
                 }
                 // Keep when it was first added across rescans.
@@ -178,6 +254,24 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
         f.yearFrom?.let { parts += "year >= ?"; args += it.toString() }
         f.yearTo?.let { parts += "year <= ?"; args += it.toString() }
         if (f.losslessOnly) parts += "codec IN ('FLAC','ALAC','WAV','AIFF','DSD')"
+        inSet("artist", f.artists)
+        inSet("composer", f.composers)
+        inSet("label", f.labels)
+        if (f.channels.isNotEmpty()) {
+            parts += "(" + f.channels.joinToString(" OR ") { if (it >= 3) "channels >= 3" else "channels = $it" } + ")"
+        }
+        if (f.compilationsOnly) parts += "compilation = 1"
+        f.topPlayed?.let { parts += "id IN (SELECT id FROM plays ORDER BY count DESC LIMIT $it)" }
+        f.playedWithinDays?.let { parts += "id IN (SELECT id FROM plays WHERE last >= ?)"; args += (System.currentTimeMillis() - it * 86_400_000L).toString() }
+        f.addedWithinDays?.let { parts += "added >= ?"; args += (System.currentTimeMillis() - it * 86_400_000L).toString() }
+        for (k in f.inspect) when (k) {
+            "nogenre" -> parts += "(genre IS NULL OR genre = '')"
+            "nodate" -> parts += "year IS NULL"
+            "noartist" -> parts += "(artist IS NULL OR artist = '')"
+            "untagged" -> parts += "(artist IS NULL OR artist = '') AND (genre IS NULL OR genre = '') AND year IS NULL"
+            "dupes" -> parts += "(lower(title) || char(1) || lower(albumBy)) IN (SELECT lower(title) || char(1) || lower(albumBy) FROM tracks GROUP BY 1 HAVING count(*) > 1)"
+            "multiformat" -> parts += "(albumBy || char(1) || album) IN (SELECT albumBy || char(1) || album FROM tracks GROUP BY 1 HAVING count(DISTINCT codec) > 1)"
+        }
         for ((clause, arg) in extra) {
             parts += clause
             if (arg != null) args += arg
@@ -191,10 +285,10 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
         albumArtist = getString(8).orEmpty(), album = getString(9).orEmpty(), genre = getString(10).orEmpty(),
         year = if (isNull(11)) null else getInt(11), track = if (isNull(12)) null else getInt(12), disc = if (isNull(13)) null else getInt(13),
         durationMs = getLong(14), codec = getString(15).orEmpty(), sampleRate = getInt(16), bits = if (isNull(17)) null else getInt(17),
-        channels = getInt(18),
+        channels = getInt(18), composer = getString(19).orEmpty(), label = getString(20).orEmpty(), compilation = getInt(21) != 0,
     )
 
-    private val trackCols = "id, source, folder, folderName, file, size, title, artist, albumArtist, album, genre, year, track, disc, duration, codec, rate, bits, channels"
+    private val trackCols = "id, source, folder, folderName, file, size, title, artist, albumArtist, album, genre, year, track, disc, duration, codec, rate, bits, channels, composer, label, compilation"
 
     /** Songs matching [f], in title order, or album order when [album] is given. */
     fun tracks(f: LibFilter, artist: String? = null, album: String? = null, genre: String? = null, source: String? = null, limit: Int = 20_000): List<LibTrack> {
@@ -259,20 +353,27 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
 
     fun facets(): LibFacets {
         val db = readableDatabase
-        val genres = db.rawQuery("SELECT genre, count(*) FROM tracks GROUP BY genre COLLATE NOCASE ORDER BY count(*) DESC", null).use { c ->
-            buildList { while (c.moveToNext()) add(c.getString(0).orEmpty().ifBlank { UNKNOWN_GENRE } to c.getInt(1)) }
+        fun <T> counted(sql: String, value: (Cursor) -> T?): List<Pair<T, Int>> = db.rawQuery(sql, null).use { c ->
+            buildList { while (c.moveToNext()) value(c)?.let { add(it to c.getInt(1)) } }
         }
-        fun strings(sql: String) = db.rawQuery(sql, null).use { c -> buildList { while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let(::add) } }
-        fun ints(sql: String) = db.rawQuery(sql, null).use { c -> buildList { while (c.moveToNext()) if (!c.isNull(0)) add(c.getInt(0)) } }
+        val text = { c: Cursor -> c.getString(0)?.takeIf { it.isNotBlank() } }
+        val number = { c: Cursor -> if (c.isNull(0)) null else c.getInt(0) }
         val years = db.rawQuery("SELECT min(year), max(year) FROM tracks WHERE year IS NOT NULL", null).use { c ->
             if (c.moveToFirst() && !c.isNull(0)) c.getInt(0)..c.getInt(1) else null
         }
         return LibFacets(
-            genres,
-            strings("SELECT DISTINCT codec FROM tracks ORDER BY codec"),
-            ints("SELECT DISTINCT rate FROM tracks WHERE rate > 0 ORDER BY rate"),
-            ints("SELECT DISTINCT bits FROM tracks WHERE bits IS NOT NULL ORDER BY bits"),
-            years,
+            genres = counted("SELECT genre, count(*) FROM tracks GROUP BY genre COLLATE NOCASE ORDER BY count(*) DESC") { it.getString(0).orEmpty().ifBlank { UNKNOWN_GENRE } },
+            codecs = counted("SELECT codec, count(*) FROM tracks GROUP BY codec ORDER BY count(*) DESC", text),
+            rates = counted("SELECT rate, count(*) FROM tracks WHERE rate > 0 GROUP BY rate ORDER BY rate", number),
+            bits = counted("SELECT bits, count(*) FROM tracks WHERE bits IS NOT NULL GROUP BY bits ORDER BY bits", number),
+            years = years,
+            decades = counted("SELECT year / 10 * 10, count(*) FROM tracks WHERE year IS NOT NULL GROUP BY 1 ORDER BY 1", number),
+            artists = counted("SELECT artist, count(*) FROM tracks WHERE artist <> '' GROUP BY artist COLLATE NOCASE ORDER BY count(*) DESC LIMIT 200", text),
+            composers = counted("SELECT composer, count(*) FROM tracks WHERE composer <> '' GROUP BY composer COLLATE NOCASE ORDER BY count(*) DESC LIMIT 200", text),
+            labels = counted("SELECT label, count(*) FROM tracks WHERE label <> '' GROUP BY label COLLATE NOCASE ORDER BY count(*) DESC LIMIT 200", text),
+            channels = counted("SELECT CASE WHEN channels >= 3 THEN 3 ELSE channels END, count(*) FROM tracks WHERE channels > 0 GROUP BY 1 ORDER BY 1", number),
+            compilations = db.rawQuery("SELECT count(*) FROM tracks WHERE compilation = 1", null).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 },
+            played = db.rawQuery("SELECT count(*) FROM plays", null).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 },
         )
     }
 }

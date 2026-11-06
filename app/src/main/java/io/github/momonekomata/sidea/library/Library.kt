@@ -231,7 +231,19 @@ object Library {
             genre = tags?.genre.orEmpty(), year = tags?.year, track = tags?.trackNumber, disc = tags?.discNumber,
             durationMs = format?.durationMs ?: 0, codec = codec, sampleRate = format?.sampleRate ?: 0,
             bits = format?.bits, channels = format?.channels ?: 0,
+            composer = tags?.composer.orEmpty(), label = tags?.label.orEmpty(), compilation = tags?.compilation == true,
         ) to (ra != null)
+    }
+
+    // ---- plays ----
+
+    /** A song started playing (from anywhere): counted for Most played and the play filters. */
+    fun played(t: Track, title: String, artist: String, album: String) {
+        if (!::db.isInitialized) return
+        scope.launch {
+            runCatching { db.played(t.id, title, artist, album, t.sizeBytes) }
+            _version.update { it + 1 }
+        }
     }
 
     // ---- getting songs back to play ----

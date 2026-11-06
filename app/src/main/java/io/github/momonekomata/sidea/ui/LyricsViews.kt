@@ -23,6 +23,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.DragInteraction
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,7 +44,7 @@ import io.github.momonekomata.sidea.Settings
  * untimed ones just scroll. With none, it says why and offers Retry.
  */
 @Composable
-fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, onSeek: (Long) -> Unit, modifier: Modifier) {
+fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry: () -> Unit, onSeek: (Long) -> Unit, modifier: Modifier) {
     val lyrics = state.lyrics
     Box(modifier.background(Color(0xFF151515))) {
         if (lyrics == null) {
@@ -58,7 +64,16 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, onSe
             }
             return@Box
         }
-        val current = lyrics.lineAt(positionMs)
+        // The position arrives four times a second; karaoke wants every frame, so it's carried
+        // forward on the frame clock between updates.
+        var now by remember { mutableLongStateOf(positionMs) }
+        LaunchedEffect(positionMs, playing) {
+            now = positionMs
+            if (!playing) return@LaunchedEffect
+            val start = withFrameMillis { it }
+            while (true) withFrameMillis { f -> now = positionMs + (f - start) }
+        }
+        val current = lyrics.lineAt(now)
         val list = rememberLazyListState()
         // Scroll freely; the lyrics follow the song again a few seconds after the finger lifts.
         var touchedAt by remember { mutableLongStateOf(0L) }
@@ -86,7 +101,8 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, onSe
                     label = "lyric",
                 )
                 Text(
-                    line.text.ifBlank { "♪" },
+                    // The line being sung fills in as it's sung, like karaoke.
+                    if (lit && lyrics.synced && line.text.isNotBlank()) karaoke(line.text, lyrics.sungChars(i, now)) else AnnotatedString(line.text.ifBlank { "♪" }),
                     color = color,
                     fontSize = if (lit) 21.sp else 18.sp,
                     fontWeight = if (lit) FontWeight.Bold else FontWeight.Medium,
@@ -111,3 +127,21 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, onRetry: () -> Unit, onSe
 
 /** How long after a scroll the lyrics wait before following the song again. */
 private const val FOLLOW_AFTER_MS = 4_000L
+
+/**
+ * [text] with the first [sung] characters lit and the rest still to come; the character being
+ * sung blends between the two, so the fill moves smoothly rather than a letter at a time.
+ */
+private fun karaoke(text: String, sung: Float): AnnotatedString {
+    val done = sung.toInt().coerceIn(0, text.length)
+    val part = (sung - done).coerceIn(0f, 1f)
+    val lit = Retro.Orange
+    val ahead = Color.White.copy(alpha = 0.55f)
+    return buildAnnotatedString {
+        withStyle(SpanStyle(color = lit)) { append(text, 0, done) }
+        if (done < text.length) {
+            withStyle(SpanStyle(color = lerp(ahead, lit, part))) { append(text[done]) }
+            withStyle(SpanStyle(color = ahead)) { append(text, done + 1, text.length) }
+        }
+    }
+}

@@ -114,8 +114,13 @@ each, so it's cheap over a NAS too. It all lives in a database on the phone.
   Shuffle a whole album, artist or genre.
 * **Search** across titles, artists, albums, genres, file and folder names and formats at once;
   every word must match.
-* **Filter** by format (FLAC, ALAC, DSD, WAV, MP3…), sample rate, bit depth, year range (or a
-  decade), genre, source, or lossless only. Filters and search apply to every tab.
+* **Albums** as a grid of covers or a list (the ▦ / ☰ button).
+* **Focus**, after Roon's, from what the scan reads: genres, release date (decades or a year
+  range), performers, composers, labels, most played (top 25…1000), played in the last day…year,
+  added in the last day…year, compilations, storage locations, the inspector (no genre, no year,
+  no artist, untagged, duplicates, albums in several formats), format, sample rate, bit depth and
+  channel layout, plus lossless only. Every section shows its top six, with View more. Focus and
+  search apply to every tab.
 * Rescans only read songs that are new or changed size, and drop songs that are gone. Each source
   is rescanned on start when it's half a day old, or with Rescan in the Sources tab. FTPS songs get
   their tags once they've been played (FTPS can't read just part of a file).
@@ -133,6 +138,9 @@ so later searches there, or in any folder inside it, start at once. **Rescan** p
 returns to where you were scrolled. Long lists (20 entries or more) get an A–Z index down the right
 edge: touch or slide along it to jump to a letter; digits file under #, and Thai, kana, kanji and
 hangul get a mark each after Z.
+
+**Most played**: the Favourites tab's other side lists the 50 songs played most, from anywhere
+(the Library, a folder, a playlist). A play counts when a song starts.
 
 **Long-press a song** (in a folder, search, Favourites, a playlist, the queue or the history) for
 add to / remove from favourites, play next, add to queue and add to playlist. Playlists sit in the
@@ -260,8 +268,10 @@ arrive, the file name is shown.
 
 ## Lyrics
 
-Tap the cover to see the lyrics in its place (tap the COVER chip to go back); the line being sung is
-lit. Scroll them freely: they follow the song again four seconds after you let go. With timed
+Tap the cover to see the lyrics in its place (tap the COVER chip to go back). The line being sung
+fills in as it's sung, karaoke-style: word by word when the lyrics are enhanced LRC (with
+`<mm:ss.xx>` word stamps, which are now kept and saved in `.lrc` files), and otherwise swept evenly
+across the line's time, which suits Japanese and Chinese, written without spaces. Scroll them freely: they follow the song again four seconds after you let go. With timed
 lyrics, tap a line to play from there.
 WALKDECK looks in this order:
 

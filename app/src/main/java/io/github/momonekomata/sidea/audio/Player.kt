@@ -257,9 +257,17 @@ object Player {
             }
         }
         io.github.momonekomata.sidea.sources.PlayHistory.init(appContext)
+        io.github.momonekomata.sidea.library.Library.init(appContext)
         // Every song that comes up, by a tap or a gapless hand-over, goes into the history.
         scope.launch {
-            _queue.map { it.current }.distinctUntilChanged().collect { t -> t?.let(io.github.momonekomata.sidea.sources.PlayHistory::record) }
+            _queue.map { it.current }.distinctUntilChanged().collect { t ->
+                if (t == null) return@collect
+                // The queue coming back from last time isn't a play.
+                if (restored) { restored = false; return@collect }
+                io.github.momonekomata.sidea.sources.PlayHistory.record(t)
+                val tags = io.github.momonekomata.sidea.sources.TagStore.tags.value
+                io.github.momonekomata.sidea.library.Library.played(t, t.displayTitleFor(tags), t.displayArtistFor(tags), t.displayAlbumFor(tags))
+            }
         }
         engine = AudioEngine(appContext, callbacks)
         // Asked once per DAC per run; the song plays through Android until the user says yes.
@@ -375,6 +383,7 @@ object Player {
     // ---- remembering the queue between runs ----
 
     private lateinit var saved: android.content.SharedPreferences
+    @Volatile private var restored = false
     private var saveJob: Job? = null
 
     /** The queue, the song's place in it, where it had got to and its length, kept on the phone. */
@@ -421,6 +430,7 @@ object Player {
         if (tracks.isEmpty()) return
         main.post {
             if (_queue.value.current != null) return@post
+            restored = true
             _queue.value = QueueState(tracks, index.coerceIn(0, tracks.size - 1), repeat = runCatching { RepeatMode.valueOf(o.optString("repeat")) }.getOrDefault(RepeatMode.OFF))
             _parked.value = Resume(o.optLong("position"), o.optLong("duration"))
         }

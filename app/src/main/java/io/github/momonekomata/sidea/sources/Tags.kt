@@ -14,6 +14,11 @@ data class Tags(
     /** The year from DATE / TDRC / ©day, whatever else the date says. */
     val year: Int? = null,
     val discNumber: Int? = null,
+    val composer: String? = null,
+    /** The record label (LABEL / ORGANIZATION, ID3 TPUB). */
+    val label: String? = null,
+    /** Marked as a compilation (COMPILATION=1, ID3 TCMP, MP4 cpil). */
+    val compilation: Boolean = false,
 ) {
     fun isEmpty() = title == null && artist == null && album == null && lyrics == null && genre == null && year == null
 }
@@ -109,6 +114,9 @@ object TagReader {
             genre = fields["GENRE"]?.split(';')?.first()?.trim()?.takeIf { it.isNotEmpty() },
             year = yearOf(fields["DATE"] ?: fields["YEAR"] ?: fields["ORIGINALDATE"]),
             discNumber = numberOf(fields["DISCNUMBER"]),
+            composer = fields["COMPOSER"]?.takeIf { it.isNotBlank() },
+            label = (fields["LABEL"] ?: fields["ORGANIZATION"] ?: fields["PUBLISHER"])?.takeIf { it.isNotBlank() },
+            compilation = fields["COMPILATION"]?.trim() == "1",
         )
     }
 
@@ -197,12 +205,15 @@ object TagReader {
             genre = genreOf(f["TCON"]),
             year = yearOf(f["TDRC"] ?: f["TYER"] ?: f["TORY"] ?: f["TDOR"]),
             discNumber = numberOf(f["TPOS"]),
+            composer = f["TCOM"]?.takeIf { it.isNotBlank() },
+            label = f["TPUB"]?.takeIf { it.isNotBlank() },
+            compilation = f["TCMP"]?.trim() == "1",
         )
     }
 
     private val V22 = mapOf(
         "TT2" to "TIT2", "TP1" to "TPE1", "TAL" to "TALB", "TP2" to "TPE2", "TRK" to "TRCK", "ULT" to "USLT",
-        "TCO" to "TCON", "TYE" to "TYER", "TPA" to "TPOS",
+        "TCO" to "TCON", "TYE" to "TYER", "TPA" to "TPOS", "TCM" to "TCOM", "TPB" to "TPUB", "TCP" to "TCMP",
     )
 
     internal fun charset(enc: Int): Charset = when (enc) {
@@ -247,6 +258,7 @@ object TagReader {
         var trackNo: Int? = null
         var discNo: Int? = null
         var genreNo: Int? = null
+        var compilation = false
         var p = 0
         while (p + 8 <= body.size) {
             val len = body.u32be(p).toInt()
@@ -262,6 +274,8 @@ object TagReader {
                         val n = ((value[2].toInt() and 0xFF) shl 8) or (value[3].toInt() and 0xFF)
                         if (name == "trkn") trackNo = n else discNo = n
                     }
+                } else if (name == "cpil") {
+                    compilation = value.isNotEmpty() && value[0].toInt() != 0
                 } else if (name == "gnre") {
                     // The old numeric genre: ID3v1's list, counted from 1.
                     if (value.size >= 2) genreNo = (((value[0].toInt() and 0xFF) shl 8) or (value[1].toInt() and 0xFF)) - 1
@@ -281,6 +295,9 @@ object TagReader {
             genre = f["\u00A9gen"]?.trim()?.takeIf { it.isNotEmpty() } ?: genreNo?.let { genreOf(it.toString()) },
             year = yearOf(f["\u00A9day"]),
             discNumber = discNo?.takeIf { it > 0 },
+            composer = f["\u00A9wrt"]?.takeIf { it.isNotBlank() },
+            // MP4 keeps a label only in a free-form "----" atom, which this reader skips.
+            compilation = compilation,
         )
     }
 

@@ -97,6 +97,7 @@ import io.github.momonekomata.sidea.sources.Tags
 import io.github.momonekomata.sidea.sources.TagStore
 import io.github.momonekomata.sidea.sources.displayAlbum
 import io.github.momonekomata.sidea.sources.displayArtist
+import io.github.momonekomata.sidea.sources.Favorite
 import io.github.momonekomata.sidea.sources.displayTitle
 import io.github.momonekomata.sidea.lyrics.Lyrics
 import androidx.compose.animation.AnimatedVisibility
@@ -689,9 +690,34 @@ private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifi
         PlaylistCard(vm, p, queue, modifier)
         return
     }
+    var showMost by rememberSaveable { mutableStateOf(false) }
+    val most by vm.mostPlayed.collectAsStateWithLifecycle()
+    val switcher: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            QueueToggle("♥ Favourites", !showMost, Modifier.weight(1f)) { showMost = false }
+            QueueToggle("▲ Most played", showMost, Modifier.weight(1f)) { showMost = true }
+        }
+    }
+    if (showMost) {
+        // The 50 songs played most, from anywhere: the Library, a folder, a playlist.
+        JCard("Most played", "top ${most.size} · counted each time a song starts", modifier, pinned = switcher) {
+            if (most.isEmpty()) item { JCardNote("Songs you play show up here, most played first.") }
+            most.forEachIndexed { i, p ->
+                item(key = "m:" + p.id) {
+                    JCardRow(
+                        "%02d".format(i + 1), p.title, listOf(p.artist, "${p.count} play${if (p.count == 1) "" else "s"}").filter { it.isNotBlank() }.joinToString(" · "),
+                        current = queue.current?.id == p.id,
+                        onLongClick = { vm.openSongMenu(Favorite(p.id, p.title, p.artist, p.album, p.size)) },
+                        onClick = { vm.playMostPlayed(i) },
+                    )
+                }
+            }
+        }
+        return
+    }
     val headerItems = playlists.size + 1
     val letters = remember(favorites, headerItems) { if (favorites.size < LETTERS_FROM) emptyList() else letterIndex(favorites.map { it.title }, headerItems) }
-    JCard("Favourites", "${favorites.size} songs · ${playlists.size} playlists", modifier, letters = letters) {
+    JCard("Favourites", "${favorites.size} songs · ${playlists.size} playlists", modifier, letters = letters, pinned = switcher) {
         playlists.forEach { p ->
             item { JCardRow("▤", p.name, "playlist · ${p.songs.size} songs", onClick = { vm.showPlaylist(p.id) }) }
         }
