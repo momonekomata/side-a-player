@@ -10,9 +10,42 @@ data class Tags(
     val trackNumber: Int? = null,
     /** Embedded lyrics, plain or LRC-timed. */
     val lyrics: String? = null,
+    val genre: String? = null,
+    /** The year from DATE / TDRC / ©day, whatever else the date says. */
+    val year: Int? = null,
+    val discNumber: Int? = null,
 ) {
-    fun isEmpty() = title == null && artist == null && album == null && lyrics == null
+    fun isEmpty() = title == null && artist == null && album == null && lyrics == null && genre == null && year == null
 }
+
+/** "2011-05-03", "2011", "(2011)": the first four-digit year in a tag, if it's plausible. */
+internal fun yearOf(s: String?): Int? = s?.let { Regex("""(1[89]\d\d|20\d\d)""").find(it)?.value?.toInt() }
+
+/** "2/12" → 2. */
+internal fun numberOf(s: String?): Int? = s?.substringBefore('/')?.trim()?.toIntOrNull()?.takeIf { it > 0 }
+
+/**
+ * ID3 genres may be "(17)", "17", "(17)Rock" or "Rock"; numbers are ID3v1's list (the common
+ * part of it). Several genres separated by NUL, ";" or "/" give the first.
+ */
+internal fun genreOf(s: String?): String? {
+    val raw = s?.split('\u0000', ';')?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val m = Regex("""^\((\d+)\)(.*)$""").find(raw)
+    val number = m?.groupValues?.get(1)?.toIntOrNull() ?: raw.toIntOrNull()
+    val text = m?.groupValues?.get(2)?.trim()?.takeIf { it.isNotEmpty() }
+    return text ?: number?.let { ID3V1_GENRES.getOrNull(it) } ?: raw
+}
+
+private val ID3V1_GENRES = listOf(
+    "Blues", "Classic Rock", "Country", "Dance", "Disco", "Funk", "Grunge", "Hip-Hop", "Jazz", "Metal",
+    "New Age", "Oldies", "Other", "Pop", "R&B", "Rap", "Reggae", "Rock", "Techno", "Industrial",
+    "Alternative", "Ska", "Death Metal", "Pranks", "Soundtrack", "Euro-Techno", "Ambient", "Trip-Hop", "Vocal", "Jazz+Funk",
+    "Fusion", "Trance", "Classical", "Instrumental", "Acid", "House", "Game", "Sound Clip", "Gospel", "Noise",
+    "Alternative Rock", "Bass", "Soul", "Punk", "Space", "Meditative", "Instrumental Pop", "Instrumental Rock", "Ethnic", "Gothic",
+    "Darkwave", "Techno-Industrial", "Electronic", "Pop-Folk", "Eurodance", "Dream", "Southern Rock", "Comedy", "Cult", "Gangsta",
+    "Top 40", "Christian Rap", "Pop/Funk", "Jungle", "Native American", "Cabaret", "New Wave", "Psychedelic", "Rave", "Showtunes",
+    "Trailer", "Lo-Fi", "Tribal", "Acid Punk", "Acid Jazz", "Polka", "Retro", "Musical", "Rock & Roll", "Hard Rock",
+)
 
 /**
  * Reads the tags Side A needs (title, artist, album, track number, lyrics) straight from the
@@ -73,6 +106,9 @@ object TagReader {
             albumArtist = fields["ALBUMARTIST"] ?: fields["ALBUM ARTIST"],
             trackNumber = fields["TRACKNUMBER"]?.substringBefore('/')?.trim()?.toIntOrNull(),
             lyrics = fields["LYRICS"] ?: fields["UNSYNCEDLYRICS"] ?: fields["SYNCEDLYRICS"],
+            genre = fields["GENRE"]?.split(';')?.first()?.trim()?.takeIf { it.isNotEmpty() },
+            year = yearOf(fields["DATE"] ?: fields["YEAR"] ?: fields["ORIGINALDATE"]),
+            discNumber = numberOf(fields["DISCNUMBER"]),
         )
     }
 
@@ -158,10 +194,16 @@ object TagReader {
             albumArtist = f["TPE2"],
             trackNumber = f["TRCK"]?.substringBefore('/')?.trim()?.toIntOrNull(),
             lyrics = f["USLT"],
+            genre = genreOf(f["TCON"]),
+            year = yearOf(f["TDRC"] ?: f["TYER"] ?: f["TORY"] ?: f["TDOR"]),
+            discNumber = numberOf(f["TPOS"]),
         )
     }
 
-    private val V22 = mapOf("TT2" to "TIT2", "TP1" to "TPE1", "TAL" to "TALB", "TP2" to "TPE2", "TRK" to "TRCK", "ULT" to "USLT")
+    private val V22 = mapOf(
+        "TT2" to "TIT2", "TP1" to "TPE1", "TAL" to "TALB", "TP2" to "TPE2", "TRK" to "TRCK", "ULT" to "USLT",
+        "TCO" to "TCON", "TYE" to "TYER", "TPA" to "TPOS",
+    )
 
     internal fun charset(enc: Int): Charset = when (enc) {
         1 -> Charsets.UTF_16
@@ -203,6 +245,8 @@ object TagReader {
         val body = ra.readFully(ilst.first, (ilst.second - ilst.first).toInt())
         val f = mutableMapOf<String, String>()
         var trackNo: Int? = null
+        var discNo: Int? = null
+        var genreNo: Int? = null
         var p = 0
         while (p + 8 <= body.size) {
             val len = body.u32be(p).toInt()
@@ -213,8 +257,14 @@ object TagReader {
             if (d + 16 <= p + len && body.ascii(d + 4, 4) == "data") {
                 val dLen = body.u32be(d).toInt()
                 val value = body.copyOfRange(d + 16, minOf(d + dLen, p + len))
-                if (name == "trkn") {
-                    if (value.size >= 4) trackNo = ((value[2].toInt() and 0xFF) shl 8) or (value[3].toInt() and 0xFF)
+                if (name == "trkn" || name == "disk") {
+                    if (value.size >= 4) {
+                        val n = ((value[2].toInt() and 0xFF) shl 8) or (value[3].toInt() and 0xFF)
+                        if (name == "trkn") trackNo = n else discNo = n
+                    }
+                } else if (name == "gnre") {
+                    // The old numeric genre: ID3v1's list, counted from 1.
+                    if (value.size >= 2) genreNo = (((value[0].toInt() and 0xFF) shl 8) or (value[1].toInt() and 0xFF)) - 1
                 } else {
                     f[name] = String(value, Charsets.UTF_8)
                 }
@@ -228,6 +278,9 @@ object TagReader {
             albumArtist = f["aART"],
             trackNumber = trackNo?.takeIf { it > 0 },
             lyrics = f["\u00A9lyr"],
+            genre = f["\u00A9gen"]?.trim()?.takeIf { it.isNotEmpty() } ?: genreNo?.let { genreOf(it.toString()) },
+            year = yearOf(f["\u00A9day"]),
+            discNumber = discNo?.takeIf { it > 0 },
         )
     }
 
@@ -277,7 +330,10 @@ object TagReader {
             f[id] = String(b, p + 8, len, Charsets.UTF_8).trimEnd('\u0000').trim()
             p += 8 + len + (len and 1)
         }
-        return Tags(title = f["INAM"], artist = f["IART"], album = f["IPRD"], trackNumber = f["ITRK"]?.toIntOrNull())
+        return Tags(
+            title = f["INAM"], artist = f["IART"], album = f["IPRD"], trackNumber = f["ITRK"]?.toIntOrNull(),
+            genre = f["IGNR"]?.takeIf { it.isNotEmpty() }, year = yearOf(f["ICRD"]),
+        )
     }
 
     private fun aiff(ra: RandomAccess): Tags? {

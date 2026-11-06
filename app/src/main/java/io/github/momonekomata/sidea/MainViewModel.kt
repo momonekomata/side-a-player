@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class SourceTab(val label: String, val short: String) {
+    LIBRARY("Library", "LIBRARY"),
     LOCAL("Local", "LOCAL"),
     NAS("NAS & cloud", "REMOTE"),
     FAVORITES("Favourites", "♥"),
@@ -104,7 +105,7 @@ private sealed interface Playing {
 }
 
 data class UiState(
-    val tab: SourceTab = SourceTab.LOCAL,
+    val tab: SourceTab = SourceTab.LIBRARY,
     val local: BrowseState? = null,
     val nasServers: List<NasServer> = emptyList(),
     val nas: BrowseState? = null,
@@ -149,7 +150,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         Player.init(app)
         _ui.update {
             it.copy(
-                tab = runCatching { SourceTab.valueOf(prefs.getString("tab", null)!!) }.getOrDefault(SourceTab.LOCAL),
+                tab = runCatching { SourceTab.valueOf(prefs.getString("tab", null)!!) }.getOrDefault(SourceTab.LIBRARY),
                 nasServers = nasStore.all(),
             )
         }
@@ -262,6 +263,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun tabTo(tab: SourceTab) = selectTab(tab)
+
     fun selectTab(tab: SourceTab) {
         prefs.edit().putString("tab", tab.name).apply()
         _ui.update { it.copy(tab = tab) }
@@ -283,6 +286,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val path = savedPlace(false)?.takeIf { !remember && it.firstOrNull()?.second == b.rootPath } ?: root
         _ui.update { it.copy(local = BrowseState(b, path)) }
         load(isNas = false)
+    }
+
+    // ---- the Library ----
+
+    /** Made on first use: the Library opens its database then. */
+    val library by lazy {
+        io.github.momonekomata.sidea.library.Library.init(getApplication())
+        io.github.momonekomata.sidea.library.LibraryModel(viewModelScope)
+    }
+
+    /** Whether the folder open on this side is already one of the Library's sources. */
+    fun inLibrary(isNas: Boolean): Boolean {
+        val b = browse(isNas) ?: return false
+        library // makes sure it's open
+        return if (isNas) io.github.momonekomata.sidea.library.Library.contains(null, _ui.value.nasServer?.id, b.currentPath)
+        else io.github.momonekomata.sidea.library.Library.contains(prefs.getString("localTree", null), null, b.currentPath)
+    }
+
+    /** Adds the folder open on this side (and everything in it) to the Library, and scans it. */
+    fun addToLibrary(isNas: Boolean) {
+        val b = browse(isNas) ?: return
+        library
+        val src = if (isNas) {
+            val server = _ui.value.nasServer ?: return
+            io.github.momonekomata.sidea.library.LibrarySource(name = "${server.name} · ${b.currentName}", serverId = server.id, root = b.currentPath)
+        } else {
+            val tree = prefs.getString("localTree", null) ?: return
+            io.github.momonekomata.sidea.library.LibrarySource(name = "Phone · ${b.currentName}", tree = tree, root = b.currentPath)
+        }
+        io.github.momonekomata.sidea.library.Library.add(src)
+        android.widget.Toast.makeText(getApplication(), "Adding ${b.currentName} to the Library…", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /** A folder picked for the Library straight from the Sources tab. */
+    fun addLibraryTree(tree: Uri) {
+        val resolver = getApplication<Application>().contentResolver
+        runCatching { resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+            .recoverCatching { resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        val root = android.provider.DocumentsContract.getTreeDocumentId(tree)
+        library
+        io.github.momonekomata.sidea.library.Library.add(
+            io.github.momonekomata.sidea.library.LibrarySource(name = "Phone · " + root.substringAfterLast(':').substringAfterLast('/').ifBlank { "Storage" }, tree = tree.toString(), root = root),
+        )
+    }
+
+    /** The song menu for a Library song. */
+    fun openSongMenu(t: io.github.momonekomata.sidea.library.LibTrack) {
+        val track = library.trackOf(t) ?: return
+        openSongMenu(track)
     }
 
     // ---- where each side was left ----

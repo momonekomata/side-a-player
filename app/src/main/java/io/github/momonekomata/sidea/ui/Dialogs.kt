@@ -233,7 +233,7 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Uni
 private fun Note(text: String) = Text(text, fontSize = 12.sp, color = Retro.Muted)
 
 @Composable
-private fun LabeledSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun LabeledSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 14.sp)
         Switch(checked, onChange)

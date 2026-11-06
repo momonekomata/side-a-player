@@ -18,6 +18,10 @@ class MainActivity : ComponentActivity() {
         uri?.let(vm::openLocal)
     }
 
+    private val pickLibraryFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(vm::addLibraryTree)
+    }
+
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -28,7 +32,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             SideATheme {
-                SideAScreen(vm, pickFolder = { pickFolder.launch(null) })
+                SideAScreen(vm, pickFolder = { pickFolder.launch(null) }, pickLibraryFolder = { pickLibraryFolder.launch(null) })
             }
         }
     }

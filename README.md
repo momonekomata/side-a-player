@@ -100,6 +100,27 @@ and **DSD**. They come out as the file's exact integer samples, so the bit-perfe
 through float. MP3, AAC (incl. AAC .m4a), Opus and Vorbis go through Android's MediaCodec. If the phone has
 no decoder for a file, the error says which format it is.
 
+## Library
+
+Instead of browsing folders, point WALKDECK at them: open a folder in **Local** or **Remote**
+(any NAS or cloud) and tap **Add this folder to the Library**, or add a folder on the phone from
+the Library's Sources tab. Add as many as you like; everything inside them is scanned in, with each
+song's tags (title, artist, album artist, album, genre, year, track and disc) and what's inside the
+file (format, sample rate, bit depth, channels, length) read from the file itself, a few kilobytes
+each, so it's cheap over a NAS too. It all lives in a database on the phone.
+
+* **Artists** (by album artist), **Albums** (with covers, year and best format), **Tracks**,
+  **Genres** and **Sources** tabs; tap through artist → albums → songs, genre → albums. Play or
+  Shuffle a whole album, artist or genre.
+* **Search** across titles, artists, albums, genres, file and folder names and formats at once;
+  every word must match.
+* **Filter** by format (FLAC, ALAC, DSD, WAV, MP3…), sample rate, bit depth, year range (or a
+  decade), genre, source, or lossless only. Filters and search apply to every tab.
+* Rescans only read songs that are new or changed size, and drop songs that are gone. Each source
+  is rescanned on start when it's half a day old, or with Rescan in the Sources tab. FTPS songs get
+  their tags once they've been played (FTPS can't read just part of a file).
+* Long-press a song for Play Next / Play Last, favourites and playlists, as everywhere.
+
 ## Playback controls
 
 Shuffle and repeat (all / one) beside the transport keys; hold ⏮/⏭ to rewind or fast-forward.

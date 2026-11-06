@@ -127,7 +127,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 
 @Composable
-fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
+fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit, pickLibraryFolder: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val queue by Player.queue.collectAsStateWithLifecycle()
     val engine by Player.state.collectAsStateWithLifecycle()
@@ -156,6 +156,8 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
     BackHandler(enabled = (ui.tab == SourceTab.LOCAL && (ui.local?.path?.size ?: 0) > 1) || (isNas && ui.nas != null)) {
         vm.up(isNas)
     }
+    val libraryUi by vm.library.ui.collectAsStateWithLifecycle()
+    BackHandler(enabled = ui.tab == SourceTab.LIBRARY && libraryUi.stack.isNotEmpty()) { vm.library.back() }
 
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
     val deck = localDeck(queue, engine, parked, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite).copy(
@@ -190,10 +192,10 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
                 WideLayout(vm, ui.tab, deck, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage) { m ->
-                    SourceCard(vm, ui.tab, queue, tags, pickFolder, m)
+                    SourceCard(vm, ui.tab, queue, tags, pickFolder, pickLibraryFolder, m)
                 }
             } else {
-                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage) { tab, m -> SourceCard(vm, tab, queue, tags, pickFolder, m) }
+                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage) { tab, m -> SourceCard(vm, tab, queue, tags, pickFolder, pickLibraryFolder, m) }
             }
         }
     }
@@ -527,10 +529,12 @@ private fun SourceCard(
     queue: QueueState,
     tags: Map<String, Tags>,
     pickFolder: () -> Unit,
+    pickLibraryFolder: () -> Unit,
     modifier: Modifier,
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     when (tab) {
+        SourceTab.LIBRARY -> LibraryCard(vm, queue, pickLibraryFolder, modifier)
         SourceTab.LOCAL -> {
             val local = ui.local
             if (local == null) {
@@ -582,7 +586,9 @@ private fun BrowserCard(
         snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }
             .collect { (i, o) -> vm.saveScroll(scrollKey, i, o) }
     }
-    val headerItems = if (state.path.size > 1) 1 else 0
+    val headerItems = if (state.path.size > 1) 2 else 1
+    val librarySources by io.github.momonekomata.sidea.library.Library.sources.also { vm.library }.collectAsStateWithLifecycle()
+    val inLibrary = remember(librarySources, state.currentPath) { vm.inLibrary(isNas) }
     val letters = remember(state.entries, tags, ready) {
         if (!ready || state.entries.size < LETTERS_FROM) emptyList()
         else letterIndex(state.entries.map { e -> if (e is Entry.Song) e.track.displayTitle(tags) else e.name }, headerItems)
@@ -600,6 +606,11 @@ private fun BrowserCard(
         SearchBar(if (state.path.size > 1) "Search ${state.currentName}…" else "Search ${state.browser.title.lowercase()}…") { vm.openSearch(isNas) }
     }) {
         if (state.path.size > 1) item { JCardRow("‹", "Back to ${state.path[state.path.size - 2].first}", onClick = onUp) }
+        item {
+            // Point the Library at this folder: it, and everything in it, gets scanned in.
+            if (inLibrary) JCardRow("✓", "In the Library", "with everything inside it", onClick = { vm.tabTo(SourceTab.LIBRARY) })
+            else JCardRow("＋", "Add this folder to the Library", "scans it and every folder inside it", onClick = { vm.addToLibrary(isNas) })
+        }
         when {
             state.loading -> item { JCardNote("Reading…") }
             state.error != null -> item { JCardNote(state.error) { CardButton("Try again", onRetry) } }
