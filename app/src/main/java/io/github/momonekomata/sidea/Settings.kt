@@ -21,6 +21,9 @@ data class Prefs(
     val lyricsOvh: Boolean = true,
     /** Lyrics found online are saved as a .lrc beside the song. */
     val saveLyrics: Boolean = true,
+    /** Japanese lyrics: readings over the kanji, and a romaji line under each line. */
+    val furigana: Boolean = true,
+    val romaji: Boolean = false,
     /** The user's own key from developer.musixmatch.com; blank leaves Musixmatch out. */
     val musixmatchKey: String = "",
     val eq: EqConfig = EqConfig(),
@@ -46,6 +49,8 @@ object Settings {
             lrclib = sp.getBoolean("lrclib", true),
             lyricsOvh = sp.getBoolean("lyricsOvh", true),
             saveLyrics = sp.getBoolean("saveLyrics", true),
+            furigana = sp.getBoolean("furigana", true),
+            romaji = sp.getBoolean("romaji", false),
             musixmatchKey = sp.getString("musixmatchKey", "").orEmpty(),
             exclusiveUsb = sp.getBoolean("exclusiveUsb", true),
             // A new key, so everyone starts at 100 % (bit-perfect) once, whatever the old 30 % saved.
@@ -64,6 +69,8 @@ object Settings {
             .putBoolean("lrclib", p.lrclib)
             .putBoolean("lyricsOvh", p.lyricsOvh)
             .putBoolean("saveLyrics", p.saveLyrics)
+            .putBoolean("furigana", p.furigana)
+            .putBoolean("romaji", p.romaji)
             .putString("musixmatchKey", p.musixmatchKey)
             .putBoolean("exclusiveUsb", p.exclusiveUsb)
             .putFloat("usbVolume100", p.usbVolume)

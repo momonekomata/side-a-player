@@ -23,6 +23,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.DragInteraction
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.unit.TextUnit
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.momonekomata.sidea.lyrics.Japanese
+import io.github.momonekomata.sidea.lyrics.JapaneseLine
+import io.github.momonekomata.sidea.lyrics.Ruby
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.AnnotatedString
@@ -74,6 +88,18 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry
             while (true) withFrameMillis { f -> now = positionMs + (f - start) }
         }
         val current = lyrics.lineAt(now)
+        // Japanese lyrics: furigana over the kanji and romaji under each line, both switchable.
+        val prefs by Settings.prefs.collectAsStateWithLifecycle()
+        val japanese = remember(lyrics) { Japanese.isJapanese(lyrics.lines.map { it.text }) }
+        val wantReadings = japanese && (prefs.furigana || prefs.romaji)
+        val readings by produceState<Map<Int, JapaneseLine>?>(null, lyrics, wantReadings) {
+            if (!wantReadings) { value = null; return@produceState }
+            // The dictionary loads on first use; until then the lyrics show as written.
+            value = withContext(Dispatchers.Default) {
+                lyrics.lines.mapIndexedNotNull { i, l -> if (l.text.isBlank()) null else i to runCatching { Japanese.annotate(l.text) }.getOrNull() }
+                    .mapNotNull { (i, a) -> a?.let { i to it } }.toMap()
+            }
+        }
         val list = rememberLazyListState()
         // Scroll freely; the lyrics follow the song again a few seconds after the finger lifts.
         var touchedAt by remember { mutableLongStateOf(0L) }
@@ -100,19 +126,33 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry
                     },
                     label = "lyric",
                 )
-                Text(
-                    // The line being sung fills in as it's sung, like karaoke.
-                    if (lit && lyrics.synced && line.text.isNotBlank()) karaoke(line.text, lyrics.sungChars(i, now)) else AnnotatedString(line.text.ifBlank { "♪" }),
-                    color = color,
-                    fontSize = if (lit) 21.sp else 18.sp,
-                    fontWeight = if (lit) FontWeight.Bold else FontWeight.Medium,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier
+                // The line being sung fills in as it's sung, like karaoke.
+                val sung = if (lit && lyrics.synced && line.text.isNotBlank()) lyrics.sungChars(i, now) else null
+                val reading = readings?.get(i)
+                Column(
+                    Modifier
                         .fillMaxWidth()
                         // Timed: tap a line to play from there. Plain lyrics have no times to go to.
                         .then(if (lyrics.synced && line.timeMs >= 0) Modifier.clickable { touchedAt = 0L; onSeek(line.timeMs) } else Modifier)
                         .padding(horizontal = 18.dp, vertical = 5.dp),
-                )
+                ) {
+                    val size = if (lit) 21.sp else 18.sp
+                    val weight = if (lit) FontWeight.Bold else FontWeight.Medium
+                    if (prefs.furigana && reading != null) {
+                        FuriganaLine(reading.pieces, sung, color, size, weight)
+                    } else {
+                        Text(sung?.let { karaoke(line.text, it) } ?: AnnotatedString(line.text.ifBlank { "♪" }), color = color, fontSize = size, fontWeight = weight)
+                    }
+                    if (prefs.romaji && reading != null && reading.romaji.isNotBlank()) {
+                        Text(reading.romaji, color = color.copy(alpha = color.alpha * 0.7f), fontSize = if (lit) 14.sp else 12.sp, fontStyle = FontStyle.Italic)
+                    }
+                }
+            }
+        }
+        if (japanese) {
+            Row(Modifier.align(Alignment.TopStart).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ReadingChip("ふりがな", prefs.furigana) { Settings.update { it.copy(furigana = !it.furigana) } }
+                ReadingChip("Romaji", prefs.romaji) { Settings.update { it.copy(romaji = !it.romaji) } }
             }
         }
         Text(
@@ -144,4 +184,46 @@ private fun karaoke(text: String, sung: Float): AnnotatedString {
             withStyle(SpanStyle(color = ahead)) { append(text, done + 1, text.length) }
         }
     }
+}
+
+/**
+ * A line with furigana: each piece is its text with its reading printed small above it (blank
+ * above kana and anything else), wrapping piece by piece. [sung] lights it karaoke-style across
+ * the pieces, counting characters of the line as written.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FuriganaLine(pieces: List<Ruby>, sung: Float?, color: Color, size: TextUnit, weight: FontWeight) {
+    FlowRow(verticalArrangement = Arrangement.Bottom) {
+        var start = 0
+        for (p in pieces) {
+            val from = start
+            start += p.text.length
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val litRuby = sung != null && sung >= from + p.text.length
+                Text(
+                    p.ruby ?: " ",
+                    color = if (litRuby) Retro.Orange else color.copy(alpha = color.alpha * 0.75f),
+                    fontSize = size * 0.5f,
+                    lineHeight = size * 0.55f,
+                    maxLines = 1,
+                )
+                Text(sung?.let { karaoke(p.text, it - from) } ?: AnnotatedString(p.text), color = color, fontSize = size, fontWeight = weight)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadingChip(label: String, on: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (on) Color.White else Retro.Muted,
+        fontSize = 10.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (on) Retro.Orange.copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
 }

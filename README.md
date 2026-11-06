@@ -271,7 +271,14 @@ arrive, the file name is shown.
 Tap the cover to see the lyrics in its place (tap the COVER chip to go back). The line being sung
 fills in as it's sung, karaoke-style: word by word when the lyrics are enhanced LRC (with
 `<mm:ss.xx>` word stamps, which are now kept and saved in `.lrc` files), and otherwise swept evenly
-across the line's time, which suits Japanese and Chinese, written without spaces. Scroll them freely: they follow the song again four seconds after you let go. With timed
+across the line's time, which suits Japanese and Chinese, written without spaces.
+
+**Japanese lyrics** get **furigana** (the reading in small hiragana over each kanji, as it's read
+in that word) and **romaji** (Hepburn, a line under each line; は, へ and を said as wa, e and o).
+Switch either with the ふりがな and Romaji buttons in the lyrics' corner. Readings come from
+Kuromoji with the IPADIC dictionary, on the phone; it's about 13 MB of the app and loads the first
+time Japanese lyrics are shown. Lyrics count as Japanese when they have kana, so Chinese lyrics
+(kanji only) are left alone. The karaoke fill runs through the furigana too. Scroll them freely: they follow the song again four seconds after you let go. With timed
 lyrics, tap a line to play from there.
 WALKDECK looks in this order:
 

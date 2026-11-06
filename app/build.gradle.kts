@@ -86,6 +86,8 @@ dependencies {
     // SMB 2/3 (brings BouncyCastle, which also gives NTLM its MD4) and SFTP.
     implementation("com.hierynomus:smbj:0.14.0")
     implementation("com.github.mwiede:jsch:0.2.26")
+    // Japanese lyrics: word splitting and readings (IPADIC dictionary, ~13 MB) for furigana and romaji.
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
 
     testImplementation("junit:junit:4.13.2")
 }
