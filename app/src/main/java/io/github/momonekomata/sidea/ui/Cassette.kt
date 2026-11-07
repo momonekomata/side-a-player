@@ -99,13 +99,13 @@ fun CassettePage(model: DeckModel, modifier: Modifier = Modifier, onFullScreen: 
  * phone it lies along the screen's length, turned a quarter to the left.
  */
 @Composable
-fun TapeFullScreen(model: DeckModel, closeLabel: String, onClose: () -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF26282D))) {
+fun TapeFullScreen(model: DeckModel, closeLabel: String? = null, onClose: () -> Unit = {}, modifier: Modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier.background(Color(0xFF26282D))) {
         val upright = maxHeight > maxWidth
         Box(Modifier.fillMaxSize().then(if (upright) Modifier.sideways() else Modifier)) {
             CassetteFit(model)
             // On the shell's bare corner, between the screw and the foot, clear of the label.
-            Pill(closeLabel, Modifier.align(Alignment.BottomStart).padding(start = 56.dp, bottom = 16.dp), onClose)
+            if (closeLabel != null) Pill(closeLabel, Modifier.align(Alignment.BottomStart).padding(start = 56.dp, bottom = 16.dp), onClose)
         }
     }
 }
@@ -131,7 +131,7 @@ private const val MIN_RATIO = 1.45f
 private const val MAX_RATIO = 2.4f
 
 /** Lays the content out a quarter turn to the left: its width along this space's height. */
-private fun Modifier.sideways() = layout { measurable, c ->
+internal fun Modifier.sideways() = layout { measurable, c ->
     val p = measurable.measure(Constraints.fixed(c.maxHeight, c.maxWidth))
     layout(c.maxWidth, c.maxHeight) {
         p.placeWithLayer((c.maxWidth - p.width) / 2, (c.maxHeight - p.height) / 2) { rotationZ = -90f }

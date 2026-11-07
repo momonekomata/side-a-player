@@ -46,6 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -79,8 +82,11 @@ import kotlin.math.sqrt
  * round button for the heart. Play is the orange button on the top edge, pressed in while the
  * tape runs. Upright it fills the page; on its side it stands in the middle, as tall as fits.
  */
+/** How far the keys' symbols are turned: back upright when the player lies on its side. */
+private val LocalIconTurn = androidx.compose.runtime.compositionLocalOf { 0f }
+
 @Composable
-fun StereoDeck(model: DeckModel, modifier: Modifier = Modifier) {
+fun StereoDeck(model: DeckModel, modifier: Modifier = Modifier, iconTurn: Float = 0f) = androidx.compose.runtime.CompositionLocalProvider(LocalIconTurn provides iconTurn) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val m = if (maxWidth / maxHeight > 0.72f) Modifier.fillMaxHeight().aspectRatio(0.66f) else Modifier.fillMaxSize()
         StereoBody(model, m)
@@ -164,13 +170,8 @@ private fun BluePanel(model: DeckModel, modifier: Modifier, w: Dp, h: Dp) {
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize().padding(start = w * 0.17f), verticalArrangement = Arrangement.Top) {
                 Spacer(Modifier.height(h * 0.05f))
-                // STEREO in outline, as it's printed on the body.
-                Text(
-                    "STEREO", color = white, fontWeight = FontWeight.Medium, fontSize = (w.value * 0.15f).sp,
-                    letterSpacing = (w.value * 0.004f).sp, maxLines = 1,
-                    style = TextStyle(drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = w.value * 0.008f)),
-                    modifier = Modifier.offset(x = -(w * 0.04f)),
-                )
+                // STEREO in outline, as it's printed on the body, worn a little.
+                WeatheredStereo(Modifier.offset(x = -(w * 0.04f)), (w.value * 0.15f).sp, w.value * 0.007f, white)
                 Spacer(Modifier.height(h * 0.035f))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TapeWindowStereo(model, Modifier.width(w * 0.4f).height(h * 0.52f))
@@ -179,6 +180,74 @@ private fun BluePanel(model: DeckModel, modifier: Modifier, w: Dp, h: Dp) {
                 }
             }
         }
+    }
+}
+
+/**
+ * The face the outlined STEREO is printed in: Fredoka (SIL Open Font License), chunky, rounded and
+ * geometric like the 1970s display face on the original, at a heavy weight.
+ */
+@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+private val StereoFace = FontFamily(
+    androidx.compose.ui.text.font.Font(
+        io.github.momonekomata.sidea.R.font.fredoka,
+        weight = FontWeight.SemiBold,
+        variationSettings = androidx.compose.ui.text.font.FontVariation.Settings(
+            androidx.compose.ui.text.font.FontVariation.weight(600),
+            androidx.compose.ui.text.font.FontVariation.width(100f),
+        ),
+    ),
+)
+
+/**
+ * STEREO, printed in outline in a rounded face, and weathered: small flecks and a couple of fine
+ * scratches worn out of the print, and a faint unevenness over it, as years in a pocket leave it.
+ * The wear is a fixed pattern, the same every time.
+ */
+@Composable
+private fun WeatheredStereo(modifier: Modifier, size: androidx.compose.ui.unit.TextUnit, stroke: Float, color: Color) {
+    // The face's letters are built from overlapping strokes, so outlining them as they are leaves
+    // seams inside the E and R. Instead: a thick outline, with the filled letters cut out of it,
+    // which leaves just the outer edge, clean.
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    // Set tight, as the original is.
+    val style = TextStyle(fontFamily = StereoFace, fontSize = size, letterSpacing = (-size.value * 0.01f).sp)
+    val layout = remember(size) { measurer.measure("STEREO", style) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val pad = stroke * 2
+    Canvas(
+        modifier
+            .size(with(density) { (layout.size.width + pad * 2).toDp() }, with(density) { (layout.size.height + pad * 2).toDp() })
+            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+            .drawWithCache {
+                val r = java.util.Random(19)
+                val w = this.size.width
+                val h = this.size.height
+                // Flecks where the paint has come away, of a few sizes.
+                val flecks = List(140) { Triple(r.nextFloat() * w, r.nextFloat() * h, (0.6f + r.nextFloat() * 1.8f) * stroke) }
+                // A couple of long, fine scratches across the lettering.
+                val scratches = List(3) { Offset(r.nextFloat() * w * 0.5f, r.nextFloat() * h) to Offset(w * (0.5f + r.nextFloat() * 0.5f), r.nextFloat() * h) }
+                onDrawWithContent {
+                    drawContent()
+                    flecks.forEach { (x, y, rad) -> drawCircle(Color.Black, rad, Offset(x, y), blendMode = androidx.compose.ui.graphics.BlendMode.DstOut) }
+                    scratches.forEach { (a, b) -> drawLine(Color.Black.copy(alpha = 0.7f), a, b, strokeWidth = stroke * 0.5f, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut) }
+                    // A faint unevenness over the whole print.
+                    drawRect(
+                        Brush.linearGradient(listOf(Color.Black.copy(alpha = 0.0f), Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.05f), Color.Black.copy(alpha = 0.2f))),
+                        blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
+                    )
+                }
+            },
+    ) {
+        // The outline: the filled letters stamped in a ring around their place (which swells them
+        // by the outline's width), then the letters themselves cut out of the middle.
+        val at = Offset(pad, pad)
+        val band = stroke * 1.3f
+        repeat(24) { i ->
+            val a = i * (2 * PI / 24)
+            drawText(layout, color, topLeft = at + Offset((band * cos(a)).toFloat(), (band * sin(a)).toFloat()))
+        }
+        drawText(layout, Color.Black, topLeft = at, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut)
     }
 }
 
@@ -349,7 +418,7 @@ private fun SilverSide(model: DeckModel, modifier: Modifier, w: Dp) {
         SideKey(Icons.Filled.FastRewind, "Back 10 seconds", k) { model.onSkip(-10_000) }
         // PLAY, in the row with the others at the middle: the orange key, held down while playing.
         SquareKey(k * 1.12f, orange = true, latched = model.playing, onClick = model.onToggle) { _ ->
-            Icon(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White, modifier = Modifier.size(k * 0.55f))
+            Icon(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White, modifier = Modifier.size(k * 0.55f).rotate(LocalIconTurn.current))
         }
         SideKey(Icons.Filled.FastForward, "Forward 10 seconds", k) { model.onSkip(10_000) }
         SideKey(Icons.Filled.SkipNext, "Next", k, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
@@ -368,7 +437,7 @@ private fun SilverSide(model: DeckModel, modifier: Modifier, w: Dp) {
                     .clickable(onClick = model.onFavorite),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else Retro.OnMetalMuted, modifier = Modifier.size(k * 0.36f))
+                Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else Retro.OnMetalMuted, modifier = Modifier.size(k * 0.36f).rotate(LocalIconTurn.current))
             }
         }
     }
@@ -377,6 +446,6 @@ private fun SilverSide(model: DeckModel, modifier: Modifier, w: Dp) {
 @Composable
 private fun SideKey(icon: ImageVector, label: String, k: Dp, led: Boolean? = null, onHold: (() -> Unit)? = null, onClick: () -> Unit) {
     SquareKey(k, led = led, onHold = onHold, onClick = onClick) { _ ->
-        Icon(icon, label, tint = Retro.OnMetal, modifier = Modifier.size(k * 0.46f))
+        Icon(icon, label, tint = Retro.OnMetal, modifier = Modifier.size(k * 0.46f).rotate(LocalIconTurn.current))
     }
 }

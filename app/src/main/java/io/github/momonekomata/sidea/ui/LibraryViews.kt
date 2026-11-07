@@ -92,7 +92,7 @@ fun formatLabel(codec: String, rate: Int, bits: Int?): String {
  * playlists). Search, the views and Focus stay on top.
  */
 @Composable
-fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, modifier: Modifier) {
+fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, modifier: Modifier, swipeTabs: Boolean = true) {
     val model = vm.library
     val ui by model.ui.collectAsStateWithLifecycle()
     val scan by Library.scan.collectAsStateWithLifecycle()
@@ -194,7 +194,8 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
             }
         }
 
-    JCard(top?.title ?: "Library", subtitle, modifier.then(swiping).nestedScroll(hideSearch), listState = list, letters = letters, pinned = {
+    // Where a pager owns the sideways swipe (landscape), the tabs are taps only.
+    JCard(top?.title ?: "Library", subtitle, modifier.then(if (swipeTabs) swiping else Modifier).nestedScroll(hideSearch), listState = list, letters = letters, pinned = {
         Column {
           androidx.compose.animation.AnimatedVisibility(
               showSearch,

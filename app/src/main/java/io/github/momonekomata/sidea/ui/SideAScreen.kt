@@ -126,6 +126,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
 
@@ -183,13 +184,13 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
 
     // The queue lives beside the deck (swipe left).
     val queuePage: @Composable (Modifier) -> Unit = { m -> QueueCard(vm, queue, tags, localImage, m) }
-    val library: @Composable (Modifier) -> Unit = { m -> LibraryCard(vm, queue, onSources = { sourcesOpen = true }, m) }
+    val library: @Composable (Modifier) -> Unit = { m -> LibraryCard(vm, queue, onSources = { sourcesOpen = true }, m, swipeTabs = !landscape) }
 
-    // A phone turned sideways opens on the tape, full screen; "‹ LIBRARY" (or Back) shows the
-    // Library and deck, and the tape page's full-screen button brings it back. Every turn to
-    // landscape starts on the tape again.
+    // Sideways, the whole screen is three pages a swipe apart: the tape full screen, Now Playing
+    // (cover and song beside the lyrics, with the EQ and Settings buttons), and the Library beside
+    // the queue. Every turn to landscape starts on the tape.
     // Upright, the tape goes full screen from the TAPE page's ⛶ button.
-    var tapeFull by rememberSaveable(landscape) { mutableStateOf(landscape) }
+    var tapeFull by rememberSaveable(landscape) { mutableStateOf(false) }
     BackHandler(enabled = tapeFull) { tapeFull = false }
     ImmersiveMode(landscape || tapeFull)
     // A phone's full player opens under the header; with the lyrics up it covers the whole
@@ -197,7 +198,9 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val phone = LocalConfiguration.current.screenWidthDp < 600
     BackHandler(enabled = expanded && phone && !tapeFull) { expanded = false }
-    if (tapeFull) {
+    if (landscape && !tapeFull) {
+        LandscapeLayout(deck, prefs.theme, library, queuePage, headerIcons)
+    } else if (tapeFull) {
         val close = if (landscape) "‹ LIBRARY" else "✕ CLOSE"
         if (prefs.theme == io.github.momonekomata.sidea.AppTheme.STEREO) {
             StereoFullScreen(deck, closeLabel = close, onClose = { tapeFull = false })
@@ -538,6 +541,115 @@ private fun summary(f: StreamFacts, note: String?): String {
         else -> "→ ${note ?: "Android mixer"} → $dest"
     }
     return "$src\n$out"
+}
+
+/**
+ * A phone on its side: three full-screen pages a swipe apart.
+ * - TAPE: the cassette player full screen, in the chosen theme; nothing else on it.
+ * - NOW PLAYING: the cover with the song, its format, the seek bar and the keys on the left; the
+ *   lyrics scrolling on the right; the EQ and Settings buttons at the top right.
+ * - QUEUE: the Library on the left, the queue on the right.
+ */
+@Composable
+private fun LandscapeLayout(
+    deck: DeckModel,
+    theme: io.github.momonekomata.sidea.AppTheme,
+    library: @Composable (Modifier) -> Unit,
+    queuePage: @Composable (Modifier) -> Unit,
+    headerIcons: @Composable () -> Unit,
+) {
+    val pager = rememberPagerState(initialPage = 0) { 3 }
+    HorizontalPager(pager, Modifier.fillMaxSize().anodizedBlue()) { page ->
+        when (page) {
+            0 -> if (theme == io.github.momonekomata.sidea.AppTheme.STEREO) {
+                // The player lying on its side, filling the screen lengthwise (its top to the left).
+                Box(Modifier.fillMaxSize().anodizedBlue().windowInsetsPadding(WindowInsets.displayCutout)) {
+                    // The keys' symbols turned back upright, so play still points the right way.
+                    Box(Modifier.fillMaxSize().sideways().padding(10.dp)) { StereoDeck(deck, Modifier.fillMaxSize(), iconTurn = 90f) }
+                }
+            } else {
+                TapeFullScreen(deck)
+            }
+            1 -> LandscapeNowPlaying(deck, headerIcons)
+            else -> Row(
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout).padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                library(Modifier.weight(1f).fillMaxHeight())
+                queuePage(Modifier.weight(1f).fillMaxHeight())
+            }
+        }
+    }
+}
+
+/**
+ * Landscape Now Playing: on the brushed metal in the cover's colour (the body's blue without a
+ * cover), the cover beside the song, its quality and format, the seek bar and the keys; the whole
+ * lyrics scrolling on the right; the EQ and Settings buttons at the top right.
+ */
+@Composable
+private fun LandscapeNowPlaying(deck: DeckModel, headerIcons: @Composable () -> Unit) {
+    val tint = deck.tint ?: Retro.Background
+    val ink = Retro.OnShell
+    val muted = Retro.Muted
+    var showPath by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize().brushedMetal(tint).windowInsetsPadding(WindowInsets.displayCutout)) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(16.dp)) {
+            val cover = minOf(maxHeight, maxWidth * 0.3f)
+            val infoW = maxWidth * 0.3f
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Box(Modifier.size(cover).shadow(6.dp, RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp)).background(Color(0xFF111111))) {
+                    val art = deck.art
+                    if (art != null) Image(art, "Cover", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    else Box(Modifier.fillMaxSize().background(Retro.Shell), contentAlignment = Alignment.Center) {
+                        Text("A", color = Retro.Orange, fontSize = 64.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+                Column(Modifier.width(infoW).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
+                    Text(deck.title.ifBlank { "Nothing playing" }, color = ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (deck.subtitle.isNotBlank()) Text(deck.subtitle, color = muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val path = deck.path
+                    if (path != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            QualityBadge(path.quality) { showPath = true }
+                        }
+                        Text(deck.status.lines().first(), color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false)
+                    } else {
+                        Text(deck.status.lines().first(), color = muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    LandscapeSeek(deck)
+                    TransportPager(deck, compact = false)
+                }
+                // Below the EQ and Settings buttons in the corner.
+                LyricsFlow(deck, Modifier.weight(1f).fillMaxHeight().padding(top = 40.dp))
+            }
+        }
+        Row(Modifier.align(Alignment.TopEnd).padding(4.dp)) { headerIcons() }
+    }
+    val path = deck.path
+    if (showPath && path != null) SignalPathDialog(path, onDismiss = { showPath = false })
+}
+
+/** A slim seek line and the times, printed light, for the landscape Now Playing. */
+@Composable
+private fun LandscapeSeek(deck: DeckModel) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    val duration = deck.durationMs.coerceAtLeast(1)
+    val value = dragging ?: (deck.positionMs.toFloat() / duration).coerceIn(0f, 1f)
+    Column {
+        androidx.compose.material3.Slider(
+            value = value,
+            onValueChange = { dragging = it },
+            onValueChangeFinished = { dragging?.let { deck.onSeek((it * duration).toLong()) }; dragging = null },
+            enabled = deck.durationMs > 0,
+            colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Retro.Orange, activeTrackColor = Retro.Orange, inactiveTrackColor = Color.White.copy(alpha = 0.3f)),
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime((value * duration).toLong()), color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
+            Text(if (deck.durationMs > 0) formatTime(deck.durationMs) else "--:--", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp)
+        }
+    }
 }
 
 /**

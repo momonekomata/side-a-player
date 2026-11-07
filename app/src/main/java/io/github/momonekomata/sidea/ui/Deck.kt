@@ -192,10 +192,10 @@ private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, on
         val artH = if (model.showLyrics) (maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
         else minOf(maxWidth * 1.06f, maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
         Column(Modifier.fillMaxSize()) {
+          Box(Modifier.fillMaxWidth().height(artH)) {
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .height(artH)
+                    .fillMaxSize()
                     // The cover's foot fades out, so the brushed metal itself shows through it.
                     .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                     .drawWithContent {
@@ -206,13 +206,24 @@ private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, on
                         )
                     },
             ) {
-                ArtSquare(model, Modifier.fillMaxSize().padding(top = if (model.showLyrics) statusTop else 0.dp), shape = RectangleShape, hintAlign = Alignment.CenterEnd)
+                ArtSquare(model, Modifier.fillMaxSize().padding(top = if (model.showLyrics) statusTop else 0.dp), shape = RectangleShape, showHint = false)
                 // With the lyrics up the deck reaches the top of the screen: a little shade behind
                 // the status bar's icons.
                 if (model.showLyrics) {
                     Box(Modifier.fillMaxWidth().height(72.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent))))
                 }
             }
+            // LYRICS / COVER: a small key settled at the cover's bottom right, outside its fade.
+            val hint = when {
+                model.showLyrics -> "COVER"
+                model.lyrics.lyrics != null -> "LYRICS"
+                model.lyrics.loading -> "LYRICS…"
+                else -> null
+            }
+            if (hint != null) {
+                Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 4.dp)) { SmallLabelKey(hint, hint, model.onToggleLyrics) }
+            }
+          }
             // The song and its format sit down by the seek bar and the keys.
             Column(
                 Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp).padding(top = 4.dp),
@@ -431,7 +442,7 @@ internal fun RepeatKey(model: DeckModel, k: Dp) {
 
 /** The cover, or the lyrics in its place; one tap swaps them. */
 @Composable
-private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = RoundedCornerShape(8.dp), hintAlign: Alignment = Alignment.BottomEnd) {
+private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = RoundedCornerShape(8.dp), hintAlign: Alignment = Alignment.BottomEnd, showHint: Boolean = true) {
     Box(
         modifier
             .clip(shape)
@@ -453,7 +464,7 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
             }
         }
         // A hint for what a tap does, and that lyrics exist at all.
-        val hint = when {
+        val hint = if (!showHint) null else when {
             model.showLyrics -> "COVER"
             model.lyrics.lyrics != null -> "LYRICS"
             model.lyrics.loading -> "LYRICS…"
