@@ -227,7 +227,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                 },
             )
             // Albums as covers or as a list: always in sight beside the search while albums show.
-            if (view.albums != null) {
+            if (view.albums != null || (view.search != null && ui.segment == LibSegment.ALBUMS)) {
                 androidx.compose.material3.IconButton(onClick = { model.setGridAlbums(!grid) }, modifier = Modifier.padding(start = 4.dp).size(40.dp)) {
                     androidx.compose.material3.Icon(
                         if (grid) androidx.compose.material.icons.Icons.Filled.ViewList else androidx.compose.material.icons.Icons.Filled.GridView,
@@ -266,6 +266,43 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
             item(key = "empty") {
                 JCardNote("Point the Library at your music: add a folder on the phone, or on a NAS or in the cloud, in Settings → Music sources. Everything inside it gets scanned in.") {
                     CardButton("Music sources…", onSources)
+                }
+            }
+        }
+        view.search?.let { res ->
+            // The open tab's matching names first, as that tab shows them; then the rest mixed by
+            // how well they match, each marked with what it is.
+            val mine = res.hits.take(res.top)
+            val others = res.hits.drop(res.top)
+            val songsShown = res.hits.mapNotNull { it.track }
+            fun playSong(t: io.github.momonekomata.sidea.library.LibTrack) = model.play(songsShown, songsShown.indexOfFirst { it.id == t.id }.coerceAtLeast(0))
+            if (res.hits.isEmpty()) item(key = "s:none") { JCardNote("Nothing in the Library matches “${ui.filter.query.trim()}”.") }
+            val myAlbums = mine.mapNotNull { it.album }
+            if (ui.segment == LibSegment.ALBUMS && grid) {
+                myAlbums.chunked(3).forEachIndexed { r, row ->
+                    item(key = "s:alg:$r:" + row.first().key) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            row.forEach { al -> AlbumTile(model, al, showBy = true, Modifier.weight(1f)) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
+                            repeat(3 - row.size) { Box(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+            } else {
+                mine.forEach { h -> item(key = "s:" + hitKey(h)) { HitRow(model, vm, h, marked = false, playing = queue.current?.id, onSong = ::playSong) } }
+            }
+            if (others.isNotEmpty()) {
+                item(key = "s:others") {
+                    Text(
+                        if (mine.isEmpty()) "No ${ui.segment.label.lowercase()} by that name. More results:" else "More results",
+                        color = Retro.InkFaint, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 2.dp),
+                    )
+                }
+                others.forEach { h -> item(key = "s:o:" + hitKey(h)) { HitRow(model, vm, h, marked = true, playing = queue.current?.id, onSong = ::playSong) } }
+            }
+            res.more.forEach { (s, n) ->
+                item(key = "s:more:" + s.name) {
+                    JCardRow("→", "See all in ${s.label}", "${n} more", onClick = { model.segment(s) })
                 }
             }
         }
@@ -362,6 +399,45 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
             confirmButton = { TextButton({ vm.deletePlaylist(p.id); deleting = null }) { Text("Delete") } },
             dismissButton = { TextButton({ deleting = null }) { Text("Cancel") } },
         )
+    }
+}
+
+private fun hitKey(h: io.github.momonekomata.sidea.library.LibHit) = when {
+    h.artist != null -> "ar:" + h.artist.name
+    h.album != null -> "al:" + h.album.key
+    h.track != null -> "t:" + h.track.id
+    else -> "g:" + h.genre?.name
+}
+
+/**
+ * One search result. [marked] results come from another tab than the one open, so they say what
+ * they are (an album shows its cover, which says it already).
+ */
+@Composable
+private fun HitRow(
+    model: io.github.momonekomata.sidea.library.LibraryModel,
+    vm: MainViewModel,
+    h: io.github.momonekomata.sidea.library.LibHit,
+    marked: Boolean,
+    playing: String?,
+    onSong: (io.github.momonekomata.sidea.library.LibTrack) -> Unit,
+) {
+    fun kind(k: String, rest: String) = if (marked) "$k · $rest" else rest
+    h.artist?.let { a ->
+        JCardRow(a.name.take(1).uppercase(), a.name, kind("Artist", "${plural(a.albums, "album")} · ${plural(a.tracks, "song")}"), onClick = { model.open(LibDrill.Artist(a.name)) })
+    }
+    h.album?.let { al -> AlbumRow(model, al, showBy = true) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
+    h.track?.let { t ->
+        JCardRow(
+            "", t.title,
+            kind("Song", listOf(t.artist.ifBlank { t.albumBy }, t.album, formatLabel(t.codec, t.sampleRate, t.bits)).filter { it.isNotBlank() }.joinToString(" · ")),
+            current = playing == t.id,
+            onLongClick = { vm.openSongMenu(t) },
+            onClick = { onSong(t) },
+        )
+    }
+    h.genre?.let { g ->
+        JCardRow("♪", g.name, kind("Genre", "${plural(g.albums, "album")} · ${plural(g.tracks, "song")}"), onClick = { model.open(LibDrill.Genre(g.name)) })
     }
 }
 

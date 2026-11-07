@@ -36,6 +36,8 @@ data class LibView(
     val sources: List<Pair<LibrarySource, Int>>? = null,
     /** The songs are an album's, in disc and track order. */
     val albumOrder: Boolean = false,
+    /** A search from a tab: every tab's results, that tab's first. */
+    val search: LibSearchResult? = null,
 )
 
 data class LibraryUi(
@@ -160,6 +162,9 @@ class LibraryModel(private val scope: CoroutineScope, private val prefs: android
     private fun load(q: LibQuery, sources: List<LibrarySource>): LibView {
         val db = Library.db
         val f = q.filter
+        // Searching from a tab looks through the whole Library; inside an artist, an album,
+        // Favourites or a playlist it stays inside it.
+        if (q.stack.isEmpty() && f.query.isNotBlank() && f.list == null) return LibView(search = db.searchAll(f, q.segment))
         return when (val top = q.stack.lastOrNull()) {
             is LibDrill.Artist -> LibView(albums = db.albums(f, artist = top.name))
             is LibDrill.Album -> LibView(tracks = db.tracks(f, album = top.key), albumOrder = true)
