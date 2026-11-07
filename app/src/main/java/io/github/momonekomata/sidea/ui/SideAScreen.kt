@@ -158,11 +158,14 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     BackHandler(enabled = libraryUi.stack.isNotEmpty()) { vm.library.back() }
 
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
+    // The cover's colour, for the deck's faceplate: worked out once per cover.
+    val tint = remember(localImage) { localImage?.let(::coverTint) }
     val deck = localDeck(queue, engine, parked, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite).copy(
         lyrics = lyrics,
         showLyrics = showLyrics,
         onToggleLyrics = { showLyrics = !showLyrics },
         onRetryLyrics = vm::retryLyrics,
+        tint = tint,
     )
 
     // Landscape: full screen. The system bars hide (swipe from an edge to peek), and the header's
@@ -186,23 +189,38 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     var tapeFull by rememberSaveable(landscape) { mutableStateOf(landscape) }
     BackHandler(enabled = tapeFull) { tapeFull = false }
     ImmersiveMode(landscape || tapeFull)
+    // A phone's full player covers the whole screen, header and all, from edge to edge.
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val phone = LocalConfiguration.current.screenWidthDp < 600
+    BackHandler(enabled = expanded && phone && !tapeFull) { expanded = false }
     if (tapeFull) {
         TapeFullScreen(deck, closeLabel = if (landscape) "‹ LIBRARY" else "✕ CLOSE", onClose = { tapeFull = false })
-    } else Column(
-        Modifier
-            .fillMaxSize()
-            .anodizedBlue()
-            .then(if (landscape) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier.safeDrawingPadding()),
-    ) {
-        if (!landscape) Header(spec) { headerIcons() }
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            if (maxWidth >= 600.dp) {
-                WideLayout(
-                    deck, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage, card = library,
-                    onTapeFullScreen = { tapeFull = true },
-                )
-            } else {
-                PhoneLayout(deck, lyrics, queuePage, card = library, onTapeFullScreen = { tapeFull = true })
+    } else Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .anodizedBlue()
+                .then(if (landscape) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier.safeDrawingPadding()),
+        ) {
+            if (!landscape) Header(spec) { headerIcons() }
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                if (!phone) {
+                    WideLayout(
+                        deck, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage, card = library,
+                        onTapeFullScreen = { tapeFull = true },
+                    )
+                } else {
+                    PhoneLayout(deck, lyrics, card = library, onExpand = { expanded = true })
+                }
+            }
+        }
+        if (phone) {
+            AnimatedVisibility(
+                visible = expanded,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut(),
+            ) {
+                ExpandedDeck(deck, queuePage, onCollapse = { expanded = false }, onTapeFullScreen = { tapeFull = true })
             }
         }
     }
@@ -262,25 +280,12 @@ private fun WideLayout(
 private fun PhoneLayout(
     deck: DeckModel,
     lyrics: LyricsState,
-    queuePage: (@Composable (Modifier) -> Unit)?,
     card: @Composable (Modifier) -> Unit,
-    onTapeFullScreen: () -> Unit,
+    onExpand: () -> Unit,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    BackHandler(enabled = expanded) { expanded = false }
-
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
-            card(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp))
-            MiniPlayer(deck, lyrics.lyrics, onExpand = { expanded = true })
-        }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = slideInVertically { it } + fadeIn(),
-            exit = slideOutVertically { it } + fadeOut(),
-        ) {
-            ExpandedDeck(deck, queuePage, onCollapse = { expanded = false }, onTapeFullScreen = onTapeFullScreen)
-        }
+    Column(Modifier.fillMaxSize()) {
+        card(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp))
+        MiniPlayer(deck, lyrics.lyrics, onExpand = onExpand)
     }
 }
 
@@ -406,19 +411,9 @@ private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> 
                 }
             },
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onCollapse)
-                .padding(vertical = 10.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = Retro.Muted)
-            Text("NOW PLAYING", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 3.sp)
-        }
-        // Swipe left for the queue.
-        NowPlayingPager(deck, Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), compact = false, queuePage = queuePage, onTapeFullScreen = onTapeFullScreen)
+        // No header: the deck runs from the top of the screen to the bottom. Swipe right for the
+        // tape, left for the queue; swipe down (or Back) to put it away.
+        NowPlayingPager(deck, Modifier.fillMaxSize(), compact = false, queuePage = queuePage, onTapeFullScreen = onTapeFullScreen, edgeToEdge = true)
     }
 }
 
@@ -533,8 +528,9 @@ private fun summary(f: StreamFacts, note: String?): String {
 }
 
 /**
- * TAPE · DECK · QUEUE: it opens on the deck; the cassette turning is a swipe right, the queue a
- * swipe left. The names under them take taps too.
+ * The tape, the deck and the queue: it opens on the deck; the cassette turning is a swipe right,
+ * the queue a swipe left. [edgeToEdge] is the phone's full-screen player: the deck draws to the
+ * screen's edges itself, the tape and the queue keep clear of the system bars.
  */
 @Composable
 private fun NowPlayingPager(
@@ -543,27 +539,16 @@ private fun NowPlayingPager(
     compact: Boolean,
     queuePage: (@Composable (Modifier) -> Unit)?,
     onTapeFullScreen: (() -> Unit)? = null,
+    edgeToEdge: Boolean = false,
 ) {
-    val labels = if (queuePage != null) listOf("TAPE", "DECK", "QUEUE") else listOf("TAPE", "DECK")
-    val pager = rememberPagerState(initialPage = 1) { labels.size }
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    Column(modifier) {
-        HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), pageSpacing = 12.dp) { page ->
-            when {
-                page == 0 -> TapeDeck(deck, Modifier.fillMaxSize(), compact = compact, onFullScreen = onTapeFullScreen)
-                page == 2 && queuePage != null -> queuePage(Modifier.fillMaxSize().padding(horizontal = if (compact) 0.dp else 12.dp))
-                else -> Deck(deck, Modifier.fillMaxSize(), compact = compact)
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)) {
-            labels.forEachIndexed { i, label ->
-                Text(
-                    label,
-                    color = if (pager.currentPage == i) Retro.Orange else Retro.Muted,
-                    fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 2.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable { scope.launch { pager.animateScrollToPage(i) } }.padding(horizontal = 10.dp, vertical = if (compact) 4.dp else 6.dp),
-                )
-            }
+    val pages = if (queuePage != null) 3 else 2
+    val pager = rememberPagerState(initialPage = 1) { pages }
+    val safe = if (edgeToEdge) Modifier.safeDrawingPadding().padding(top = 8.dp, bottom = 8.dp) else Modifier
+    HorizontalPager(pager, modifier, pageSpacing = if (edgeToEdge) 0.dp else 12.dp) { page ->
+        when {
+            page == 0 -> TapeDeck(deck, Modifier.fillMaxSize().then(safe).padding(horizontal = if (edgeToEdge) 8.dp else 0.dp), compact = compact, onFullScreen = onTapeFullScreen)
+            page == 2 && queuePage != null -> queuePage(Modifier.fillMaxSize().then(safe).padding(horizontal = if (compact) 0.dp else 12.dp))
+            else -> Deck(deck, Modifier.fillMaxSize(), compact = compact, fullBleed = edgeToEdge)
         }
     }
 }

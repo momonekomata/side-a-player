@@ -53,6 +53,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
@@ -102,20 +107,37 @@ data class DeckModel(
     val onNext: () -> Unit,
     val onPrevious: () -> Unit,
     val onSeek: (Long) -> Unit,
+    /** The cover's colour, for the faceplate; null leaves it silver. */
+    val tint: Color? = null,
 )
+
+/** What's printed on the faceplate: dark on silver, light on a cover's colour. */
+internal class DeckInk(val main: Color, val muted: Color)
+
+internal fun deckInk(tint: Color?) =
+    if (tint == null) DeckInk(Retro.OnMetal, Retro.OnMetalMuted) else DeckInk(Color(0xFFF3F5F8), Color(0xFFF3F5F8).copy(alpha = 0.72f))
 
 /**
  * Cover art, full size, with the lyrics in the same square: tap to swap. Below it the title,
  * the quality badge with the signal path, the seek bar and the transport keys. [compact] lays the
- * square beside the controls, for a phone on its side.
+ * square beside the controls, for a phone on its side. [fullBleed] is the phone's full-screen
+ * player: the cover from the very top of the screen, fading into the faceplate, and tall piano
+ * keys down to the bottom edge. The faceplate is brushed metal in the cover's colour.
  */
 @Composable
-fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = false) {
+fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = false, fullBleed: Boolean = false) {
     var showPath by remember { mutableStateOf(false) }
-    // The faceplate: brushed aluminium, printed in dark ink.
+    val ink = deckInk(model.tint)
+    if (fullBleed && !compact) {
+        FullBleedDeck(model, ink, modifier) { showPath = true }
+        val path = model.path
+        if (showPath && path != null) SignalPathDialog(path, onDismiss = { showPath = false })
+        return
+    }
+    // The faceplate: brushed aluminium, silver or in the cover's colour.
     val panel = modifier
         .clip(RoundedCornerShape(10.dp))
-        .brushedMetal()
+        .brushedMetal(model.tint)
     if (compact) {
         // A phone on its side: the cover no wider than about two fifths of the panel, so the
         // song, the badge and all the keys get a roomy column beside it.
@@ -124,7 +146,7 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 ArtSquare(model, Modifier.size(art))
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
-                    Controls(model, compact = true) { showPath = true }
+                    Controls(model, ink, compact = true) { showPath = true }
                 }
             }
         }
@@ -140,10 +162,10 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
                     Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    SongInfo(model, compact = false) { showPath = true }
+                    SongInfo(model, ink, compact = false) { showPath = true }
                 }
                 Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
-                    SeekBar(model)
+                    SeekBar(model, ink)
                     TransportPager(model, compact = false)
                 }
             }
@@ -153,33 +175,168 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
     if (showPath && path != null) SignalPathDialog(path, onDismiss = { showPath = false })
 }
 
+/**
+ * The phone's full-screen player: the cover from the top edge of the screen (the status bar over
+ * it), fading into the faceplate; the song, its badge and the seek bar; and the piano keys
+ * running down to the bottom edge.
+ */
 @Composable
-private fun Controls(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
-    SongInfo(model, compact, onPath)
-    SeekBar(model)
+private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, onPath: () -> Unit) {
+    val bottomInset = androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    BoxWithConstraints(modifier.fillMaxSize().brushedMetal(model.tint)) {
+        val keysH = 104.dp + bottomInset
+        // As tall as the room allows, up to a touch taller than wide (barely cropping the cover).
+        val artH = minOf(maxWidth * 1.06f, maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
+        Column(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(artH)
+                    // The cover's foot fades out, so the brushed metal itself shows through it.
+                    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            Brush.verticalGradient(0f to Color.Black, 0.62f to Color.Black, 1f to Color.Transparent),
+                            blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                        )
+                    },
+            ) {
+                ArtSquare(model, Modifier.fillMaxSize(), shape = RectangleShape, hintAlign = Alignment.CenterEnd)
+                // The status bar's icons over the cover: a little shade behind them.
+                Box(Modifier.fillMaxWidth().height(72.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent))))
+            }
+            Column(
+                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                SongInfo(model, ink, compact = false, onPath)
+            }
+            Box(Modifier.padding(horizontal = 16.dp)) { SeekBar(model, ink) }
+            PianoTransport(model, bottomInset)
+        }
+    }
+}
+
+/**
+ * Tall piano keys from the seek bar down to the screen's bottom edge: shuffle, previous, PLAY
+ * (orange, held down while playing), next and repeat. Swipe them for −10 −5 +5 +10. The names
+ * sit above the gesture bar.
+ */
+@Composable
+private fun PianoTransport(model: DeckModel, bottomInset: Dp) {
+    val pager = rememberPagerState { 2 }
+    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+        repeat(2) { i ->
+            Box(Modifier.size(5.dp).clip(CircleShape).background(if (pager.currentPage == i) Retro.Orange else Color.White.copy(alpha = 0.45f)))
+        }
+    }
+    val tall = 98.dp + bottomInset
+    val housing = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)
+    HorizontalPager(pager, Modifier.fillMaxWidth().height(tall)) { page ->
+        Row(
+            Modifier
+                .fillMaxSize()
+                .clip(housing)
+                .background(Brush.verticalGradient(listOf(Color(0xFF8A8E94), Color(0xFFA7ABB0), Color(0xFFB4B7BB))))
+                .padding(start = 5.dp, end = 5.dp, top = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            val m = Modifier.weight(1f).fillMaxHeight()
+            if (page == 0) {
+                model.shuffle?.let { on -> PianoKey(m, Icons.Filled.Shuffle, "Shuffle", "SHUF", bottomInset, led = on, onClick = model.onShuffle) }
+                PianoKey(m, Icons.Filled.SkipPrevious, "Previous", "PREV", bottomInset, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
+                PianoKey(
+                    Modifier.weight(1.35f).fillMaxHeight(), if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause",
+                    if (model.playing) "PAUSE" else "PLAY", bottomInset, orange = true, latched = model.playing, onClick = model.onToggle,
+                )
+                PianoKey(m, Icons.Filled.SkipNext, "Next", "NEXT", bottomInset, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
+                model.repeat?.let { r ->
+                    PianoKey(
+                        m, if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", if (r == RepeatMode.ONE) "RPT 1" else "RPT",
+                        bottomInset, led = r != RepeatMode.OFF, onClick = model.onRepeat,
+                    )
+                }
+            } else {
+                PianoText(m, "−10", "Back 10 seconds", bottomInset) { model.onSkip(-10_000) }
+                PianoText(m, "−5", "Back 5 seconds", bottomInset) { model.onSkip(-5_000) }
+                PianoText(m, "+5", "Forward 5 seconds", bottomInset) { model.onSkip(5_000) }
+                PianoText(m, "+10", "Forward 10 seconds", bottomInset) { model.onSkip(10_000) }
+            }
+        }
+    }
+}
+
+/** A tall key: its sloped front a shade darker at the top, the symbol on it, the name at its foot. */
+@Composable
+internal fun PianoKey(
+    modifier: Modifier, icon: ImageVector, label: String, caption: String, bottomInset: Dp = 0.dp,
+    orange: Boolean = false, latched: Boolean = false, led: Boolean? = null, onHold: (() -> Unit)? = null, onClick: () -> Unit,
+) {
+    KeyBox(modifier, orange = orange, latched = latched, led = led, onHold = onHold, onClick = onClick) { _ ->
+        PianoFace(orange) {
+            Icon(icon, contentDescription = label, tint = if (orange) Color.White else Retro.OnMetal, modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp).size(26.dp))
+            Text(
+                caption, color = if (orange) Color.White else Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 9.sp, maxLines = 1,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 8.dp + bottomInset),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun PianoText(modifier: Modifier, text: String, label: String, bottomInset: Dp = 0.dp, onClick: () -> Unit) {
+    KeyBox(modifier.semantics { contentDescription = label }, onClick = onClick) { _ ->
+        PianoFace(false) {
+            Text(text, color = Retro.OnMetal, fontFamily = Retro.Mono, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopCenter).padding(top = 22.dp))
+        }
+    }
+}
+
+@Composable
+private fun PianoFace(orange: Boolean, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    Box(
+        Modifier.fillMaxSize().drawBehind {
+            // The key's sloped front: a band a little darker across its top, then the lit edge.
+            drawRect(
+                Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = if (orange) 0.10f else 0.07f), 0.30f to Color.Black.copy(alpha = 0.02f),
+                    0.31f to Color.White.copy(alpha = if (orange) 0.10f else 0.35f), 0.325f to Color.Transparent, 1f to Color.Transparent,
+                    endY = 100.dp.toPx(),
+                ),
+            )
+        },
+        content = content,
+    )
+}
+
+@Composable
+private fun Controls(model: DeckModel, ink: DeckInk, compact: Boolean, onPath: () -> Unit) {
+    SongInfo(model, ink, compact, onPath)
+    SeekBar(model, ink)
     TransportPager(model, compact)
 }
 
 /** Title, artist and album, the heart, and the quality badge with the format beside it. */
 @Composable
-private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
+private fun SongInfo(model: DeckModel, ink: DeckInk, compact: Boolean, onPath: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(
                 model.title.ifBlank { "Nothing playing" },
-                color = Retro.OnMetal,
+                color = ink.main,
                 fontSize = if (compact) 16.sp else 18.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (model.subtitle.isNotBlank()) {
-                Text(model.subtitle, color = Retro.OnMetalMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(model.subtitle, color = ink.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         model.favorite?.let { fav ->
             IconButton(onClick = model.onFavorite, modifier = Modifier.size(40.dp)) {
-                Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else Retro.OnMetalMuted)
+                Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else ink.muted)
             }
         }
     }
@@ -191,7 +348,7 @@ private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
             // Two lines, so a long one (the Buffering speeds) wraps instead of being cut off.
             Text(
                 model.status.lines().first(),
-                color = Retro.OnMetalMuted,
+                color = ink.muted,
                 fontFamily = Retro.Mono,
                 fontSize = 11.sp,
                 maxLines = 2,
@@ -200,7 +357,7 @@ private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
             )
         }
     } else {
-        StatusLine(model.status, model.statusColor)
+        StatusLine(model.status, if (model.statusColor == Retro.OnMetalMuted) ink.muted else model.statusColor)
     }
 }
 
@@ -266,7 +423,7 @@ internal fun RepeatKey(model: DeckModel, k: Dp) {
 
 /** The cover, or the lyrics in its place; one tap swaps them. */
 @Composable
-private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
+private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = RoundedCornerShape(8.dp), hintAlign: Alignment = Alignment.BottomEnd) {
     Box(
         modifier
             .clip(shape)
@@ -302,7 +459,7 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
                 fontSize = 10.sp,
                 letterSpacing = 1.sp,
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
+                    .align(hintAlign)
                     .padding(8.dp)
                     .clip(RoundedCornerShape(50))
                     .background(Color.Black.copy(alpha = 0.55f))
@@ -352,7 +509,7 @@ internal fun StatusLine(text: String, color: Color) {
 }
 
 @Composable
-private fun SeekBar(model: DeckModel) {
+private fun SeekBar(model: DeckModel, ink: DeckInk) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val duration = model.durationMs.coerceAtLeast(1)
     val value = dragging ?: (model.positionMs.toFloat() / duration).coerceIn(0f, 1f)
@@ -368,13 +525,13 @@ private fun SeekBar(model: DeckModel) {
             colors = SliderDefaults.colors(
                 thumbColor = Retro.Orange,
                 activeTrackColor = Retro.Orange,
-                inactiveTrackColor = Retro.MetalEdge,
-                disabledInactiveTrackColor = Retro.MetalEdge.copy(alpha = 0.6f),
+                inactiveTrackColor = ink.muted.copy(alpha = 0.45f),
+                disabledInactiveTrackColor = ink.muted.copy(alpha = 0.3f),
             ),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime((value * duration).toLong()), color = Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 11.sp)
-            Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 11.sp)
+            Text(formatTime((value * duration).toLong()), color = ink.muted, fontFamily = Retro.Mono, fontSize = 11.sp)
+            Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = ink.muted, fontFamily = Retro.Mono, fontSize = 11.sp)
         }
     }
 }

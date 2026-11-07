@@ -23,6 +23,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -128,6 +130,68 @@ fun Modifier.brushedMetal(): Modifier = this.drawWithCache {
         drawGrain(g, 0.10f, 0.045f)
         drawRect(band)
     }
+}
+
+/**
+ * Brushed metal anodised in [tint] (the cover's colour): the same sheen, band of light and grain
+ * as the silver, in that colour. Null is the plain silver.
+ */
+fun Modifier.brushedMetal(tint: Color?): Modifier = if (tint == null) brushedMetal() else this.drawWithCache {
+    val base = Brush.verticalGradient(
+        listOf(androidx.compose.ui.graphics.lerp(tint, Color.White, 0.16f), tint, androidx.compose.ui.graphics.lerp(tint, Color.White, 0.07f), androidx.compose.ui.graphics.lerp(tint, Color.Black, 0.28f)),
+    )
+    val band = sheen(size.width, size.height, 0.14f)
+    val g = grain(size.width, size.height)
+    onDrawBehind {
+        drawRect(base)
+        drawGrain(g, 0.06f, 0.08f)
+        drawRect(band)
+    }
+}
+
+/**
+ * The cover's colour, as metal would take it: the hue that most of the cover's colourful pixels
+ * share (or its average, for a cover with hardly any colour), its saturation held in, and dark
+ * enough for light printing to read on it.
+ */
+fun coverTint(art: ImageBitmap): Color? = try {
+    var src = art.asAndroidBitmap()
+    if (src.config == android.graphics.Bitmap.Config.HARDWARE) src = src.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+    val bmp = android.graphics.Bitmap.createScaledBitmap(src, 24, 24, true)
+    val weight = FloatArray(12)
+    val rs = FloatArray(12)
+    val gs = FloatArray(12)
+    val bs = FloatArray(12)
+    var ar = 0f
+    var ag = 0f
+    var ab = 0f
+    val hsv = FloatArray(3)
+    for (y in 0 until 24) for (x in 0 until 24) {
+        val c = bmp.getPixel(x, y)
+        val r = (c shr 16 and 0xFF) / 255f
+        val g = (c shr 8 and 0xFF) / 255f
+        val b = (c and 0xFF) / 255f
+        ar += r; ag += g; ab += b
+        android.graphics.Color.colorToHSV(c, hsv)
+        if (hsv[2] < 0.15f) continue
+        val wgt = hsv[1] * hsv[2]
+        val bin = (hsv[0] / 30f).toInt().coerceIn(0, 11)
+        weight[bin] += wgt
+        rs[bin] += r * wgt; gs[bin] += g * wgt; bs[bin] += b * wgt
+    }
+    val best = weight.indices.maxBy { weight[it] }
+    val base = if (weight.sum() < 576 * 0.06f || weight[best] <= 0f) {
+        android.graphics.Color.rgb((ar / 576 * 255).toInt(), (ag / 576 * 255).toInt(), (ab / 576 * 255).toInt())
+    } else {
+        android.graphics.Color.rgb((rs[best] / weight[best] * 255).toInt(), (gs[best] / weight[best] * 255).toInt(), (bs[best] / weight[best] * 255).toInt())
+    }
+    val hsl = FloatArray(3)
+    androidx.core.graphics.ColorUtils.colorToHSL(base, hsl)
+    hsl[1] = hsl[1].coerceIn(0.08f, 0.5f)
+    hsl[2] = 0.32f
+    Color(androidx.core.graphics.ColorUtils.HSLToColor(hsl))
+} catch (e: Exception) {
+    null
 }
 
 /**

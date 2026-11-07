@@ -242,11 +242,10 @@ private fun Cassette(model: DeckModel, modifier: Modifier, keys: Boolean = true,
 
         if (!keys) {
             // The tape page's cassette: just the label, as a real tape's. The time, the format and
-            // the quality are on the deck's display; under the window, the line being sung,
-            // written in by hand.
+            // the quality are on the deck's display; under the window, the line being sung.
             if (line != null) {
                 Text(
-                    line, color = ink, style = shade, fontFamily = androidx.compose.ui.text.font.FontFamily.Cursive, fontSize = font(0.062f, 11f, 20f),
+                    line, color = ink, style = shade, fontWeight = FontWeight.Medium, fontSize = font(0.055f, 10f, 18f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     modifier = Modifier.offset(x = w * LABEL_L, y = h * 0.6f).width(w * LABEL_W).padding(horizontal = h * 0.06f),
                 )
