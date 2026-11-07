@@ -61,6 +61,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -186,15 +188,24 @@ private fun lyricLine(model: DeckModel): String? =
 @Composable
 private fun TapeWindow(model: DeckModel, modifier: Modifier, onFullScreen: (() -> Unit)?, lineOnTape: Boolean = true) {
     val frame = RoundedCornerShape(8.dp)
+    val glass = io.github.momonekomata.sidea.Settings.prefs.collectAsState().value.theme == io.github.momonekomata.sidea.AppTheme.GLASS
     Column(modifier) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .shadow(3.dp, frame)
+                .shadow(if (glass) 6.dp else 3.dp, frame)
                 .clip(frame)
-                .background(Color(0xFF0F1B2E))
-                .border(1.5.dp, Color(0xFF0A1322), frame)
-                .padding(5.dp),
+                .then(
+                    if (glass) {
+                        // A cassette deck's door: a brushed-metal frame round a dark well.
+                        Modifier.brushedMetal().border(1.dp, Retro.MetalEdge, frame).padding(9.dp)
+                            .border(2.dp, Color(0xFF05070B), RoundedCornerShape(5.dp))
+                            .background(Color(0xFF06080C), RoundedCornerShape(5.dp))
+                            .padding(7.dp)
+                    } else {
+                        Modifier.background(Color(0xFF0F1B2E)).border(1.5.dp, Color(0xFF0A1322), frame).padding(5.dp)
+                    },
+                ),
         ) {
             Box(
                 Modifier
@@ -210,6 +221,7 @@ private fun TapeWindow(model: DeckModel, modifier: Modifier, onFullScreen: (() -
                         TapeOnly(model, if (lineOnTape) lyricLine(model) else null, Modifier.fillMaxSize())
                     }
                 }
+                if (glass && !model.showLyrics) GlassPane(Modifier.fillMaxSize())
             }
         }
         val hint = when {
@@ -225,6 +237,45 @@ private fun TapeWindow(model: DeckModel, modifier: Modifier, onFullScreen: (() -
                 if (onFullScreen != null) SmallLabelKey("⛶ FULL", "Full screen", onFullScreen)
             }
         }
+    }
+}
+
+/**
+ * The Glass deck theme's door glass over the tape: smoked a little blue-grey, darker towards the
+ * foot, with a broad soft reflection and a thin bright streak across it, and the glass's edge
+ * catching the light along the top and left.
+ */
+@Composable
+private fun GlassPane(modifier: Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        drawRect(Brush.verticalGradient(listOf(Color(0x332B3B52), Color(0x44141C28), Color(0x66080B10))))
+        // The broad reflection: a soft band from the upper left.
+        drawRect(
+            Brush.linearGradient(
+                0f to Color.White.copy(alpha = 0.16f), 0.28f to Color.White.copy(alpha = 0.06f), 0.42f to Color.Transparent, 1f to Color.Transparent,
+                start = androidx.compose.ui.geometry.Offset(0f, 0f), end = androidx.compose.ui.geometry.Offset(w * 0.8f, h),
+            ),
+        )
+        // A thin bright streak, and a fainter one beside it.
+        rotate(-24f, androidx.compose.ui.geometry.Offset(w / 2, h / 2)) {
+            val x = w * 0.62f
+            drawRect(
+                Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.22f), Color.Transparent), startX = x, endX = x + w * 0.05f),
+                androidx.compose.ui.geometry.Offset(x, -h), androidx.compose.ui.geometry.Size(w * 0.05f, h * 3),
+            )
+            val x2 = x + w * 0.08f
+            drawRect(
+                Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.09f), Color.Transparent), startX = x2, endX = x2 + w * 0.12f),
+                androidx.compose.ui.geometry.Offset(x2, -h), androidx.compose.ui.geometry.Size(w * 0.12f, h * 3),
+            )
+        }
+        // The glass's edge.
+        val px = 1.5.dp.toPx()
+        drawRect(Color.White.copy(alpha = 0.35f), size = androidx.compose.ui.geometry.Size(w, px))
+        drawRect(Color.White.copy(alpha = 0.18f), size = androidx.compose.ui.geometry.Size(px, h))
+        drawRect(Color.Black.copy(alpha = 0.5f), topLeft = androidx.compose.ui.geometry.Offset(0f, h - px), size = androidx.compose.ui.geometry.Size(w, px))
     }
 }
 

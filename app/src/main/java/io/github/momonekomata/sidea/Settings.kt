@@ -31,7 +31,15 @@ data class Prefs(
     val exclusiveUsb: Boolean = true,
     /** Volume while the USB driver drives the DAC (0..1). 1 is bit-perfect; the volume keys turn it down. */
     val usbVolume: Float = 1f,
+    /** How the app looks; the user picks it in Settings. */
+    val theme: AppTheme = AppTheme.WALKMAN,
 )
+
+/** The looks to choose from in Settings → Theme. */
+enum class AppTheme(val label: String, val note: String) {
+    WALKMAN("Walkman", "The tape as it is, in its window on the blue body."),
+    GLASS("Glass deck", "The tape behind the smoked glass of a cassette deck's door, in a brushed-metal frame."),
+}
 
 object Settings {
     private lateinit var sp: SharedPreferences
@@ -55,6 +63,7 @@ object Settings {
             exclusiveUsb = sp.getBoolean("exclusiveUsb", true),
             // A new key, so everyone starts at 100 % (bit-perfect) once, whatever the old 30 % saved.
             usbVolume = sp.getFloat("usbVolume100", 1f),
+            theme = runCatching { AppTheme.valueOf(sp.getString("theme", null) ?: "") }.getOrDefault(AppTheme.WALKMAN),
             eq = runCatching { sp.getString("eq", null)?.let { eqFromJson(JSONObject(it)) } }.getOrNull() ?: EqConfig(),
         )
     }
@@ -74,6 +83,7 @@ object Settings {
             .putString("musixmatchKey", p.musixmatchKey)
             .putBoolean("exclusiveUsb", p.exclusiveUsb)
             .putFloat("usbVolume100", p.usbVolume)
+            .putString("theme", p.theme.name)
             .putString("eq", eqToJson(p.eq).toString())
             .apply()
     }

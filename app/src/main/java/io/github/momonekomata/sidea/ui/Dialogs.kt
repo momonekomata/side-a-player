@@ -223,6 +223,18 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onSources: () -> Uni
                     }
                     Text("›", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 }
+                // The look: one key per theme, the chosen one orange and pressed in.
+                Text("Theme", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    io.github.momonekomata.sidea.AppTheme.entries.forEach { t ->
+                        val on = prefs.theme == t
+                        Text(
+                            t.label, color = if (on) Color.White else Retro.Ink, fontWeight = FontWeight.Bold, fontSize = 13.sp,
+                            modifier = Modifier.keyFace(orange = on, down = on).clickable { onChange(prefs.copy(theme = t)) }.padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+                Note(prefs.theme.note)
                 LabeledSwitch("Exclusive USB driver", prefs.exclusiveUsb) { onChange(prefs.copy(exclusiveUsb = it)) }
                 Note("For phones whose Android can't send USB audio bit-perfect (most Samsungs): WALKDECK drives the DAC itself, at each file's own rate, after you allow USB access. Other apps can't use the DAC while WALKDECK holds it. Volume is then WALKDECK's own: the volume keys drive it, and 100 % is bit-perfect.")
                 LabeledSwitch("Gapless playback", prefs.gapless) { onChange(prefs.copy(gapless = it)) }
