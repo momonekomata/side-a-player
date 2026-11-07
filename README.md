@@ -145,9 +145,13 @@ hangul get a mark each after Z.
 **Most played**: Focus → Most played narrows the Library to the songs played most, from anywhere.
 A play counts when a song starts.
 
-Under the deck, **DECK · TAPE · QUEUE** (swipe, or tap the names): **TAPE** is a cassette with the
-song's name and artist on its label; its reels turn while it plays and the tape winds from the left
-reel onto the right as the song goes on, with REW / PLAY / FF under it.
+Under the deck, **TAPE · DECK · QUEUE** (it opens on DECK; swipe, or tap the names). **TAPE** is a
+cassette over the song's cover, blurred and dimmed. Its label carries the cover, title and artist,
+the quality light and format, the counter between the reels (which turn while it plays, the tape
+winding from the left reel onto the right as the song goes on), and the keys: previous, −10 s,
+play/pause, +10 s, next. Everything is written on the opaque label, so it reads on any cover.
+Turning the phone sideways opens the tape full screen; **‹ LIBRARY** (or Back) shows the Library
+and the deck, and ⛶ on the TAPE page brings the full-screen tape back.
 
 **Long-press a song** (in the Library, a playlist, the queue or the history) for
 add to / remove from favourites, play next, add to queue and add to playlist. The **queue**, laid out like Apple Music's: Shuffle, Repeat and Clear stay
@@ -202,9 +206,9 @@ On the phone, the Library fills the screen under a slim title line (EQ and Setti
 What's playing sits in a mini player at the bottom, showing cover, title, quality, play/pause and
 next. Tap it or swipe up for the full deck (cover and lyrics, the tape, the queue); swipe down or
 press Back to put it away. Unfolded (≥600 dp wide), it's two pages: the Library and the deck.
-Turned sideways, WALKDECK goes full screen: the system bars hide (swipe from an edge to peek), the
-title line goes, and it's two panels, the Library and the deck (cover beside the song, badge and
-keys), with EQ and Settings at the far edge.
+Turned sideways, WALKDECK goes full screen (the system bars hide; swipe from an edge to peek) and
+opens on the cassette. **‹ LIBRARY** gives two panels, the Library and the deck (cover beside the
+song, badge and keys), with EQ and Settings at the far edge.
 
 ## Signal path and quality badge
 

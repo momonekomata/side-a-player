@@ -179,7 +179,14 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     val queuePage: @Composable (Modifier) -> Unit = { m -> QueueCard(vm, queue, tags, localImage, m) }
     val library: @Composable (Modifier) -> Unit = { m -> LibraryCard(vm, queue, onSources = { sourcesOpen = true }, m) }
 
-    Column(
+    // A phone turned sideways opens on the tape, full screen; "‹ LIBRARY" (or Back) shows the
+    // Library and deck, and the tape page's full-screen button brings it back. Every turn to
+    // landscape starts on the tape again.
+    var tapeFull by rememberSaveable(landscape) { mutableStateOf(landscape) }
+    BackHandler(enabled = landscape && tapeFull) { tapeFull = false }
+    if (landscape && tapeFull) {
+        TapeFullScreen(deck, onLibrary = { tapeFull = false })
+    } else Column(
         Modifier
             .fillMaxSize()
             .background(Retro.Background)
@@ -188,7 +195,10 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
         if (!landscape) Header(spec) { headerIcons() }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
-                WideLayout(deck, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage, card = library)
+                WideLayout(
+                    deck, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage, card = library,
+                    onTapeFullScreen = if (landscape) ({ tapeFull = true }) else null,
+                )
             } else {
                 PhoneLayout(deck, lyrics, queuePage, card = library)
             }
@@ -223,6 +233,7 @@ private fun WideLayout(
     trailing: (@Composable () -> Unit)?,
     queuePage: (@Composable (Modifier) -> Unit)?,
     card: @Composable (Modifier) -> Unit,
+    onTapeFullScreen: (() -> Unit)? = null,
 ) {
     Row(Modifier.fillMaxSize().padding(start = if (trailing != null) 6.dp else 12.dp, end = if (trailing != null) 0.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(if (short) 8.dp else 16.dp)) {
         // Sideways the deck takes the larger share: the cover is as tall as the screen, and the
@@ -233,6 +244,7 @@ private fun WideLayout(
             Modifier.weight(if (short) 1.25f else 1.15f).fillMaxHeight().padding(vertical = if (short) 6.dp else 8.dp),
             compact = short,
             queuePage = queuePage,
+            onTapeFullScreen = onTapeFullScreen,
         )
         if (trailing != null) {
             Column(Modifier.fillMaxHeight().padding(vertical = 4.dp), verticalArrangement = Arrangement.Top) { trailing() }
@@ -469,8 +481,8 @@ private fun summary(f: StreamFacts, note: String?): String {
 }
 
 /**
- * The deck, the cassette turning (swipe left), and the queue (swipe left again). The names
- * under them take taps too.
+ * TAPE · DECK · QUEUE: it opens on the deck; the cassette turning is a swipe right, the queue a
+ * swipe left. The names under them take taps too.
  */
 @Composable
 private fun NowPlayingPager(
@@ -478,15 +490,16 @@ private fun NowPlayingPager(
     modifier: Modifier,
     compact: Boolean,
     queuePage: (@Composable (Modifier) -> Unit)?,
+    onTapeFullScreen: (() -> Unit)? = null,
 ) {
-    val labels = if (queuePage != null) listOf("DECK", "TAPE", "QUEUE") else listOf("DECK", "TAPE")
-    val pager = rememberPagerState { labels.size }
+    val labels = if (queuePage != null) listOf("TAPE", "DECK", "QUEUE") else listOf("TAPE", "DECK")
+    val pager = rememberPagerState(initialPage = 1) { labels.size }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     Column(modifier) {
         HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), pageSpacing = 12.dp) { page ->
             when {
+                page == 0 -> CassettePage(deck, Modifier.fillMaxSize(), onFullScreen = onTapeFullScreen)
                 page == 2 && queuePage != null -> queuePage(Modifier.fillMaxSize().padding(horizontal = if (compact) 0.dp else 12.dp))
-                page == 1 -> CassettePage(deck, Modifier.fillMaxSize(), compact = compact)
                 else -> Deck(deck, Modifier.fillMaxSize(), compact = compact)
             }
         }
