@@ -225,7 +225,8 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onSources: () -> Uni
                 }
                 // The look: one key per theme, the chosen one orange and pressed in.
                 Text("Theme", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     io.github.momonekomata.sidea.AppTheme.entries.forEach { t ->
                         val on = prefs.theme == t
                         Text(

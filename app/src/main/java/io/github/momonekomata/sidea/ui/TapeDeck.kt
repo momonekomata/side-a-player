@@ -93,6 +93,10 @@ import androidx.compose.ui.unit.sp
  */
 @Composable
 fun TapeDeck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = false, onFullScreen: (() -> Unit)? = null) {
+    if (io.github.momonekomata.sidea.Settings.prefs.collectAsState().value.theme == io.github.momonekomata.sidea.AppTheme.STEREO) {
+        StereoDeck(model, modifier)
+        return
+    }
     var showPath by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     val panel = modifier

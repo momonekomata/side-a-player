@@ -195,6 +195,28 @@ fun coverTint(art: ImageBitmap): Color? = try {
 }
 
 /**
+ * The Stereo theme's body: a brighter, royal anodised blue, lit at the upper left and deepening
+ * to the lower right, with the same band of light and brushing.
+ */
+fun Modifier.stereoBlue(): Modifier = this.drawWithCache {
+    val base = Brush.linearGradient(
+        0f to Color(0xFF3F70C8),
+        0.4f to Color(0xFF2C58AC),
+        0.8f to Color(0xFF213F86),
+        1f to Color(0xFF2A55A4),
+        start = Offset(0f, 0f),
+        end = Offset(size.width, size.height),
+    )
+    val band = sheen(size.width, size.height, 0.12f)
+    val g = grain(size.width, size.height)
+    onDrawBehind {
+        drawRect(base)
+        drawGrain(g, 0.05f, 0.06f)
+        drawRect(band)
+    }
+}
+
+/**
  * The body: anodised blue aluminium. Deeper towards the lower right, lit at the upper left, with
  * a band of light across it and the same fine brushing as the faceplate.
  */

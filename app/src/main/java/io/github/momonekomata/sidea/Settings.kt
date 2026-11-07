@@ -39,6 +39,7 @@ data class Prefs(
 enum class AppTheme(val label: String, val note: String) {
     WALKMAN("Walkman", "The tape as it is, in its window on the blue body."),
     GLASS("Glass deck", "The tape behind the smoked glass of a cassette deck's door, in a brushed-metal frame."),
+    STEREO("Stereo", "The tape page is the front of a blue stereo cassette player: WALKDECK on the lid, the tape turning in its window, the keys down the silver side and play on the orange button on top."),
 }
 
 object Settings {
