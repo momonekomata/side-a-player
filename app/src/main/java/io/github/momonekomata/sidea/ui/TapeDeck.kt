@@ -129,21 +129,50 @@ fun TapeDeck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean =
     } else {
         BoxWithConstraints(panel.padding(12.dp)) {
             // The window takes what's left once the rest has its room.
-            val tapeW = minOf(maxWidth, ((maxHeight - 380.dp) * CASSETTE_RATIO).coerceAtLeast(maxWidth * 0.6f))
-            Column(
-                Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.SpaceBetween,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                TapeWindow(model, Modifier.width(tapeW), onFullScreen)
+            val tapeW = minOf(maxWidth, ((maxHeight - 420.dp) * CASSETTE_RATIO).coerceAtLeast(maxWidth * 0.6f))
+            // The tape at the top; the line being sung in the room under it, as many lines as it
+            // takes; the song's name, the display and the keys together at the bottom, each only as
+            // tall as it needs.
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                TapeWindow(model, Modifier.width(tapeW), onFullScreen, lineOnTape = false)
+                LyricLines(model, Modifier.weight(1f).fillMaxWidth())
                 TitleBlock(model, compact = false)
-                Display(model) { showPath = true }
+                Box(Modifier.padding(top = 4.dp, bottom = 10.dp)) { Display(model) { showPath = true } }
                 Column { PianoPager(model) }
             }
         }
     }
     val path = model.path
     if (showPath && path != null) SignalPathDialog(path, onDismiss = { showPath = false })
+}
+
+/**
+ * Upright, under the tape: the line being sung, whole (wrapping onto as many lines as it needs),
+ * and the next one fainter under it. Nothing when the lyrics aren't timed or are open on the tape.
+ */
+@Composable
+private fun LyricLines(model: DeckModel, modifier: Modifier) {
+    val l = model.lyrics.lyrics
+    val at = l?.lineAt(model.positionMs) ?: -1
+    Box(modifier.padding(horizontal = 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+        if (l == null || at < 0 || model.showLyrics) return@Box
+        Crossfade(at, label = "lyric-line") { i ->
+            val now = l.lines.getOrNull(i)?.text.orEmpty()
+            val next = l.lines.getOrNull(i + 1)?.text?.takeIf { it.isNotBlank() }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    now.ifBlank { "♪" }, color = Retro.OnShell, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 26.sp,
+                )
+                if (next != null) {
+                    Text(
+                        next, color = Retro.Muted.copy(alpha = 0.7f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** The line being sung right now, when the lyrics are timed. */
@@ -155,7 +184,7 @@ private fun lyricLine(model: DeckModel): String? =
  * under it, two small keys: LYRICS / TAPE, and full screen.
  */
 @Composable
-private fun TapeWindow(model: DeckModel, modifier: Modifier, onFullScreen: (() -> Unit)?) {
+private fun TapeWindow(model: DeckModel, modifier: Modifier, onFullScreen: (() -> Unit)?, lineOnTape: Boolean = true) {
     val frame = RoundedCornerShape(8.dp)
     Column(modifier) {
         Box(
@@ -178,7 +207,7 @@ private fun TapeWindow(model: DeckModel, modifier: Modifier, onFullScreen: (() -
                     if (lyricsSide) {
                         LyricsSquare(model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize())
                     } else {
-                        TapeOnly(model, lyricLine(model), Modifier.fillMaxSize())
+                        TapeOnly(model, if (lineOnTape) lyricLine(model) else null, Modifier.fillMaxSize())
                     }
                 }
             }
@@ -259,10 +288,10 @@ private fun Display(model: DeckModel, onPath: () -> Unit) {
             if (path != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     QualityBadge(path.quality, onPath)
-                    // Two lines, so a long one (the Buffering speeds) wraps instead of being cut off.
+                    // One line: the format fits beside the badge; anything longer is cut short.
                     Text(
-                        model.status.lines().first(), color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        model.status.lines().first(), color = Retro.Muted, fontSize = 12.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false,
                         modifier = Modifier.weight(1f, fill = false).clickable(onClick = onPath),
                     )
                 }

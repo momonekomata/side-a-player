@@ -345,13 +345,13 @@ private fun SongInfo(model: DeckModel, ink: DeckInk, compact: Boolean, onPath: (
         // The badge and the format; the rest of the signal path is a tap on the badge away.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             QualityBadge(path.quality, onPath)
-            // Two lines, so a long one (the Buffering speeds) wraps instead of being cut off.
+            // One line: the format fits beside the badge; anything longer is cut short.
             Text(
                 model.status.lines().first(),
                 color = ink.muted,
-                fontFamily = Retro.Mono,
-                fontSize = 11.sp,
-                maxLines = 2,
+                fontSize = 12.sp,
+                softWrap = false,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false).clickable(onClick = onPath),
             )
