@@ -445,7 +445,7 @@ private fun Header(spec: String, icons: @Composable () -> Unit) {
                 append("DECK")
                 pop()
             },
-            color = Color(0xFFE9EDF3), fontFamily = Retro.Logo, fontSize = 20.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 1.sp,
+            color = Color(0xFFE9EDF3), fontFamily = Retro.Wordmark, fontSize = 22.sp,
         )
         Box(Modifier.padding(start = 10.dp).width(14.dp).height(2.dp).background(Retro.Orange))
         Text(spec, color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 8.sp, letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 5.dp))

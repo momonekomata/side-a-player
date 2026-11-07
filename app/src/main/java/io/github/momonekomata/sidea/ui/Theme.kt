@@ -77,6 +77,11 @@ object Retro {
      * Library's header and the WALKDECK name use it.
      */
     val Logo = FontFamily.SansSerif
+    /**
+     * The WALKDECK name: Tapeman, by Akihiro Oya (1999), free for non-commercial use; its notice
+     * is in assets/licenses/Tapeman-README.txt.
+     */
+    val Wordmark = FontFamily(androidx.compose.ui.text.font.Font(io.github.momonekomata.sidea.R.font.tapeman))
 }
 
 /** "1 song", "2 songs". */

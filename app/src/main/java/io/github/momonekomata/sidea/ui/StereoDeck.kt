@@ -156,8 +156,8 @@ private fun BluePanel(model: DeckModel, modifier: Modifier, w: Dp, h: Dp) {
         // The lid.
         Column(Modifier.fillMaxWidth().height(h * 0.15f).padding(start = w * 0.08f), verticalArrangement = Arrangement.Center) {
             Text(
-                "WALKDECK", color = white, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Black,
-                fontSize = (w.value * 0.085f).sp, letterSpacing = (w.value * 0.004f).sp, maxLines = 1,
+                "WALKDECK", color = white, fontFamily = Retro.Wordmark,
+                fontSize = (w.value * 0.1f).sp, maxLines = 1,
             )
             Text(
                 "STEREO CASSETTE PLAYER", color = white, fontWeight = FontWeight.Medium,
@@ -183,21 +183,8 @@ private fun BluePanel(model: DeckModel, modifier: Modifier, w: Dp, h: Dp) {
     }
 }
 
-/**
- * The face the outlined STEREO is printed in: Fredoka (SIL Open Font License), chunky, rounded and
- * geometric like the 1970s display face on the original, at a heavy weight.
- */
-@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-private val StereoFace = FontFamily(
-    androidx.compose.ui.text.font.Font(
-        io.github.momonekomata.sidea.R.font.fredoka,
-        weight = FontWeight.SemiBold,
-        variationSettings = androidx.compose.ui.text.font.FontVariation.Settings(
-            androidx.compose.ui.text.font.FontVariation.weight(600),
-            androidx.compose.ui.text.font.FontVariation.width(100f),
-        ),
-    ),
-)
+/** The face for STEREO: Harry Plain, the face the original is printed in (the user's copy). */
+private val HarryFace = FontFamily(androidx.compose.ui.text.font.Font(io.github.momonekomata.sidea.R.font.harry_plain))
 
 /**
  * STEREO, printed in outline in a rounded face, and weathered: small flecks and a couple of fine
@@ -210,8 +197,8 @@ private fun WeatheredStereo(modifier: Modifier, size: androidx.compose.ui.unit.T
     // seams inside the E and R. Instead: a thick outline, with the filled letters cut out of it,
     // which leaves just the outer edge, clean.
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
-    // Set tight, as the original is.
-    val style = TextStyle(fontFamily = StereoFace, fontSize = size, letterSpacing = (-size.value * 0.01f).sp)
+    // Harry is set tight already, as the original is.
+    val style = TextStyle(fontFamily = HarryFace, fontSize = size)
     val layout = remember(size) { measurer.measure("STEREO", style) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val pad = stroke * 2
@@ -224,13 +211,13 @@ private fun WeatheredStereo(modifier: Modifier, size: androidx.compose.ui.unit.T
                 val w = this.size.width
                 val h = this.size.height
                 // Flecks where the paint has come away, of a few sizes.
-                val flecks = List(140) { Triple(r.nextFloat() * w, r.nextFloat() * h, (0.6f + r.nextFloat() * 1.8f) * stroke) }
+                val flecks = List(60) { Triple(r.nextFloat() * w, r.nextFloat() * h, (0.4f + r.nextFloat() * 0.9f) * stroke) }
                 // A couple of long, fine scratches across the lettering.
-                val scratches = List(3) { Offset(r.nextFloat() * w * 0.5f, r.nextFloat() * h) to Offset(w * (0.5f + r.nextFloat() * 0.5f), r.nextFloat() * h) }
+                val scratches = List(2) { Offset(r.nextFloat() * w * 0.5f, r.nextFloat() * h) to Offset(w * (0.5f + r.nextFloat() * 0.5f), r.nextFloat() * h) }
                 onDrawWithContent {
                     drawContent()
                     flecks.forEach { (x, y, rad) -> drawCircle(Color.Black, rad, Offset(x, y), blendMode = androidx.compose.ui.graphics.BlendMode.DstOut) }
-                    scratches.forEach { (a, b) -> drawLine(Color.Black.copy(alpha = 0.7f), a, b, strokeWidth = stroke * 0.5f, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut) }
+                    scratches.forEach { (a, b) -> drawLine(Color.Black.copy(alpha = 0.45f), a, b, strokeWidth = stroke * 0.35f, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut) }
                     // A faint unevenness over the whole print.
                     drawRect(
                         Brush.linearGradient(listOf(Color.Black.copy(alpha = 0.0f), Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.05f), Color.Black.copy(alpha = 0.2f))),
@@ -242,7 +229,7 @@ private fun WeatheredStereo(modifier: Modifier, size: androidx.compose.ui.unit.T
         // The outline: the filled letters stamped in a ring around their place (which swells them
         // by the outline's width), then the letters themselves cut out of the middle.
         val at = Offset(pad, pad)
-        val band = stroke * 1.3f
+        val band = stroke * 1.8f
         repeat(24) { i ->
             val a = i * (2 * PI / 24)
             drawText(layout, color, topLeft = at + Offset((band * cos(a)).toFloat(), (band * sin(a)).toFloat()))
