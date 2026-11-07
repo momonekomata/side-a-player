@@ -40,8 +40,8 @@ import io.github.momonekomata.sidea.audio.Player
 import io.github.momonekomata.sidea.cast.Cast
 
 /**
- * Play on: this phone, or a UPnP/DLNA renderer (a Chord Poly, say) found on the Wi-Fi or the
- * phone's hotspot. Searching starts as it opens; one that won't show up can be typed in.
+ * Play on: this phone, a UPnP/DLNA renderer (a Chord Poly, say) or a Google Cast device (a
+ * Chromecast, a Nest speaker) found on the Wi-Fi or the phone's hotspot. Searching starts as it opens; one that won't show up can be typed in.
  */
 @Composable
 fun CastDialog(onDismiss: () -> Unit) {
@@ -62,7 +62,7 @@ fun CastDialog(onDismiss: () -> Unit) {
                 }
                 devices.forEach { d ->
                     val on = target?.key == d.key
-                    Choice(if (on) Icons.Filled.CastConnected else Icons.Filled.Cast, d.name, listOf(d.desc.model, d.where).filter { it.isNotBlank() }.joinToString(" · "), on) {
+                    Choice(if (on) Icons.Filled.CastConnected else Icons.Filled.Cast, d.name, listOf(d.note, d.where).filter { it.isNotBlank() }.joinToString(" · "), on) {
                         Player.castTo(d)
                         onDismiss()
                     }
@@ -103,8 +103,9 @@ fun CastDialog(onDismiss: () -> Unit) {
                     )
                 }
                 if (target != null) {
+                    val castNote = if (target?.kind == Cast.Kind.GOOGLE_CAST) " Cast devices play FLAC, WAV, MP3, AAC, Ogg and Opus, not ALAC, AIFF or DSD." else ""
                     Text(
-                        "While casting the player decodes the files itself, exactly as they are; WALKDECK's EQ doesn't apply. The volume keys set the player's volume.",
+                        "While casting the player decodes the files itself, exactly as they are; WALKDECK's EQ doesn't apply. The volume keys set the player's volume.$castNote",
                         fontSize = 12.sp, color = Retro.Muted, modifier = Modifier.padding(top = 6.dp),
                     )
                 }

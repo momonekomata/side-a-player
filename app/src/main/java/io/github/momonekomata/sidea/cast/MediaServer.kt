@@ -73,6 +73,26 @@ object MediaServer {
         return m
     }
 
+    private val codecs = ConcurrentHashMap<String, String>()
+
+    /** The song's codec as the Library names it ("FLAC", "ALAC", "AAC"…), "" when unknown. */
+    fun codecFor(token: String): String {
+        codecs[token]?.let { return it }
+        val track = songs[token] ?: return ""
+        val c = runCatching {
+            open(track).use { b ->
+                val ra = object : io.github.momonekomata.sidea.sources.RandomAccess {
+                    override val size get() = b.size
+                    override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int) = b.readAt(position, buffer, offset, length)
+                    override fun close() = Unit
+                }
+                io.github.momonekomata.sidea.sources.FormatProbe.probe(ra, track.id)?.codec
+            }
+        }.getOrNull().orEmpty()
+        codecs[token] = c
+        return c
+    }
+
     // ---- serving ----
 
     private fun serve(c: Socket) {
