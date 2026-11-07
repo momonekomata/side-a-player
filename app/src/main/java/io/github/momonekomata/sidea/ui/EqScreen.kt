@@ -68,7 +68,7 @@ fun EqScreen(config: EqConfig, onChange: (EqConfig) -> Unit, onDismiss: () -> Un
         Column(
             Modifier
                 .fillMaxSize()
-                .background(Retro.Background)
+                .anodizedBlue()
                 .safeDrawingPadding()
                 .padding(horizontal = 16.dp),
         ) {

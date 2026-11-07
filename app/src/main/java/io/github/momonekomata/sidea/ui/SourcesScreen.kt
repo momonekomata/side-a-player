@@ -64,7 +64,7 @@ fun SourcesScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit, onDismiss: (
         onDismissRequest = { if (nas != null) vm.up() else onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Column(Modifier.fillMaxSize().background(Retro.Background).safeDrawingPadding().padding(horizontal = 12.dp)) {
+        Column(Modifier.fillMaxSize().anodizedBlue().safeDrawingPadding().padding(horizontal = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(start = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("MUSIC SOURCES", color = Retro.OnShell, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, fontSize = 20.sp, letterSpacing = 1.sp)
                 Spacer(Modifier.weight(1f))

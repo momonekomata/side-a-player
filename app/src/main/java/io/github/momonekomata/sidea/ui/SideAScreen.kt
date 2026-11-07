@@ -191,7 +191,7 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     } else Column(
         Modifier
             .fillMaxSize()
-            .background(Retro.Background)
+            .anodizedBlue()
             .then(if (landscape) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier.safeDrawingPadding()),
     ) {
         if (!landscape) Header(spec) { headerIcons() }
@@ -334,10 +334,15 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
                     }
                 }
             }
-            IconButton(onClick = deck.onToggle) {
-                Icon(if (deck.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = if (deck.playing) Retro.Orange else Retro.OnMetal)
+            // The two keys in their strip: PLAY orange (pressed in while playing), then next.
+            KeyStrip(gap = 4.dp) {
+                SquareKey(40.dp, orange = true, latched = deck.playing, onClick = deck.onToggle) { _ ->
+                    Icon(if (deck.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White, modifier = Modifier.size(22.dp))
+                }
+                SquareKey(40.dp, onClick = deck.onNext) { _ ->
+                    Icon(Icons.Filled.SkipNext, "Next", tint = Retro.OnMetal, modifier = Modifier.size(22.dp))
+                }
             }
-            IconButton(onClick = deck.onNext) { Icon(Icons.Filled.SkipNext, "Next", tint = Retro.OnMetalMuted) }
         }
     }
 }
@@ -386,7 +391,7 @@ private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> 
         Modifier
             .fillMaxSize()
             .graphicsLayer { translationY = drag }
-            .background(Retro.Background)
+            .anodizedBlue()
             .nestedScroll(pull)
             .pointerInput(Unit) {
                 val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()

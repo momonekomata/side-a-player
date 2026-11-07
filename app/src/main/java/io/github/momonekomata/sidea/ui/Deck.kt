@@ -52,6 +52,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -206,11 +209,17 @@ private fun SongInfo(model: DeckModel, compact: Boolean, onPath: () -> Unit) {
  */
 @Composable
 private fun TransportPager(model: DeckModel, compact: Boolean) {
-    val keyHeight = if (compact) 44.dp else 52.dp
+    val keySize = if (compact) 44.dp else 54.dp
     val pager = rememberPagerState { 2 }
-    HorizontalPager(pager, Modifier.fillMaxWidth().height(keyHeight)) { page ->
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (page == 0) TransportRow(model, keyHeight, compact) else SkipRow(model, compact)
+    // The keys plus the strip around them.
+    HorizontalPager(pager, Modifier.fillMaxWidth().height(keySize + 14.dp)) { page ->
+        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // As many square keys as the row holds, shrunk if the width is short.
+            val n = if (page == 0) (if (compact) 3 else 2 + (if (model.shuffle != null) 1 else 0) + (if (model.repeat != null) 1 else 0) + 1)
+            else 4 + (if (compact && model.shuffle != null) 1 else 0) + (if (compact && model.repeat != null) 1 else 0)
+            val fit = (maxWidth - 12.dp - 5.dp * (n - 1)) / n
+            val k = minOf(keySize, fit)
+            if (page == 0) TransportRow(model, k, compact) else SkipRow(model, k, compact)
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
@@ -220,33 +229,38 @@ private fun TransportPager(model: DeckModel, compact: Boolean) {
     }
 }
 
+/**
+ * One row of square keys in their grey strip, as on the Walkman's side: PLAY is the orange one, and
+ * it stays pressed in while the tape runs.
+ */
 @Composable
-private fun TransportRow(model: DeckModel, h: Dp, compact: Boolean) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+private fun TransportRow(model: DeckModel, k: Dp, compact: Boolean) {
+    KeyStrip {
         // Beside a cover on a phone held sideways there's only room for the three keys;
         // shuffle and repeat move to the second page there.
-        if (!compact) ShuffleKey(model)
+        if (!compact) ShuffleKey(model, k)
         // Hold to rewind / fast-forward; tap for previous / next.
-        DeckKey(Icons.Filled.SkipPrevious, "Previous", "REW", height = h, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
-        DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", if (model.playing) "PAUSE" else "PLAY", wide = true, lit = model.playing, height = h, onClick = model.onToggle)
-        DeckKey(Icons.Filled.SkipNext, "Next", "FF", height = h, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
-        if (!compact) RepeatKey(model)
+        DeckKey(Icons.Filled.SkipPrevious, "Previous", "REW", k, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
+        DeckKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", if (model.playing) "PAUSE" else "PLAY", k, orange = true, latched = model.playing, onClick = model.onToggle)
+        DeckKey(Icons.Filled.SkipNext, "Next", "FF", k, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
+        if (!compact) RepeatKey(model, k)
     }
 }
 
 @Composable
-private fun ShuffleKey(model: DeckModel) {
+private fun ShuffleKey(model: DeckModel, k: Dp) {
     model.shuffle?.let { on ->
-        IconButton(onClick = model.onShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (on) Retro.Orange else Retro.OnMetalMuted) }
+        DeckKey(Icons.Filled.Shuffle, "Shuffle", "SHUF", k, led = on, onClick = model.onShuffle)
     }
 }
 
 @Composable
-private fun RepeatKey(model: DeckModel) {
+private fun RepeatKey(model: DeckModel, k: Dp) {
     model.repeat?.let { r ->
-        IconButton(onClick = model.onRepeat) {
-            Icon(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", tint = if (r != RepeatMode.OFF) Retro.Orange else Retro.OnMetalMuted)
-        }
+        DeckKey(
+            if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", if (r == RepeatMode.ONE) "RPT 1" else "RPT", k,
+            led = r != RepeatMode.OFF, onClick = model.onRepeat,
+        )
     }
 }
 
@@ -302,34 +316,23 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
 
 /** −10 −5 +5 +10 seconds (with shuffle and repeat at the ends when the deck is compact). */
 @Composable
-private fun SkipRow(model: DeckModel, compact: Boolean) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        if (compact) ShuffleKey(model)
-        SmallKey("−10", compact) { model.onSkip(-10_000) }
-        SmallKey("−5", compact) { model.onSkip(-5_000) }
-        SmallKey("+5", compact) { model.onSkip(5_000) }
-        SmallKey("+10", compact) { model.onSkip(10_000) }
-        if (compact) RepeatKey(model)
+private fun SkipRow(model: DeckModel, k: Dp, compact: Boolean) {
+    KeyStrip {
+        if (compact) ShuffleKey(model, k)
+        TextKey("−10", "Back 10 seconds", k) { model.onSkip(-10_000) }
+        TextKey("−5", "Back 5 seconds", k) { model.onSkip(-5_000) }
+        TextKey("+5", "Forward 5 seconds", k) { model.onSkip(5_000) }
+        TextKey("+10", "Forward 10 seconds", k) { model.onSkip(10_000) }
+        if (compact) RepeatKey(model, k)
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/** A square key with its value printed on it. */
 @Composable
-private fun SmallKey(text: String, compact: Boolean = false, lit: Boolean = false, onLong: (() -> Unit)? = null, onClick: () -> Unit) {
-    Text(
-        text,
-        color = if (lit) Retro.Orange else Retro.OnMetal,
-        fontFamily = Retro.Mono,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier
-            .shadow(1.dp, RoundedCornerShape(5.dp))
-            .clip(RoundedCornerShape(5.dp))
-            .background(KeyFace)
-            .border(1.dp, if (lit) Retro.Orange else Retro.MetalEdge, RoundedCornerShape(5.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLong)
-            .padding(horizontal = if (compact) 6.dp else 12.dp, vertical = 6.dp),
-    )
+private fun TextKey(text: String, label: String, k: Dp, onClick: () -> Unit) {
+    SquareKey(k, onClick = onClick, modifier = Modifier.semantics { contentDescription = label }) { _ ->
+        Text(text, color = Retro.OnMetal, fontFamily = Retro.Mono, fontSize = if (k < 44.dp) 11.sp else 13.sp, fontWeight = FontWeight.Bold)
+    }
 }
 
 @Composable
@@ -377,26 +380,44 @@ private fun SeekBar(model: DeckModel) {
 }
 
 /**
- * A silver piano key with its name printed under the symbol, as on a cassette player. It sinks a
- * little while held; PLAY turns orange while the tape runs.
+ * A square key with its name printed under the symbol. [orange] is the one orange key; [latched]
+ * keeps it pressed in (PLAY while the tape runs); [led] gives it a little light, orange when on.
  */
 @Composable
-internal fun DeckKey(icon: ImageVector, label: String, caption: String, wide: Boolean = false, lit: Boolean = false, height: Dp = 52.dp, onHold: (() -> Unit)? = null, onClick: () -> Unit) {
-    val narrow = height < 48.dp
+internal fun DeckKey(
+    icon: ImageVector, label: String, caption: String, k: Dp = 54.dp,
+    orange: Boolean = false, latched: Boolean = false, led: Boolean? = null,
+    onHold: (() -> Unit)? = null, onClick: () -> Unit,
+) {
+    SquareKey(k, orange = orange, latched = latched, led = led, onHold = onHold, onClick = onClick) { _ ->
+        val ink = if (orange) Color.White else Retro.OnMetal
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = label, tint = ink, modifier = Modifier.size(if (k < 46.dp) 18.dp else 22.dp))
+            if (k >= 40.dp) Text(caption, color = if (orange) Color.White else Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 7.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, maxLines = 1)
+        }
+    }
+}
+
+/**
+ * The square key itself: it sinks while held (and stays down while [latched]). A tap is a tap;
+ * with [onHold], holding repeats it every 250 ms like a tape deck's FF/REW.
+ */
+@Composable
+internal fun SquareKey(
+    k: Dp, modifier: Modifier = Modifier, orange: Boolean = false, latched: Boolean = false, led: Boolean? = null,
+    onHold: (() -> Unit)? = null, onClick: () -> Unit, content: @Composable (down: Boolean) -> Unit,
+) {
     val hold by rememberUpdatedState(onHold)
     val click by rememberUpdatedState(onClick)
     var pressed by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(5.dp)
+    val down = pressed || latched
     Box(
-        Modifier
-            .size(width = if (wide) (if (narrow) 68.dp else 88.dp) else (if (narrow) 52.dp else 64.dp), height = height)
-            .padding(top = if (pressed) 2.dp else 0.dp, bottom = if (pressed) 0.dp else 2.dp)
-            .shadow(if (pressed) 0.dp else 3.dp, shape)
-            .clip(shape)
-            .background(if (lit) KeyFaceLit else KeyFace)
-            .border(1.dp, if (lit) Color(0xFFB5520F) else Retro.MetalEdge, shape)
+        modifier
+            .size(k)
+            .padding(top = if (down) 1.5.dp else 0.dp, bottom = if (down) 0.dp else 1.5.dp)
+            .keyFace(orange = orange, down = down)
+            .then(if (led != null) Modifier.drawWithContent { drawContent(); drawKeyLed(led) } else Modifier)
             .pointerInput(Unit) {
-                // A tap is a tap; holding repeats [onHold] every 250 ms like a tape deck's FF/REW.
                 awaitEachGesture {
                     awaitFirstDown()
                     pressed = true
@@ -408,12 +429,7 @@ internal fun DeckKey(icon: ImageVector, label: String, caption: String, wide: Bo
                 }
             },
         contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = label, tint = if (lit) Color.White else Retro.OnMetal, modifier = Modifier.size(if (narrow) 20.dp else 22.dp))
-            Text(caption, color = if (lit) Color.White else Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-        }
-    }
+    ) { content(down) }
 }
 
 /** After the press: a tap, or (with [hold]) a hold that repeats every 250 ms. */

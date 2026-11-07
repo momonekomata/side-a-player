@@ -52,6 +52,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.momonekomata.sidea.MainViewModel
@@ -153,7 +157,44 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
         }
     }
 
-    JCard(top?.title ?: "Library", subtitle, modifier.nestedScroll(hideSearch), listState = list, letters = letters, pinned = {
+    // Swipe sideways to change tab: Artists · Albums · Tracks · Genres · ♥ (· the open playlist).
+    // The card follows the finger a little; a long enough swipe moves one tab and it springs back.
+    val tabs: List<() -> Unit> = LibSegment.entries.map { s -> { model.segment(s) } } +
+        listOf({ model.showList(FAVORITES_LIST) }) +
+        (playlist?.let { p -> listOf({ model.showList(p.id) }) } ?: emptyList())
+    val tab = when {
+        focusList == FAVORITES_LIST -> LibSegment.entries.size
+        playlist != null -> LibSegment.entries.size + 1
+        else -> ui.segment.ordinal
+    }
+    val currentTabs by androidx.compose.runtime.rememberUpdatedState(tabs)
+    val currentTab by androidx.compose.runtime.rememberUpdatedState(tab)
+    var swipe by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val swipeScope = androidx.compose.runtime.rememberCoroutineScope()
+    val swipeFar = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.toPx() }
+    val swiping = Modifier
+        .graphicsLayer { translationX = swipe * 0.3f }
+        .pointerInput(Unit) {
+            fun settle() {
+                val to = when {
+                    swipe <= -swipeFar -> currentTab + 1
+                    swipe >= swipeFar -> currentTab - 1
+                    else -> currentTab
+                }
+                if (to != currentTab && to in currentTabs.indices) currentTabs[to]()
+                swipeScope.launch { androidx.compose.animation.core.animate(swipe, 0f) { v, _ -> swipe = v } }
+            }
+            detectHorizontalDragGestures(
+                onDragStart = { swipe = 0f },
+                onDragEnd = { settle() },
+                onDragCancel = { settle() },
+            ) { change, dx ->
+                swipe += dx
+                change.consume()
+            }
+        }
+
+    JCard(top?.title ?: "Library", subtitle, modifier.then(swiping).nestedScroll(hideSearch), listState = list, letters = letters, pinned = {
         Column {
           androidx.compose.animation.AnimatedVisibility(
               showSearch,
@@ -171,7 +212,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                 modifier = Modifier.weight(1f),
                 decorationBox = { field ->
                     Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(Retro.CreamShade).padding(horizontal = 14.dp, vertical = 9.dp),
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).background(Retro.CreamShade).padding(horizontal = 14.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Search, null, tint = Retro.InkFaint, modifier = Modifier.size(18.dp))
@@ -197,7 +238,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
           }
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 LibSegment.entries.forEach { s -> Chip(s.label, ui.segment == s && top == null && focusList == null) { model.segment(s) } }
                 // Favourites and playlists: tabs of their own, apart from Focus's filters.
@@ -370,8 +411,9 @@ private fun Chip(label: String, on: Boolean, description: String? = null, onClic
         fontWeight = FontWeight.Bold,
         fontSize = 13.sp,
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (on) Retro.Orange else Retro.CreamShade)
+            // A square key: the tab showing is the orange one, pressed in.
+            .padding(vertical = 2.dp)
+            .keyFace(orange = on, down = on)
             .clickable(onClick = onClick)
             .then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)
             .padding(horizontal = 9.dp, vertical = 5.dp),
@@ -381,10 +423,10 @@ private fun Chip(label: String, on: Boolean, description: String? = null, onClic
 @Composable
 private fun PlayRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(Retro.Orange).clickable(onClick = onPlay).padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.weight(1f).keyFace(orange = true).clickable(onClick = onPlay).padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
             Text("▶ Play", color = Color.White, fontWeight = FontWeight.Bold)
         }
-        Box(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(Retro.CreamShade).clickable(onClick = onShuffle).padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.weight(1f).keyFace().clickable(onClick = onShuffle).padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
             Text("⇄ Shuffle", color = Retro.Ink, fontWeight = FontWeight.Bold)
         }
     }

@@ -144,7 +144,7 @@ private fun Pill(text: String, modifier: Modifier, onClick: () -> Unit) {
 @Composable
 private fun CoverBackdrop(art: ImageBitmap?) {
     // The cover is on the tape's label now; behind the tape is the Walkman's blue.
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Retro.Shell, Retro.Panel))))
+    Box(Modifier.fillMaxSize().anodizedBlue())
 }
 
 private const val CASSETTE_RATIO = 1.58f
@@ -250,33 +250,28 @@ private fun Cassette(model: DeckModel, modifier: Modifier) {
             Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = faint, style = shade, fontFamily = Retro.Mono, fontSize = font(0.038f, 9f, 14f))
         }
 
-        // Where the brand would be: the keys.
-        Row(
-            Modifier.offset(x = w * LABEL_L, y = h * 0.66f).width(w * LABEL_W).padding(horizontal = h * 0.04f),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
+        // Where the brand would be: the keys, square in their grey strip, PLAY the orange one.
+        Box(
+            Modifier.offset(x = w * LABEL_L, y = h * 0.645f).width(w * LABEL_W),
+            contentAlignment = Alignment.Center,
         ) {
-            val key = h * 0.11f
-            LabelKey(Icons.Filled.SkipPrevious, "Previous", key, outline = onArt, onClick = model.onPrevious)
-            LabelKey(Icons.Filled.FastRewind, "Rewind 10 seconds", key, outline = onArt) { model.onSkip(-10_000) }
-            LabelKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", key * 1.15f, lit = true, onClick = model.onToggle)
-            LabelKey(Icons.Filled.FastForward, "Skip 10 seconds", key, outline = onArt) { model.onSkip(10_000) }
-            LabelKey(Icons.Filled.SkipNext, "Next", key, outline = onArt, onClick = model.onNext)
+            val key = (h * 0.12f).coerceAtLeast(34.dp)
+            KeyStrip(gap = (key * 0.1f).coerceIn(3.dp, 6.dp)) {
+                LabelKey(Icons.Filled.SkipPrevious, "Previous", key, onClick = model.onPrevious)
+                LabelKey(Icons.Filled.FastRewind, "Rewind 10 seconds", key) { model.onSkip(-10_000) }
+                LabelKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", key, orange = true, latched = model.playing, onClick = model.onToggle)
+                LabelKey(Icons.Filled.FastForward, "Skip 10 seconds", key) { model.onSkip(10_000) }
+                LabelKey(Icons.Filled.SkipNext, "Next", key, onClick = model.onNext)
+            }
         }
     }
 }
 
-/** A round key printed on the label: dark, or orange for play/pause. */
+/** A square key on the label: grey, or orange (and latched while playing) for play/pause. */
 @Composable
-private fun LabelKey(icon: ImageVector, label: String, size: Dp, lit: Boolean = false, outline: Boolean = false, onClick: () -> Unit) {
-    // On a cover the dark keys get a white rim, so they stand out from a dark picture.
-    Box(
-        Modifier.size(size.coerceAtLeast(32.dp)).clip(CircleShape).background(if (lit) Retro.Orange else Retro.Ink)
-            .then(if (outline && !lit) Modifier.border(1.5.dp, Color.White.copy(alpha = 0.75f), CircleShape) else Modifier)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, label, tint = Color.White, modifier = Modifier.fillMaxSize().padding(size.coerceAtLeast(32.dp) * 0.2f))
+private fun LabelKey(icon: ImageVector, label: String, size: Dp, orange: Boolean = false, latched: Boolean = false, onClick: () -> Unit) {
+    SquareKey(size, orange = orange, latched = latched, onClick = onClick) { _ ->
+        Icon(icon, label, tint = if (orange) Color.White else Retro.OnMetal, modifier = Modifier.fillMaxSize().padding(size * 0.22f))
     }
 }
 
