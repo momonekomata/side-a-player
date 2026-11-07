@@ -3,6 +3,7 @@ package io.github.momonekomata.sidea.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -86,16 +87,19 @@ fun CassettePage(model: DeckModel, modifier: Modifier = Modifier, onFullScreen: 
     }
 }
 
-/** The tape on its own, edge to edge on a phone held sideways. */
+/**
+ * The tape on its own, edge to edge: the cassette's shell is the screen's edge. On an upright
+ * phone it lies along the screen's length, turned a quarter to the left.
+ */
 @Composable
-fun TapeFullScreen(model: DeckModel, onLibrary: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        CoverBackdrop(model.art)
-        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+fun TapeFullScreen(model: DeckModel, closeLabel: String, onClose: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF26282D))) {
+        val upright = maxHeight > maxWidth
+        Box(Modifier.fillMaxSize().then(if (upright) Modifier.sideways() else Modifier)) {
             CassetteFit(model)
+            // On the shell's bare corner, between the screw and the foot, clear of the label.
+            Pill(closeLabel, Modifier.align(Alignment.BottomStart).padding(start = 56.dp, bottom = 16.dp), onClose)
         }
-        // On the shell's bare corner, between the screw and the foot, clear of the label.
-        Pill("‹ LIBRARY", Modifier.align(Alignment.BottomStart).padding(start = 64.dp, bottom = 22.dp), onLibrary)
     }
 }
 
@@ -136,15 +140,11 @@ private fun Pill(text: String, modifier: Modifier, onClick: () -> Unit) {
     )
 }
 
-/** The cover filling the space, blurred and darkened so the cassette stands out on it. */
+/** Behind the cassette. */
 @Composable
 private fun CoverBackdrop(art: ImageBitmap?) {
-    if (art != null) {
-        Image(art, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(28.dp))
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Black.copy(alpha = 0.7f)))))
-    } else {
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Retro.Shell, Retro.Panel))))
-    }
+    // The cover is on the tape's label now; behind the tape is the Walkman's blue.
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Retro.Shell, Retro.Panel))))
 }
 
 private const val CASSETTE_RATIO = 1.58f
@@ -175,7 +175,24 @@ private fun Cassette(model: DeckModel, modifier: Modifier) {
         val w = this.maxWidth
         val h = this.maxHeight
         fun font(share: Float, min: Float, max: Float) = (h.value * share).coerceIn(min, max).sp
-        Canvas(Modifier.fillMaxSize()) { drawCassette(supply, takeup, supplyAngle, takeupAngle) }
+        Canvas(Modifier.fillMaxSize()) { drawShell() }
+        // The cover printed on the label, shaded so the white writing on it reads on any picture.
+        val art = model.art
+        val onArt = art != null
+        if (art != null) {
+            Box(
+                Modifier.offset(x = w * LABEL_L, y = h * LABEL_T).size(w * LABEL_W, h * LABEL_H)
+                    .clip(RoundedCornerShape(h * 0.036f)),
+            ) {
+                Image(art, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.62f), Color.Black.copy(alpha = 0.5f), Color.Black.copy(alpha = 0.7f)))))
+            }
+        }
+        Canvas(Modifier.fillMaxSize()) { drawMechanism(supply, takeup, supplyAngle, takeupAngle) }
+        // Ink on the bare label; white with a soft shadow on the cover.
+        val ink = if (onArt) Color.White else Retro.Ink
+        val faint = if (onArt) Color.White.copy(alpha = 0.88f) else Retro.InkFaint
+        val shade = if (onArt) androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color.Black, blurRadius = 8f)) else androidx.compose.ui.text.TextStyle.Default
 
         // Top of the label: cover, title and artist, the side.
         Row(
@@ -183,7 +200,6 @@ private fun Cassette(model: DeckModel, modifier: Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val thumb = h * 0.17f
-            val art = model.art
             if (art != null) {
                 Image(art, "Cover", contentScale = ContentScale.Crop, modifier = Modifier.size(thumb).clip(RoundedCornerShape(4.dp)))
             } else {
@@ -193,11 +209,11 @@ private fun Cassette(model: DeckModel, modifier: Modifier) {
             }
             Column(Modifier.weight(1f).padding(start = h * 0.035f)) {
                 Text(
-                    model.title.ifBlank { "Nothing playing" }, color = Retro.Ink, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic,
+                    model.title.ifBlank { "Nothing playing" }, color = ink, style = shade, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic,
                     fontSize = font(0.07f, 12f, 26f), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 if (model.subtitle.isNotBlank()) {
-                    Text(model.subtitle, color = Retro.InkFaint, fontSize = font(0.048f, 10f, 17f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(model.subtitle, color = faint, style = shade, fontSize = font(0.048f, 10f, 17f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             Text("A", color = Retro.Orange, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, fontSize = font(0.09f, 14f, 30f), modifier = Modifier.padding(start = h * 0.02f))
@@ -228,10 +244,10 @@ private fun Cassette(model: DeckModel, modifier: Modifier) {
                 }
             }
             Text(
-                model.status.lines().first(), color = Retro.Ink, fontFamily = Retro.Mono, fontSize = font(0.038f, 9f, 14f),
+                model.status.lines().first(), color = ink, style = shade, fontFamily = Retro.Mono, fontSize = font(0.038f, 9f, 14f),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
-            Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = Retro.InkFaint, fontFamily = Retro.Mono, fontSize = font(0.038f, 9f, 14f))
+            Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = faint, style = shade, fontFamily = Retro.Mono, fontSize = font(0.038f, 9f, 14f))
         }
 
         // Where the brand would be: the keys.
@@ -241,20 +257,23 @@ private fun Cassette(model: DeckModel, modifier: Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val key = h * 0.11f
-            LabelKey(Icons.Filled.SkipPrevious, "Previous", key, onClick = model.onPrevious)
-            LabelKey(Icons.Filled.FastRewind, "Rewind 10 seconds", key) { model.onSkip(-10_000) }
+            LabelKey(Icons.Filled.SkipPrevious, "Previous", key, outline = onArt, onClick = model.onPrevious)
+            LabelKey(Icons.Filled.FastRewind, "Rewind 10 seconds", key, outline = onArt) { model.onSkip(-10_000) }
             LabelKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", key * 1.15f, lit = true, onClick = model.onToggle)
-            LabelKey(Icons.Filled.FastForward, "Skip 10 seconds", key) { model.onSkip(10_000) }
-            LabelKey(Icons.Filled.SkipNext, "Next", key, onClick = model.onNext)
+            LabelKey(Icons.Filled.FastForward, "Skip 10 seconds", key, outline = onArt) { model.onSkip(10_000) }
+            LabelKey(Icons.Filled.SkipNext, "Next", key, outline = onArt, onClick = model.onNext)
         }
     }
 }
 
 /** A round key printed on the label: dark, or orange for play/pause. */
 @Composable
-private fun LabelKey(icon: ImageVector, label: String, size: Dp, lit: Boolean = false, onClick: () -> Unit) {
+private fun LabelKey(icon: ImageVector, label: String, size: Dp, lit: Boolean = false, outline: Boolean = false, onClick: () -> Unit) {
+    // On a cover the dark keys get a white rim, so they stand out from a dark picture.
     Box(
-        Modifier.size(size.coerceAtLeast(32.dp)).clip(CircleShape).background(if (lit) Retro.Orange else Retro.Ink).clickable(onClick = onClick),
+        Modifier.size(size.coerceAtLeast(32.dp)).clip(CircleShape).background(if (lit) Retro.Orange else Retro.Ink)
+            .then(if (outline && !lit) Modifier.border(1.5.dp, Color.White.copy(alpha = 0.75f), CircleShape) else Modifier)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, label, tint = Color.White, modifier = Modifier.fillMaxSize().padding(size.coerceAtLeast(32.dp) * 0.2f))
@@ -266,6 +285,8 @@ private const val TAPE_SPEED = 55f
 
 private const val LABEL_L = 0.07f
 private const val LABEL_W = 0.86f
+private const val LABEL_T = 0.07f
+private const val LABEL_H = 0.74f
 private const val WIN_T = 0.33f
 private const val WIN_H = 0.22f
 
@@ -277,7 +298,8 @@ private fun packRadius(share: Float): Float {
     return sqrt(hub * hub + (full * full - hub * hub) * share.coerceIn(0f, 1f))
 }
 
-private fun DrawScope.drawCassette(supply: Float, takeup: Float, supplyAngle: Float, takeupAngle: Float) {
+/** Under everything: the shell, its screws, and the label's white. */
+private fun DrawScope.drawShell() {
     val w = size.width
     val h = size.height
     val r = h * 0.06f
@@ -290,11 +312,16 @@ private fun DrawScope.drawCassette(supply: Float, takeup: Float, supplyAngle: Fl
         drawLine(Color(0xFF55595F), c - Offset(h * 0.013f, 0f), c + Offset(h * 0.013f, 0f), h * 0.006f)
     }
     // The label: aluminium-white with the Walkman's orange and blue stripes along its top.
+    drawRoundRect(Retro.Cream, Offset(w * LABEL_L, h * LABEL_T), Size(w * LABEL_W, h * LABEL_H), CornerRadius(r * 0.6f, r * 0.6f))
+}
+
+/** Over the label (and the cover on it): the stripes, the window and its reels, the foot. */
+private fun DrawScope.drawMechanism(supply: Float, takeup: Float, supplyAngle: Float, takeupAngle: Float) {
+    val w = size.width
+    val h = size.height
     val labelL = w * LABEL_L
-    val labelT = h * 0.07f
+    val labelT = h * LABEL_T
     val labelW = w * LABEL_W
-    val labelH = h * 0.74f
-    drawRoundRect(Retro.Cream, Offset(labelL, labelT), Size(labelW, labelH), CornerRadius(r * 0.6f, r * 0.6f))
     drawRect(Retro.Orange, Offset(labelL, labelT + h * 0.015f), Size(labelW, h * 0.014f))
     drawRect(Retro.Background, Offset(labelL, labelT + h * 0.029f), Size(labelW, h * 0.014f))
     // The window over the reels.

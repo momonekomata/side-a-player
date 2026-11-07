@@ -2,6 +2,11 @@ package io.github.momonekomata.sidea.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -89,13 +94,35 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
     val scan by Library.scan.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     var filtering by remember { mutableStateOf(false) }
+    var picking by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<io.github.momonekomata.sidea.sources.Playlist?>(null) }
-    var grid by rememberSaveable { mutableStateOf(true) }
+    val grid by model.gridAlbums.collectAsStateWithLifecycle()
     val top = ui.stack.lastOrNull()
     val view = ui.view
-    val list = rememberLazyListState()
-    // A new list starts at the top.
-    LaunchedEffect(ui.segment, ui.stack.size, top, ui.filter.list) { list.scrollToItem(0) }
+    // Each list (a view, an artist, an album, a Focus list, a search) keeps its scroll position:
+    // switching views, Back, and the next start land where you were. The position is put back
+    // once that list's rows are in, so a short list still loading can't clamp it to the top.
+    val place = model.placeKey(ui.segment, ui.stack, ui.filter)
+    val ready = ui.loaded == place
+    val list = remember(place, ready) { if (ready) model.scrollFor(place).let { (i, o) -> androidx.compose.foundation.lazy.LazyListState(i, o) } else androidx.compose.foundation.lazy.LazyListState() }
+    LaunchedEffect(list, place, ready) {
+        if (!ready) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }
+            .collect { (i, o) -> model.saveScroll(place, i, o) }
+    }
+    // The search bar tucks away while scrolling down the list and comes back on scrolling up (or
+    // at the top), so the list gets the room. It stays while there's something searched for.
+    var searchShown by remember { mutableStateOf(true) }
+    val hideSearch = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (available.y < -6f) searchShown = false else if (available.y > 6f) searchShown = true
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
+    }
+    val atTop by remember(list) { androidx.compose.runtime.derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0 } }
+    val showSearch = searchShown || atTop || ui.filter.query.isNotEmpty()
 
     val (songs, albums, artists) = ui.totals
     val subtitle = when {
@@ -112,8 +139,10 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
     }
     val labels: List<String> = view.artists?.map { it.name } ?: view.albums?.map { it.title } ?: view.tracks?.takeIf { !view.albumOrder && focusList == null }?.map { it.title } ?: view.genres?.map { it.name } ?: emptyList()
     // Rows above the list itself: Back, the list's own line, and Play/Shuffle under an artist or genre.
-    val showListLine = listName != null && top == null && ui.segment == LibSegment.TRACKS
-    val above = (if (top != null) 1 else 0) + (if (top is LibDrill.Artist || top is LibDrill.Genre) 1 else 0) + (if (showListLine) 1 else 0)
+    // A playlist gets a line above its songs, to delete it; the tab chips say what's shown.
+    val showListLine = playlist != null && top == null
+    // (No Back row: the system back gesture goes up a level.)
+    val above = (if (top is LibDrill.Artist || top is LibDrill.Genre) 1 else 0) + (if (showListLine) 1 else 0)
     val gridded = grid && view.albums != null
     val letters = remember(labels, above, gridded) {
         when {
@@ -124,8 +153,14 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
         }
     }
 
-    JCard(top?.title ?: "Library", subtitle, modifier, listState = list, letters = letters, pinned = {
+    JCard(top?.title ?: "Library", subtitle, modifier.nestedScroll(hideSearch), listState = list, letters = letters, pinned = {
         Column {
+          androidx.compose.animation.AnimatedVisibility(
+              showSearch,
+              enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+              exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut(),
+          ) {
+          Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             // A slim search pill rather than a full text field: the list keeps the height.
             androidx.compose.foundation.text.BasicTextField(
                 value = ui.filter.query,
@@ -133,7 +168,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                 singleLine = true,
                 textStyle = androidx.compose.ui.text.TextStyle(color = Retro.Ink, fontSize = 15.sp),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(Retro.Orange),
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp),
+                modifier = Modifier.weight(1f),
                 decorationBox = { field ->
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(Retro.CreamShade).padding(horizontal = 14.dp, vertical = 9.dp),
@@ -148,27 +183,39 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                     }
                 },
             )
+            // Albums as covers or as a list: always in sight beside the search while albums show.
+            if (view.albums != null) {
+                androidx.compose.material3.IconButton(onClick = { model.setGridAlbums(!grid) }, modifier = Modifier.padding(start = 4.dp).size(40.dp)) {
+                    androidx.compose.material3.Icon(
+                        if (grid) androidx.compose.material.icons.Icons.Filled.ViewList else androidx.compose.material.icons.Icons.Filled.GridView,
+                        if (grid) "Show albums as a list" else "Show albums as a grid",
+                        tint = Retro.Ink,
+                    )
+                }
+            }
+          }
+          }
             Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                LibSegment.entries.forEach { s -> Chip(s.label, ui.segment == s && top == null) { model.segment(s) } }
+                LibSegment.entries.forEach { s -> Chip(s.label, ui.segment == s && top == null && focusList == null) { model.segment(s) } }
+                // Favourites and playlists: tabs of their own, apart from Focus's filters.
+                Chip("♥" + "\uFE0E", focusList == FAVORITES_LIST, "Favourites") { model.showList(FAVORITES_LIST) }
+                Chip(playlist?.let { "▤ " + it.name.take(10) } ?: "▤", playlist != null, "Playlists") { picking = true }
                 Chip(if (ui.filter.count > 0) "Focus · ${ui.filter.count}" else "Focus", ui.filter.count > 0) {
                     model.loadFacets()
                     filtering = true
-                }
-                if (view.albums != null) Chip(if (grid) "☰ List" else "▦ Grid", false) { grid = !grid }
-            }
+                }            }
         }
     }) {
-        if (top != null) item(key = "back") { JCardRow("‹", "Back", onClick = { model.back() }) }
         if (showListLine) {
             item(key = "listline") {
                 // The list being shown: leave it, or delete a playlist.
                 JCardRow(
                     "", listName!!, if (playlist != null) "playlist · long-press a song to take it out" else "tap ♡ on the deck, or long-press a song, to add",
                     action = if (playlist != null) "Delete" to { deleting = playlist } else null,
-                    onClick = { model.filter(ui.filter.copy(list = null)) },
+                    onClick = model::closeList,
                 )
             }
         }
@@ -253,9 +300,15 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
     if (filtering) {
         FilterSheet(
             ui.filter, ui.facets, Library.sources.value.map { it.id to it.name },
-            lists = listOf(FAVORITES_LIST to "♥ Favourites") + playlists.map { it.id to "▤ " + it.name },
-            onNewPlaylist = { vm.newPlaylist(it, null) },
             onApply = { model.filter(it); filtering = false }, onDismiss = { filtering = false },
+        )
+    }
+    if (picking) {
+        PlaylistPicker(
+            playlists, current = focusList,
+            onPick = { model.showList(it); picking = false },
+            onNew = { vm.newPlaylist(it, null) },
+            onDismiss = { picking = false },
         )
     }
     deleting?.let { p ->
@@ -269,8 +322,48 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
     }
 }
 
+/** The Playlists tab: pick one to show its songs, or make a new one. */
 @Composable
-private fun Chip(label: String, on: Boolean, onClick: () -> Unit) {
+private fun PlaylistPicker(
+    playlists: List<io.github.momonekomata.sidea.sources.Playlist>,
+    current: String?,
+    onPick: (String) -> Unit,
+    onNew: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var naming by remember { mutableStateOf(false) }
+    if (naming) {
+        PlaylistNameDialog(onCreate = { onNew(it); naming = false }, onDismiss = { naming = false })
+        return
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Playlists") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (playlists.isEmpty()) Text("No playlists yet. Make one here, or long-press a song and pick Add to playlist.", fontSize = 13.sp, color = Retro.Muted)
+                playlists.forEach { p ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onPick(p.id) }.padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("▤", color = Retro.Orange, modifier = Modifier.width(30.dp))
+                        Text(p.name, fontSize = 15.sp, fontWeight = if (p.id == current) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(plural(p.songs.size, "song"), fontSize = 12.sp, color = Retro.Muted)
+                    }
+                }
+                Row(Modifier.fillMaxWidth().clickable { naming = true }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("+", color = Retro.Orange, modifier = Modifier.width(30.dp))
+                    Text("New playlist…", fontSize = 15.sp)
+                }
+            }
+        },
+        confirmButton = { TextButton(onDismiss) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun Chip(label: String, on: Boolean, description: String? = null, onClick: () -> Unit) {
     Text(
         label,
         color = if (on) Color.White else Retro.Ink,
@@ -280,7 +373,8 @@ private fun Chip(label: String, on: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(50))
             .background(if (on) Retro.Orange else Retro.CreamShade)
             .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 5.dp),
+            .then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
     )
 }
 
@@ -361,18 +455,10 @@ private fun FilterSheet(
     current: LibFilter,
     facets: LibFacets?,
     sources: List<Pair<String, String>>,
-    /** Favourites and the playlists, (list id, name). */
-    lists: List<Pair<String, String>>,
-    onNewPlaylist: (String) -> Unit,
     onApply: (LibFilter) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var f by remember(current) { mutableStateOf(current) }
-    var naming by remember { mutableStateOf(false) }
-    if (naming) {
-        PlaylistNameDialog(onCreate = { onNewPlaylist(it); naming = false }, onDismiss = { naming = false })
-        return
-    }
     var from by remember(current) { mutableStateOf(current.yearFrom?.toString().orEmpty()) }
     var to by remember(current) { mutableStateOf(current.yearTo?.toString().orEmpty()) }
     val periods = listOf(1 to "Day", 7 to "Week", 30 to "Month", 91 to "3 months", 182 to "6 months", 365 to "Year")
@@ -384,14 +470,6 @@ private fun FilterSheet(
                 if (facets == null) {
                     Text("Reading what's in the Library…")
                     return@Column
-                }
-                // Favourites and playlists: one list at a time, shown in its own order.
-                Text("YOUR LISTS", fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp, modifier = Modifier.padding(top = 4.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    lists.forEach { (id, name) ->
-                        Toggle("$name (${facets.lists[id] ?: 0})", f.list == id) { f = f.copy(list = if (f.list == id) null else id) }
-                    }
-                    Toggle("+ New playlist", false) { naming = true }
                 }
                 LabeledSwitch("Lossless only", f.losslessOnly) { f = f.copy(losslessOnly = it) }
                 Facet("Genres", facets.genres) { (g, n) -> Toggle("$g ($n)", g in f.genres) { f = f.copy(genres = f.genres.flip(g)) } }

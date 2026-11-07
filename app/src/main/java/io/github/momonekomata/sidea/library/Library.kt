@@ -186,8 +186,8 @@ object Library {
             folders++
             for (e in entries) {
                 when (e) {
-                    // Hidden folders (.thumbnails, .trash) hold no music worth listing.
-                    is Entry.Folder -> if (!e.name.startsWith(".")) queue.addLast(e.path to e.name)
+                    // Hidden and NAS system folders (.thumbnails, #recycle, @eaDir) aren't music.
+                    is Entry.Folder -> if (!io.github.momonekomata.sidea.sources.isSystemFolder(e.name)) queue.addLast(e.path to e.name)
                     is Entry.Song -> {
                         val k = known[e.track.id]
                         if (k != null && k.first == e.track.sizeBytes && k.second) unchanged += e.track.id else todo += Triple(e, path, name)

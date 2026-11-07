@@ -108,7 +108,8 @@ sources**: **Add a folder on the phone** (Android's folder picker; SD cards and 
 add a NAS or cloud server there, tap it, go into the folder you want and tap **Add this folder to the
 Library**. Tap a Library folder in that list to remove it. (A folder that was open in the old Local
 tab joins the Library by itself on the first start of this version.) Add as many as you like;
-everything inside them is scanned in (hidden folders such as `.thumbnails` are skipped), with each
+everything inside them is scanned in (hidden folders such as `.thumbnails`, and a NAS's own folders
+such as Synology's `#recycle`, `#snapshot` and `@eaDir`, are skipped), with each
 song's tags (title, artist, album artist, album, genre, year, track and disc) and what's inside the
 file (format, sample rate, bit depth, channels, length) read from the file itself, a few kilobytes
 each, so it's cheap over a NAS too. It all lives in a database on the phone.
@@ -116,12 +117,16 @@ each, so it's cheap over a NAS too. It all lives in a database on the phone.
 * **Artists** (by album artist), **Albums** (with covers, year and the format of the album's best
   file), **Tracks** and **Genres**; tap through artist → albums → songs, genre → albums. Play or
   Shuffle a whole album, artist or genre.
-* **Your lists** at the top of Focus: **♥ Favourites** and each **playlist** (and + New playlist).
-  Focusing on one shows its songs in its own order (newest favourite first); the line above them
-  leaves the list, or deletes a playlist. Long-press a song there to take it out of the playlist.
+* **♥** (Favourites) and **▤** (Playlists) are tabs of their own beside the views, apart from
+  Focus: ♥ shows your favourite songs, newest first; ▤ lists the playlists (and + New playlist), and
+  picking one shows its songs in its own order, with Delete on the line above them. Long-press a
+  song in a playlist to take it out.
+* Every list keeps its place: switching views, going back (the system back gesture) and the next
+  start land where you were scrolled. The search bar tucks away while you scroll down and comes back
+  when you scroll up.
 * **Search** across titles, artists, albums, genres, file and folder names and formats at once;
   every word must match.
-* **Albums** as a grid of covers or a list (the ▦ / ☰ button).
+* **Albums** as a grid of covers or a list: the button beside the search bar, kept between runs.
 * **Focus**, after Roon's, from what the scan reads: genres, release date (decades or a year
   range), performers, composers, labels, most played (top 25…1000), played in the last day…year,
   added in the last day…year, compilations, storage locations, the inspector (no genre, no year,
@@ -137,7 +142,7 @@ each, so it's cheap over a NAS too. It all lives in a database on the phone.
 
 Shuffle and repeat (all / one) beside the transport keys; hold ⏮/⏭ to rewind or fast-forward.
 Swipe the transport keys left for −10 / −5 / +5 / +10 s (on a phone held sideways, shuffle and
-repeat are there too). ♡ beside the title adds a song to **Favourites** (Focus → ♥ Favourites).
+repeat are there too). ♡ beside the title adds a song to **Favourites** (the ♥ tab).
 Long lists (20 entries or more) get an A–Z index down the right
 edge: touch or slide along it to jump to a letter; digits file under #, and Thai, kana, kanji and
 hangul get a mark each after Z.
@@ -146,12 +151,13 @@ hangul get a mark each after Z.
 A play counts when a song starts.
 
 Under the deck, **TAPE · DECK · QUEUE** (it opens on DECK; swipe, or tap the names). **TAPE** is a
-cassette over the song's cover, blurred and dimmed. Its label carries the cover, title and artist,
-the quality light and format, the counter between the reels (which turn while it plays, the tape
-winding from the left reel onto the right as the song goes on), and the keys: previous, −10 s,
-play/pause, +10 s, next. Everything is written on the opaque label, so it reads on any cover.
-Turning the phone sideways opens the tape full screen; **‹ LIBRARY** (or Back) shows the Library
-and the deck, and ⛶ on the TAPE page brings the full-screen tape back.
+cassette along the screen's long side (on an upright phone it's turned a quarter to the left). The
+song's cover is printed on its label, shaded so the white writing on it reads on any picture: a
+small cover, title and artist, the quality light and format, the counter between the reels (which
+turn while it plays, the tape winding from the left reel onto the right as the song goes on), and
+the keys: previous, −10 s, play/pause, +10 s, next. ⛶ on the TAPE page shows the tape full screen,
+edge to edge, upright or sideways; turning the phone sideways opens it by itself. **‹ LIBRARY** /
+**✕ CLOSE** (or Back) leaves it.
 
 **Long-press a song** (in the Library, a playlist, the queue or the history) for
 add to / remove from favourites, play next, add to queue and add to playlist. The **queue**, laid out like Apple Music's: Shuffle, Repeat and Clear stay

@@ -54,6 +54,14 @@ fun isAudioFile(name: String) = name.substringAfterLast('.', "").lowercase() in 
 
 fun isLrcFile(name: String) = name.endsWith(".lrc", ignoreCase = true)
 
+/**
+ * Folders that hold no music of yours: hidden ones (.thumbnails), and a NAS's own: Synology's
+ * recycle bin and snapshots (#recycle, #snapshot) and its system folders (@eaDir thumbnails,
+ * @tmp). QNAP's @Recycle starts with @ too.
+ */
+fun isSystemFolder(name: String) =
+    name.startsWith(".") || name.startsWith("@") || name.equals("#recycle", ignoreCase = true) || name.equals("#snapshot", ignoreCase = true)
+
 /** "Song.flac" and "Song.lrc" pair up; case doesn't matter. */
 fun lrcKey(name: String) = name.substringBeforeLast('.').lowercase()
 

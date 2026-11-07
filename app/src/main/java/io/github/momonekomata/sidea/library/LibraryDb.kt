@@ -85,8 +85,8 @@ data class LibFilter(
     val count get() = listOf(
         genres.isNotEmpty(), codecs.isNotEmpty(), rates.isNotEmpty(), bits.isNotEmpty(), sources.isNotEmpty(),
         yearFrom != null || yearTo != null, losslessOnly, artists.isNotEmpty(), composers.isNotEmpty(), labels.isNotEmpty(),
-        channels.isNotEmpty(), compilationsOnly, topPlayed != null, playedWithinDays != null, addedWithinDays != null, list != null,
-    ).count { it } + inspect.size
+        channels.isNotEmpty(), compilationsOnly, topPlayed != null, playedWithinDays != null, addedWithinDays != null,
+    ).count { it } + inspect.size // the list shown (Favourites, a playlist) is its own tab, not a Focus filter
 }
 
 /** The inspector's checks, by key: what each finds. */

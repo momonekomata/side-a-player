@@ -119,7 +119,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** The Library: the one place songs are browsed. Opens its database on first use. */
     val library by lazy {
         Library.init(getApplication())
-        io.github.momonekomata.sidea.library.LibraryModel(viewModelScope)
+        io.github.momonekomata.sidea.library.LibraryModel(viewModelScope, prefs)
     }
 
     init {
@@ -386,8 +386,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             try {
-                // Hidden folders (.thumbnails and the like) aren't music.
-                val entries = b.browser.list(path).filterNot { it is Entry.Folder && it.name.startsWith(".") }
+                // Hidden and NAS system folders (.thumbnails, #recycle, @eaDir) aren't music.
+                val entries = b.browser.list(path).filterNot { it is Entry.Folder && io.github.momonekomata.sidea.sources.isSystemFolder(it.name) }
                 updateBrowse { if (it.currentPath == path) it.copy(entries = entries, loading = false) else it }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -482,7 +482,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deletePlaylist(id: String) {
         // A Focus on it goes too.
-        if (library.ui.value.filter.list == id) library.filter(library.ui.value.filter.copy(list = null))
+        if (library.ui.value.filter.list == id) library.closeList()
         savePlaylists(_playlists.value.filterNot { it.id == id })
     }
 }

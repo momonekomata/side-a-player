@@ -168,7 +168,6 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     // Landscape: full screen. The system bars hide (swipe from an edge to peek), and the header's
     // buttons move beside the deck so the card and the deck get the whole height.
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    ImmersiveMode(landscape)
     val headerIcons: @Composable () -> Unit = {
         HeaderIcons(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
     }
@@ -183,10 +182,12 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     // A phone turned sideways opens on the tape, full screen; "‹ LIBRARY" (or Back) shows the
     // Library and deck, and the tape page's full-screen button brings it back. Every turn to
     // landscape starts on the tape again.
+    // Upright, the tape goes full screen from the TAPE page's ⛶ button.
     var tapeFull by rememberSaveable(landscape) { mutableStateOf(landscape) }
-    BackHandler(enabled = landscape && tapeFull) { tapeFull = false }
-    if (landscape && tapeFull) {
-        TapeFullScreen(deck, onLibrary = { tapeFull = false })
+    BackHandler(enabled = tapeFull) { tapeFull = false }
+    ImmersiveMode(landscape || tapeFull)
+    if (tapeFull) {
+        TapeFullScreen(deck, closeLabel = if (landscape) "‹ LIBRARY" else "✕ CLOSE", onClose = { tapeFull = false })
     } else Column(
         Modifier
             .fillMaxSize()
@@ -198,10 +199,10 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
             if (maxWidth >= 600.dp) {
                 WideLayout(
                     deck, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage, card = library,
-                    onTapeFullScreen = if (landscape) ({ tapeFull = true }) else null,
+                    onTapeFullScreen = { tapeFull = true },
                 )
             } else {
-                PhoneLayout(deck, lyrics, queuePage, card = library)
+                PhoneLayout(deck, lyrics, queuePage, card = library, onTapeFullScreen = { tapeFull = true })
             }
         }
     }
@@ -263,6 +264,7 @@ private fun PhoneLayout(
     lyrics: LyricsState,
     queuePage: (@Composable (Modifier) -> Unit)?,
     card: @Composable (Modifier) -> Unit,
+    onTapeFullScreen: () -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = expanded) { expanded = false }
@@ -277,7 +279,7 @@ private fun PhoneLayout(
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
-            ExpandedDeck(deck, queuePage, onCollapse = { expanded = false })
+            ExpandedDeck(deck, queuePage, onCollapse = { expanded = false }, onTapeFullScreen = onTapeFullScreen)
         }
     }
 }
@@ -342,7 +344,7 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
 
 /** The full deck over the cards. */
 @Composable
-private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> Unit)?, onCollapse: () -> Unit) {
+private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> Unit)?, onCollapse: () -> Unit, onTapeFullScreen: () -> Unit) {
     // Swipe down anywhere to put it away: the panel follows the finger, and goes once pulled far
     // enough (or flung), else springs back. A list (lyrics, the queue) scrolls first and, pulled
     // down past its top, pulls the panel instead.
@@ -411,7 +413,7 @@ private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> 
             Text("NOW PLAYING", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 3.sp)
         }
         // Swipe left for the queue.
-        NowPlayingPager(deck, Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), compact = false, queuePage = queuePage)
+        NowPlayingPager(deck, Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), compact = false, queuePage = queuePage, onTapeFullScreen = onTapeFullScreen)
     }
 }
 
