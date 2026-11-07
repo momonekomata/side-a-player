@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -70,11 +72,13 @@ import kotlin.math.sqrt
  */
 @Composable
 fun CassettePage(model: DeckModel, modifier: Modifier = Modifier, onFullScreen: (() -> Unit)? = null) {
-    Box(modifier.clip(RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(modifier.clip(RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
         CoverBackdrop(model.art)
-        BoxWithConstraints(Modifier.fillMaxSize().padding(10.dp), contentAlignment = Alignment.Center) {
-            val w = minOf(maxWidth, maxHeight * CASSETTE_RATIO)
-            Cassette(model, Modifier.width(w).aspectRatio(CASSETTE_RATIO))
+        // A tape lies along the screen's long side: on an upright phone it's drawn turned a
+        // quarter to the left (read it with the phone on its side), so it fills the page.
+        val upright = maxHeight > maxWidth
+        Box(Modifier.fillMaxSize().then(if (upright) Modifier.sideways() else Modifier).padding(6.dp), contentAlignment = Alignment.Center) {
+            CassetteFit(model)
         }
         if (onFullScreen != null) {
             Pill("⛶ FULL SCREEN", Modifier.align(Alignment.TopEnd).padding(8.dp), onFullScreen)
@@ -82,16 +86,44 @@ fun CassettePage(model: DeckModel, modifier: Modifier = Modifier, onFullScreen: 
     }
 }
 
-/** The tape on its own, filling a phone held sideways. */
+/** The tape on its own, edge to edge on a phone held sideways. */
 @Composable
 fun TapeFullScreen(model: DeckModel, onLibrary: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         CoverBackdrop(model.art)
-        BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 14.dp), contentAlignment = Alignment.Center) {
-            val w = minOf(maxWidth, maxHeight * CASSETTE_RATIO)
-            Cassette(model, Modifier.width(w).aspectRatio(CASSETTE_RATIO))
+        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            CassetteFit(model)
         }
-        Pill("‹ LIBRARY", Modifier.align(Alignment.TopStart).padding(12.dp), onLibrary)
+        // On the shell's bare corner, between the screw and the foot, clear of the label.
+        Pill("‹ LIBRARY", Modifier.align(Alignment.BottomStart).padding(start = 64.dp, bottom = 22.dp), onLibrary)
+    }
+}
+
+/**
+ * The cassette filling the space it's given: stretched to the space when that's anything like
+ * a tape's shape (long and low), otherwise as large as fits in a tape's proportions.
+ */
+@Composable
+private fun CassetteFit(model: DeckModel) {
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val ratio = maxWidth / maxHeight
+        val m = when {
+            ratio < MIN_RATIO -> Modifier.width(maxWidth).height(maxWidth / MIN_RATIO)
+            ratio > MAX_RATIO -> Modifier.height(maxHeight).width(maxHeight * MAX_RATIO)
+            else -> Modifier.fillMaxSize()
+        }
+        Cassette(model, m)
+    }
+}
+
+private const val MIN_RATIO = 1.45f
+private const val MAX_RATIO = 2.4f
+
+/** Lays the content out a quarter turn to the left: its width along this space's height. */
+private fun Modifier.sideways() = layout { measurable, c ->
+    val p = measurable.measure(Constraints.fixed(c.maxHeight, c.maxWidth))
+    layout(c.maxWidth, c.maxHeight) {
+        p.placeWithLayer((c.maxWidth - p.width) / 2, (c.maxHeight - p.height) / 2) { rotationZ = -90f }
     }
 }
 

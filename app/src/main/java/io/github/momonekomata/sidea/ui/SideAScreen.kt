@@ -124,6 +124,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 
 @Composable
 fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
@@ -342,22 +343,66 @@ private fun MiniPlayer(deck: DeckModel, sheet: Lyrics?, onExpand: () -> Unit) {
 /** The full deck over the cards. */
 @Composable
 private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> Unit)?, onCollapse: () -> Unit) {
+    // Swipe down anywhere to put it away: the panel follows the finger, and goes once pulled far
+    // enough (or flung), else springs back. A list (lyrics, the queue) scrolls first and, pulled
+    // down past its top, pulls the panel instead.
     var drag by remember { mutableFloatStateOf(0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val far = with(androidx.compose.ui.platform.LocalDensity.current) { 140.dp.toPx() }
+    fun release(velocity: Float = 0f) {
+        if (drag > far || (drag > far / 4 && velocity > 1500f)) onCollapse()
+        else scope.launch { androidx.compose.animation.core.animate(drag, 0f) { v, _ -> drag = v } }
+    }
+    val pull = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                // Pushing back up while the panel is pulled down moves the panel first.
+                if (drag > 0f && available.y < 0f) {
+                    val take = maxOf(available.y, -drag)
+                    drag += take
+                    return androidx.compose.ui.geometry.Offset(0f, take)
+                }
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput && available.y > 0f) {
+                    drag += available.y
+                    return androidx.compose.ui.geometry.Offset(0f, available.y)
+                }
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                if (drag <= 0f) return androidx.compose.ui.unit.Velocity.Zero
+                release(available.y)
+                return available
+            }
+        }
+    }
     Column(
         Modifier
             .fillMaxSize()
-            .background(Retro.Background),
+            .graphicsLayer { translationY = drag }
+            .background(Retro.Background)
+            .nestedScroll(pull)
+            .pointerInput(Unit) {
+                val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
+                detectVerticalDragGestures(
+                    onDragStart = { tracker.resetTracking() },
+                    onDragEnd = { release(tracker.calculateVelocity().y) },
+                    onDragCancel = { release() },
+                ) { change, dy ->
+                    tracker.addPosition(change.uptimeMillis, change.position)
+                    drag = (drag + dy).coerceAtLeast(0f)
+                    change.consume()
+                }
+            },
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onCollapse)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragStart = { drag = 0f },
-                        onDragEnd = { if (drag > 60f) onCollapse() },
-                    ) { _, dy -> drag += dy }
-                }
                 .padding(vertical = 10.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
