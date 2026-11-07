@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -189,51 +190,81 @@ private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, on
         // As tall as the room allows, up to a touch taller than wide (barely cropping the cover).
         // The lyrics take all the room down to the song, starting under the status bar.
         val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-        val artH = if (model.showLyrics) (maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
-        else minOf(maxWidth * 1.06f, maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
+        // Cover ⇄ lyrics: the square's height, its fade and its top all glide together, on the
+        // same curve and time as the deck rising over the header (see SideAScreen).
+        val glide = androidx.compose.animation.core.tween<Float>(DECK_GLIDE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+        val glideDp = androidx.compose.animation.core.tween<Dp>(DECK_GLIDE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+        val artH by androidx.compose.animation.core.animateDpAsState(
+            if (model.showLyrics) (maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
+            else minOf(maxWidth * 1.06f, maxHeight - keysH - 190.dp).coerceAtLeast(140.dp),
+            glideDp, label = "art-height",
+        )
+        val fadeFrom by androidx.compose.animation.core.animateFloatAsState(if (model.showLyrics) 0.86f else 0.62f, glide, label = "art-fade")
+        val topPad by androidx.compose.animation.core.animateDpAsState(if (model.showLyrics) statusTop else 0.dp, glideDp, label = "art-top")
+        val shade by androidx.compose.animation.core.animateFloatAsState(if (model.showLyrics) 1f else 0f, glide, label = "art-shade")
         Column(Modifier.fillMaxSize()) {
-          Box(Modifier.fillMaxWidth().height(artH)) {
             Box(
                 Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .height(artH)
                     // The cover's foot fades out, so the brushed metal itself shows through it.
                     .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                     .drawWithContent {
                         drawContent()
                         drawRect(
-                            Brush.verticalGradient(0f to Color.Black, (if (model.showLyrics) 0.86f else 0.62f) to Color.Black, 1f to Color.Transparent),
+                            Brush.verticalGradient(0f to Color.Black, fadeFrom to Color.Black, 1f to Color.Transparent),
                             blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
                         )
                     },
             ) {
-                ArtSquare(model, Modifier.fillMaxSize().padding(top = if (model.showLyrics) statusTop else 0.dp), shape = RectangleShape, showHint = false)
+                ArtSquare(model, Modifier.fillMaxSize().padding(top = topPad), shape = RectangleShape, showHint = false)
                 // With the lyrics up the deck reaches the top of the screen: a little shade behind
                 // the status bar's icons.
-                if (model.showLyrics) {
-                    Box(Modifier.fillMaxWidth().height(72.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent))))
-                }
+                Box(Modifier.fillMaxWidth().height(72.dp).graphicsLayer { alpha = shade }.background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent))))
             }
-            // LYRICS / COVER: a small key settled at the cover's bottom right, outside its fade.
-            val hint = when {
-                model.showLyrics -> "COVER"
-                model.lyrics.lyrics != null -> "LYRICS"
-                model.lyrics.loading -> "LYRICS…"
-                else -> null
-            }
-            if (hint != null) {
-                Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 4.dp)) { SmallLabelKey(hint, hint, model.onToggleLyrics) }
-            }
-          }
             // The song and its format sit down by the seek bar and the keys.
             Column(
                 Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp).padding(top = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
             ) {
-                SongInfo(model, ink, compact = false, onPath)
+                Box {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { SongInfo(model, ink, compact = false, onPath) }
+                    // 🎵 / 🖼: a small key just above the song's name at the right. It hangs off
+                    // the song's block, which keeps one place on the screen whatever the cover
+                    // or lyrics above are doing, so the key never moves.
+                    val hint = when {
+                        model.showLyrics -> "🖼"
+                        model.lyrics.lyrics != null || model.lyrics.loading -> "🎵"
+                        else -> null
+                    }
+                    if (hint != null) {
+                        Box(Modifier.align(Alignment.TopEnd).offset(y = (-44).dp)) {
+                            EmojiKey(hint, if (model.showLyrics) "Show the cover" else "Show the lyrics", model.onToggleLyrics)
+                        }
+                    }
+                }
             }
             Box(Modifier.padding(horizontal = 16.dp)) { SeekBar(model, ink) }
             PianoTransport(model, bottomInset)
         }
+    }
+}
+
+/** How long the deck takes to glide between the cover and the lyrics. */
+internal const val DECK_GLIDE_MS = 380
+
+/** A small square key with an emoji on it (🎵 lyrics, 🖼 cover). */
+@Composable
+internal fun EmojiKey(emoji: String, label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(34.dp)
+            .keyFace()
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(emoji, fontSize = 16.sp)
     }
 }
 
@@ -449,7 +480,7 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
             .background(Color(0xFF111111))
             .clickable(onClick = model.onToggleLyrics),
     ) {
-        Crossfade(model.showLyrics, label = "art-lyrics") { lyricsSide ->
+        Crossfade(model.showLyrics, animationSpec = androidx.compose.animation.core.tween(DECK_GLIDE_MS), label = "art-lyrics") { lyricsSide ->
             if (lyricsSide) {
                 LyricsSquare(model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize())
             } else {

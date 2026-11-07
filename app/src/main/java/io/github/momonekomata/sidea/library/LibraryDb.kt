@@ -234,6 +234,16 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
         }
     }
 
+    /**
+     * Drops what earlier scans took for songs but isn't: playlists and cue sheets (servers label
+     * them audio) and macOS's "._" twins. Returns how many went.
+     */
+    fun dropNonSongs(): Int {
+        val names = io.github.momonekomata.sidea.sources.NOT_SONG_EXTENSIONS.map { "%.$it" }
+        val where = (names.map { "lower(file) LIKE ?" } + "file LIKE '._%'").joinToString(" OR ")
+        return writableDatabase.delete("tracks", where, names.toTypedArray())
+    }
+
     /** After a complete scan: songs of [source] that weren't seen are gone from it. */
     fun dropUnseen(source: String, generation: Long) {
         writableDatabase.delete("tracks", "source = ? AND seen <> ?", arrayOf(source, generation.toString()))

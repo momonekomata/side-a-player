@@ -52,6 +52,23 @@ private val AUDIO_EXTENSIONS = setOf(
 
 fun isAudioFile(name: String) = name.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS
 
+/** Files that sit with the music but aren't songs, whatever type a server labels them with. */
+val NOT_SONG_EXTENSIONS = setOf("m3u", "m3u8", "pls", "cue", "xspf", "wpl", "asx", "lrc", "txt", "log", "nfo", "jpg", "jpeg", "png", "pdf", "accurip", "sfv", "md5", "ffp")
+
+/**
+ * Whether a folder entry is a song: an audio file by its name, or one a server says is audio
+ * (some name their files oddly). Playlists and cue sheets are labelled audio by servers too
+ * (audio/x-mpegurl, audio/x-cue), and macOS leaves "._" twins of every song on a NAS: none of
+ * those are songs.
+ */
+fun isSongFile(name: String, mime: String?): Boolean {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    if (name.startsWith("._") || ext in NOT_SONG_EXTENSIONS) return false
+    if (ext in AUDIO_EXTENSIONS) return true
+    val m = mime?.lowercase() ?: return false
+    return m.startsWith("audio/") && listOf("mpegurl", "scpls", "cue", "asx", "playlist", "xspf").none { m.contains(it) }
+}
+
 fun isLrcFile(name: String) = name.endsWith(".lrc", ignoreCase = true)
 
 /**

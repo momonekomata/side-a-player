@@ -100,6 +100,8 @@ object Library {
         if (::db.isInitialized) return
         appContext = context.applicationContext
         db = LibraryDb(appContext)
+        // Playlists and cue sheets earlier scans took for songs ("Unknown artist" albums): out.
+        runCatching { db.dropNonSongs() }
         _sources.value = runCatching {
             val a = JSONArray(prefs().getString("sources", "[]"))
             (0 until a.length()).map { LibrarySource.fromJson(a.getJSONObject(it)) }

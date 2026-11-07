@@ -158,7 +158,7 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         if (path.trimEnd('/') == requestPath.trimEnd('/')) return null
         val name = item.displayName()
         if (item.isDir) return Entry.Folder(name, path.trimEnd('/') + "/")
-        if (!isAudioFile(name) && item.mime?.startsWith("audio/") != true) return null
+        if (!isSongFile(name, item.mime)) return null
         val size = item.size
         val url = base.newBuilder().encodedPath(path).build()
         val lrcUrl = lrc[lrcKey(name)]?.let { base.newBuilder().encodedPath(it).build() }

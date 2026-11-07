@@ -246,7 +246,7 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
         if (phone) {
             // Under the header; with the lyrics up it rises to the top of the screen over it.
             val headerBottom = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 44.dp
-            val top by androidx.compose.animation.core.animateDpAsState(if (deck.showLyrics) 0.dp else headerBottom, label = "deck-top")
+            val top by androidx.compose.animation.core.animateDpAsState(if (deck.showLyrics) 0.dp else headerBottom, androidx.compose.animation.core.tween(DECK_GLIDE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing), label = "deck-top")
             AnimatedVisibility(
                 visible = expanded,
                 modifier = Modifier.padding(top = top),
