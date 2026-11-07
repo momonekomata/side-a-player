@@ -114,8 +114,10 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
         androidx.compose.runtime.snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }
             .collect { (i, o) -> model.saveScroll(place, i, o) }
     }
-    // The search bar tucks away while scrolling down the list and comes back on scrolling up (or
-    // at the top), so the list gets the room. It stays while there's something searched for.
+    // The search bar tucks away while scrolling down the list and comes back on scrolling (or
+    // pulling) up, so the list gets the room. It stays while there's something searched for. Only
+    // the finger moves it: opening an artist or going Back leaves it as it was, so the tabs under
+    // it don't jump.
     var searchShown by remember { mutableStateOf(true) }
     val hideSearch = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
@@ -125,8 +127,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
             }
         }
     }
-    val atTop by remember(list) { androidx.compose.runtime.derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0 } }
-    val showSearch = searchShown || atTop || ui.filter.query.isNotEmpty()
+    val showSearch = searchShown || ui.filter.query.isNotEmpty()
 
     val (songs, albums, artists) = ui.totals
     val subtitle = when {
