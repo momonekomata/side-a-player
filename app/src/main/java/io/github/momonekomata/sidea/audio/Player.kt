@@ -11,6 +11,8 @@ import android.os.Handler
 import android.os.Looper
 import io.github.momonekomata.sidea.Settings
 import io.github.momonekomata.sidea.audio.usb.UsbExclusive
+import io.github.momonekomata.sidea.cast.Cast
+import kotlinx.coroutines.flow.combine
 import io.github.momonekomata.sidea.sources.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -88,7 +90,9 @@ object Player {
 
     private val _queue = MutableStateFlow(QueueState())
     val queue: StateFlow<QueueState> = _queue.asStateFlow()
-    val state: StateFlow<EngineState> get() = engine.state
+    /** What the deck shows: the phone's own playback, or the renderer's while casting. */
+    private val _state = MutableStateFlow(EngineState())
+    val state: StateFlow<EngineState> = _state.asStateFlow()
 
     /** Identifies one queue + position, so a late gapless hand-over can't land on a new queue. */
     private class Slot(val tracks: List<Track>, val index: Int)
@@ -198,7 +202,7 @@ object Player {
 
     private fun reopenOnNewOutput() {
         val s = engine.state.value
-        if (_queue.value.current == null || s.output == null || parkedAtMs != null) return
+        if (Cast.active || _queue.value.current == null || s.output == null || parkedAtMs != null) return
         startCurrent(startMs = s.positionMs, paused = !s.isPlaying)
     }
 
@@ -228,7 +232,7 @@ object Player {
 
     /** Headphones or the DAC were unplugged: pause rather than blast the phone speaker. */
     fun pauseForNoisy() {
-        if (usbDriverBusy()) return
+        if (usbDriverBusy() || Cast.active) return
         resumeOnGain = false
         if (engine.state.value.isPlaying) pauseAndPark()
     }
@@ -256,7 +260,7 @@ object Player {
         scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(10_000)
-                if (engine.state.value.isPlaying) saveQueue()
+                if (state.value.isPlaying) saveQueue()
             }
         }
         io.github.momonekomata.sidea.sources.PlayHistory.init(appContext)
@@ -292,6 +296,55 @@ object Player {
                     reopenOnNewOutput()
                 }
             }
+        }
+        // ---- casting ----
+        Cast.init(appContext)
+        Cast.onEnded = { next(auto = true) }
+        Cast.onAdvanced = {
+            val q = _queue.value
+            q.nextIndex(auto = true)?.let { _queue.value = q.copy(index = it) }
+        }
+        scope.launch {
+            combine(engine.state, Cast.state, Cast.target) { e, c, t -> if (t != null) c else e }.collect { _state.value = it }
+        }
+        // Whatever changes the queue (a tap, Play next, shuffle, the renderer moving on), the
+        // renderer gets the right song queued after the one it plays.
+        scope.launch { _queue.collect { if (Cast.active && Cast.loaded) Cast.setNext(upcoming()) } }
+    }
+
+    /** The song that follows the current one on its own, when gapless is on. */
+    private fun upcoming(): Track? {
+        if (!Settings.current.gapless) return null
+        val q = _queue.value
+        return q.nextIndex(auto = true)?.let { q.tracks.getOrNull(it) }
+    }
+
+    /**
+     * Plays on [device] from here on (null: back on the phone). The song carries on where it was,
+     * playing or paused as it was.
+     */
+    fun castTo(device: Cast.Device?) {
+        val s = state.value
+        val pos = parkedAtMs ?: s.positionMs
+        val playing = s.isPlaying
+        val hasSong = _queue.value.current != null
+        if (device == null) {
+            if (!Cast.active) return
+            Cast.disconnect()
+            // Back on the phone, parked where the renderer was: Play carries on here.
+            if (hasSong) _parked.value = Resume(pos, s.durationMs)
+            return
+        }
+        if (Cast.target.value?.key == device.key) return
+        openJob?.cancel()
+        main.removeCallbacks(parkLater)
+        if (Cast.active) Cast.disconnect()
+        engine.stop(releaseOutput = true)
+        abandonFocus()
+        Cast.connect(device)
+        if (hasSong) {
+            _parked.value = null
+            startCurrent(startMs = pos, paused = !playing)
         }
     }
 
@@ -377,7 +430,7 @@ object Player {
 
     /** Jumps by [deltaMs] within the song (±5 s, ±10 s, or held fast-forward/rewind). */
     fun skipBy(deltaMs: Long) {
-        val s = engine.state.value
+        val s = state.value
         if (_queue.value.current == null) return
         // Parked (paused with the DAC handed back, or brought back from last time), the engine
         // knows nothing: the spot and length are the parked ones.
@@ -407,7 +460,7 @@ object Player {
         val songs = kept.map { t ->
             io.github.momonekomata.sidea.sources.Favorite(t.id, t.displayTitleFor(tags), t.displayArtistFor(tags), t.displayAlbumFor(tags), t.sizeBytes)
         }
-        val s = engine.state.value
+        val s = state.value
         val pos = parkedAtMs ?: s.positionMs
         val dur = s.durationMs.takeIf { it > 0 } ?: _parked.value?.durationMs ?: 0
         val json = org.json.JSONObject()
@@ -495,6 +548,10 @@ object Player {
     }
 
     fun togglePlay() {
+        if (Cast.active) {
+            castToggle()
+            return
+        }
         val s = engine.state.value
         parkedAtMs?.let { at ->
             parkedAtMs = null
@@ -513,16 +570,28 @@ object Player {
         }
     }
 
+    /** Play/pause on the renderer while casting. */
+    private fun castToggle() {
+        val s = Cast.state.value
+        when {
+            _queue.value.current == null -> return
+            s.isPlaying -> Cast.pause()
+            s.isBuffering -> Unit
+            s.error != null || !Cast.loaded -> startCurrent(startMs = s.positionMs)
+            else -> Cast.resume()
+        }
+    }
+
     /** Play, as a headset or the lock screen means it: carries on if paused, nothing if playing. */
     fun play() {
-        val s = engine.state.value
+        val s = state.value
         if (_queue.value.current == null || s.isPlaying || s.isBuffering) return
         togglePlay()
     }
 
     /** Pause, as a headset or the lock screen means it: nothing if already paused. */
     fun pause() {
-        if (engine.state.value.isPlaying) togglePlay()
+        if (state.value.isPlaying) togglePlay()
     }
 
     fun next(auto: Boolean = false) {
@@ -530,7 +599,7 @@ object Player {
         val i = q.nextIndex(auto)
         if (i == null) {
             if (auto) {
-                engine.stop()
+                if (Cast.active) Cast.stopRemote() else engine.stop()
                 abandonFocus()
             }
             return
@@ -542,7 +611,7 @@ object Player {
     /** Like a tape deck: rewinds the current song first, the previous one only near its start. */
     fun previous() {
         val q = _queue.value
-        if (engine.state.value.positionMs > 3000 || (q.index <= 0 && q.repeat != RepeatMode.ALL)) {
+        if (state.value.positionMs > 3000 || (q.index <= 0 && q.repeat != RepeatMode.ALL)) {
             seekTo(0)
             return
         }
@@ -552,16 +621,21 @@ object Player {
 
     /** While parked, moves where Play will carry on from. */
     fun seekTo(ms: Long) {
-        if (parkedAtMs != null) parkedAtMs = ms else engine.seekTo(ms)
+        when {
+            parkedAtMs != null -> parkedAtMs = ms
+            Cast.active -> Cast.seek(ms)
+            else -> engine.seekTo(ms)
+        }
     }
 
     fun ownsMixer() = ::engine.isInitialized && engine.holdsBitPerfectMixer
 
-    fun refreshPosition() = engine.refreshPosition()
+    fun refreshPosition() = if (Cast.active) Cast.refresh() else engine.refreshPosition()
 
     fun stop() {
         openJob?.cancel()
         parkedAtMs = null
+        if (Cast.active) Cast.stopRemote()
         engine.stop()
         abandonFocus()
     }
@@ -571,6 +645,14 @@ object Player {
         openJob?.cancel()
         parkedAtMs = null
         main.removeCallbacks(parkLater)
+        if (Cast.active) {
+            // On the renderer: the phone's own output stays shut, the renderer gets the song.
+            engine.stop(releaseOutput = true)
+            abandonFocus()
+            appContext.startForegroundService(Intent(appContext, PlaybackService::class.java))
+            Cast.load(track, startMs, paused, upcoming())
+            return
+        }
         // The next song opens straight away: keep the DAC rather than hand it back and retake it.
         engine.stop(releaseOutput = false)
         resumeOnGain = false

@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.produceState
@@ -164,19 +166,34 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
     // The cover's colour, for the deck's faceplate: worked out once per cover.
     val tint = remember(localImage) { localImage?.let(::coverTint) }
-    val deck = localDeck(queue, engine, parked, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite).copy(
+    val castTarget by io.github.momonekomata.sidea.cast.Cast.target.collectAsStateWithLifecycle()
+    var castOpen by remember { mutableStateOf(false) }
+    val local = localDeck(queue, engine, parked, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite)
+    val deck = local.copy(
         lyrics = lyrics,
         showLyrics = showLyrics,
         onToggleLyrics = { showLyrics = !showLyrics },
         onRetryLyrics = vm::retryLyrics,
         tint = tint,
-    )
+    ).let { d ->
+        // Casting: the deck says where the music is playing, not the phone's output path.
+        val c = castTarget ?: return@let d
+        val status = when {
+            engine.error != null -> engine.error!!
+            engine.isBuffering -> "Sending to ${c.name}…"
+            else -> "On ${c.name} · ${c.where}"
+        }
+        d.copy(status = status, statusColor = if (engine.error != null) Color(0xFFB4531A) else Retro.OnMetalMuted, path = null)
+    }
 
     // Landscape: full screen. The system bars hide (swipe from an edge to peek), and the header's
     // buttons move beside the deck so the card and the deck get the whole height.
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val headerIcons: @Composable () -> Unit = {
-        HeaderIcons(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
+        HeaderIcons(
+            eqActive = prefs.eq.isActive, casting = castTarget != null,
+            onCast = { castOpen = true }, onEq = { eqOpen = true }, onSettings = { settingsOpen = true },
+        )
     }
     // What the lid says: bit-perfect only when the path really is.
     val out = engine.output
@@ -243,6 +260,7 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
 
     val songMenu by vm.songMenu.collectAsStateWithLifecycle()
     songMenu?.let { SongMenuDialog(vm, it) }
+    if (castOpen) CastDialog(onDismiss = { castOpen = false })
     if (eqOpen) EqScreen(prefs.eq, onChange = { c -> Settings.update { it.copy(eq = c) } }, onDismiss = { eqOpen = false })
     if (settingsOpen) {
         SettingsDialog(
@@ -454,7 +472,10 @@ private fun Header(spec: String, icons: @Composable () -> Unit) {
 }
 
 @Composable
-private fun HeaderIcons(eqActive: Boolean, onEq: () -> Unit, onSettings: () -> Unit) {
+private fun HeaderIcons(eqActive: Boolean, casting: Boolean, onCast: () -> Unit, onEq: () -> Unit, onSettings: () -> Unit) {
+    IconButton(onClick = onCast) {
+        Icon(if (casting) Icons.Filled.CastConnected else Icons.Filled.Cast, "Play on", tint = if (casting) Retro.Orange else Retro.Muted)
+    }
     IconButton(onClick = onEq) { Icon(Icons.Filled.Equalizer, "Equalizer", tint = if (eqActive) Color(0xFF6FB8FF) else Retro.Muted) }
     IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings", tint = Retro.Muted) }
 }

@@ -51,6 +51,20 @@ class PlaybackService : Service() {
         }
     }
 
+    /** While casting: the renderer's own volume (0..100), in steps of 2. */
+    private val castVolumeKeys = object : VolumeProvider(VOLUME_CONTROL_ABSOLUTE, 100, 30) {
+        override fun onSetVolumeTo(volume: Int) {
+            currentVolume = volume
+            io.github.momonekomata.sidea.cast.Cast.setVolume(volume)
+        }
+        override fun onAdjustVolume(direction: Int) {
+            if (direction == 0) return
+            val v = (io.github.momonekomata.sidea.cast.Cast.volume.value + direction * 2).coerceIn(0, 100)
+            currentVolume = v
+            io.github.momonekomata.sidea.cast.Cast.setVolume(v)
+        }
+    }
+
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) Player.pauseForNoisy()
@@ -82,8 +96,16 @@ class PlaybackService : Service() {
         // volume keys (and a DAC's own volume buttons, which arrive as the same keys) over for
         // the session keeps them working: they set Side A's volume instead.
         scope.launch {
-            Player.state.map { s -> s.output?.let { o -> o.exclusive != null && o.dsd != DsdMode.DOP } == true }.distinctUntilChanged().collect { exclusive ->
-                if (exclusive) {
+            combine(
+                Player.state.map { s -> s.output?.let { o -> o.exclusive != null && o.dsd != DsdMode.DOP } == true },
+                io.github.momonekomata.sidea.cast.Cast.target,
+                io.github.momonekomata.sidea.cast.Cast.volume,
+            ) { exclusive, cast, castVolume -> Triple(exclusive, cast != null, castVolume) }.distinctUntilChanged().collect { (exclusive, casting, castVolume) ->
+                if (casting && castVolume >= 0) {
+                    // Casting: the volume keys turn the renderer up and down.
+                    session.setPlaybackToRemote(castVolumeKeys)
+                    castVolumeKeys.currentVolume = castVolume
+                } else if (exclusive) {
                     session.setPlaybackToRemote(volume)
                     volume.currentVolume = (Settings.current.usbVolume * 100).toInt()
                 } else {
