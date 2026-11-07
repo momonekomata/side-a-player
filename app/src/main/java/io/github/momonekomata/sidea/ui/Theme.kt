@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
@@ -182,17 +184,32 @@ fun Modifier.keyFace(orange: Boolean = false, down: Boolean = false, shape: Shap
 /** The recessed grey housing a row of keys sits in. */
 @Composable
 fun KeyStrip(modifier: Modifier = Modifier, gap: Dp = 5.dp, content: @Composable RowScope.() -> Unit) {
-    val shape = RoundedCornerShape(5.dp)
     Row(
-        modifier
-            .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFF8A8E94), Color(0xFFA7ABB0), Color(0xFFB4B7BB))))
-            .border(1.dp, Color(0xFF6E7277), shape)
-            .padding(gap),
+        modifier.keyHousing(gap),
         horizontalArrangement = Arrangement.spacedBy(gap),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
+}
+
+/** The same housing standing upright, its keys one above the other. */
+@Composable
+fun KeyStrip(modifier: Modifier = Modifier, vertical: Boolean, gap: Dp = 5.dp, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier.keyHousing(gap),
+        verticalArrangement = Arrangement.spacedBy(gap, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        content = content,
+    )
+}
+
+private fun Modifier.keyHousing(gap: Dp): Modifier {
+    val shape = RoundedCornerShape(5.dp)
+    return this
+        .clip(shape)
+        .background(Brush.verticalGradient(listOf(Color(0xFF8A8E94), Color(0xFFA7ABB0), Color(0xFFB4B7BB))))
+        .border(1.dp, Color(0xFF6E7277), shape)
+        .padding(gap)
 }
 
 /** The little light on a key that latches: orange when on. */

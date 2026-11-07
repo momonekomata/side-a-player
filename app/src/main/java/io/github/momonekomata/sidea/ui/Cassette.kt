@@ -147,10 +147,19 @@ private fun CoverBackdrop(art: ImageBitmap?) {
     Box(Modifier.fillMaxSize().anodizedBlue())
 }
 
-private const val CASSETTE_RATIO = 1.58f
+internal const val CASSETTE_RATIO = 1.58f
+
+/**
+ * The cassette for the deck's window: its label without the keys (the deck has its own), and
+ * the line being sung, when there are timed lyrics, where the keys would be.
+ */
+@Composable
+internal fun TapeOnly(model: DeckModel, line: String?, modifier: Modifier = Modifier) {
+    Cassette(model, modifier.aspectRatio(CASSETTE_RATIO), keys = false, line = line)
+}
 
 @Composable
-private fun Cassette(model: DeckModel, modifier: Modifier) {
+private fun Cassette(model: DeckModel, modifier: Modifier, keys: Boolean = true, line: String? = null) {
     val progress = if (model.durationMs > 0) (model.positionMs.toFloat() / model.durationMs).coerceIn(0f, 1f) else 0f
     // The hubs turn at a speed set by the tape: a reel with little tape on it spins faster.
     var supplyAngle by remember { mutableFloatStateOf(0f) }
@@ -250,6 +259,17 @@ private fun Cassette(model: DeckModel, modifier: Modifier) {
             Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = faint, style = shade, fontFamily = Retro.Mono, fontSize = font(0.038f, 9f, 14f))
         }
 
+        if (!keys) {
+            // The deck's tape: the line being sung, in the keys' place.
+            if (line != null) {
+                Text(
+                    line, color = ink, style = shade, fontStyle = FontStyle.Italic, fontSize = font(0.05f, 10f, 16f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.offset(x = w * LABEL_L, y = h * 0.695f).width(w * LABEL_W).padding(horizontal = h * 0.05f),
+                )
+            }
+            return@BoxWithConstraints
+        }
         // Where the brand would be: the keys, square in their grey strip, PLAY the orange one.
         Box(
             Modifier.offset(x = w * LABEL_L, y = h * 0.645f).width(w * LABEL_W),
