@@ -438,18 +438,24 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.key
         if (waitForUpOrCancellation() != null) click()
         return
     }
-    val released = withTimeoutOrNull(400) { waitForUpOrCancellation() }
-    if (released != null) {
-        click()
-        return
+    // A timeout and a cancelled touch both come back as null, so tell them apart: a swipe that
+    // starts on the key (the pager or a list taking the touch) must not count as holding it.
+    var ended = KeyEnd.HELD
+    withTimeoutOrNull(400) { ended = if (waitForUpOrCancellation() != null) KeyEnd.UP else KeyEnd.CANCELLED }
+    when (ended) {
+        KeyEnd.UP -> { click(); return }
+        KeyEnd.CANCELLED -> return
+        KeyEnd.HELD -> {}
     }
-    var up = false
-    while (!up) {
+    while (true) {
         hold()
-        up = withTimeoutOrNull(250) { waitForUpOrCancellation() } != null ||
-            currentEvent.changes.all { !it.pressed }
+        ended = KeyEnd.HELD
+        withTimeoutOrNull(250) { ended = if (waitForUpOrCancellation() != null) KeyEnd.UP else KeyEnd.CANCELLED }
+        if (ended != KeyEnd.HELD || currentEvent.changes.all { !it.pressed }) return
     }
 }
+
+private enum class KeyEnd { HELD, UP, CANCELLED }
 
 fun formatTime(ms: Long): String {
     val s = ms / 1000
