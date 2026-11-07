@@ -52,6 +52,13 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.PointMode
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
@@ -180,11 +187,12 @@ private fun Cassette(model: DeckModel, modifier: Modifier, keys: Boolean = true,
             }
         }
     }
-    BoxWithConstraints(modifier) {
+    val grain = remember { grainPoints() }
+    BoxWithConstraints(modifier.shadow(10.dp, RoundedCornerShape(6))) {
         val w = this.maxWidth
         val h = this.maxHeight
         fun font(share: Float, min: Float, max: Float) = (h.value * share).coerceIn(min, max).sp
-        Canvas(Modifier.fillMaxSize()) { drawShell() }
+        Canvas(Modifier.fillMaxSize()) { drawShell(grain) }
         // The cover printed on the label, shaded so the white writing on it reads on any picture.
         val art = model.art
         val onArt = art != null
@@ -197,7 +205,11 @@ private fun Cassette(model: DeckModel, modifier: Modifier, keys: Boolean = true,
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.62f), Color.Black.copy(alpha = 0.5f), Color.Black.copy(alpha = 0.7f)))))
             }
         }
-        Canvas(Modifier.fillMaxSize()) { drawMechanism(supply, takeup, supplyAngle, takeupAngle) }
+        // The print on the label and the dark inside of the window; the reels turning (on a layer
+        // of their own, so only they redraw while the tape runs); then the glass and the foot.
+        Canvas(Modifier.fillMaxSize()) { drawLabelPrint(grain) }
+        Canvas(Modifier.fillMaxSize().graphicsLayer()) { drawReels(supply, takeup, supplyAngle, takeupAngle) }
+        Canvas(Modifier.fillMaxSize()) { drawGlassAndFoot() }
         // Ink on the bare label; white with a soft shadow on the cover.
         val ink = if (onArt) Color.White else Retro.Ink
         val faint = if (onArt) Color.White.copy(alpha = 0.88f) else Retro.InkFaint
@@ -228,12 +240,26 @@ private fun Cassette(model: DeckModel, modifier: Modifier, keys: Boolean = true,
             Text("A", color = Retro.Orange, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, fontSize = font(0.09f, 14f, 30f), modifier = Modifier.padding(start = h * 0.02f))
         }
 
-        // The counter, in the window between the reels.
+        if (!keys) {
+            // The tape page's cassette: just the label, as a real tape's. The time, the format and
+            // the quality are on the deck's display; under the window, the line being sung,
+            // written in by hand.
+            if (line != null) {
+                Text(
+                    line, color = ink, style = shade, fontFamily = androidx.compose.ui.text.font.FontFamily.Cursive, fontSize = font(0.062f, 11f, 20f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.offset(x = w * LABEL_L, y = h * 0.6f).width(w * LABEL_W).padding(horizontal = h * 0.06f),
+                )
+            }
+            return@BoxWithConstraints
+        }
+
+        // The counter, in the window between the reels: an inked time on a strip of paper.
         Box(Modifier.offset(x = w * 0.41f, y = h * (WIN_T + WIN_H / 2) - h * 0.045f).width(w * 0.18f), contentAlignment = Alignment.Center) {
             Text(
-                formatTime(model.positionMs), color = Retro.Orange, fontFamily = Retro.Mono, fontWeight = FontWeight.Bold,
+                formatTime(model.positionMs), color = Retro.Ink, fontFamily = Retro.Mono, fontWeight = FontWeight.Bold,
                 fontSize = font(0.055f, 10f, 20f), maxLines = 1,
-                modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Color.Black).padding(horizontal = 5.dp, vertical = 1.dp),
+                modifier = Modifier.clip(RoundedCornerShape(1.dp)).background(Color(0xFFEDE7D9)).padding(horizontal = 5.dp, vertical = 1.dp),
             )
         }
 
@@ -259,17 +285,6 @@ private fun Cassette(model: DeckModel, modifier: Modifier, keys: Boolean = true,
             Text(if (model.durationMs > 0) formatTime(model.durationMs) else "--:--", color = faint, style = shade, fontFamily = Retro.Mono, fontSize = font(0.038f, 9f, 14f))
         }
 
-        if (!keys) {
-            // The deck's tape: the line being sung, in the keys' place.
-            if (line != null) {
-                Text(
-                    line, color = ink, style = shade, fontStyle = FontStyle.Italic, fontSize = font(0.05f, 10f, 16f),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.offset(x = w * LABEL_L, y = h * 0.695f).width(w * LABEL_W).padding(horizontal = h * 0.05f),
-                )
-            }
-            return@BoxWithConstraints
-        }
         // Where the brand would be: the keys, square in their grey strip, PLAY the orange one.
         Box(
             Modifier.offset(x = w * LABEL_L, y = h * 0.645f).width(w * LABEL_W),
@@ -295,90 +310,253 @@ private fun LabelKey(icon: ImageVector, label: String, size: Dp, orange: Boolean
     }
 }
 
-/** Degrees per second times radius units: how fast the hubs turn for the tape's speed. */
-private const val TAPE_SPEED = 55f
+/** Degrees per second times radius (as a share of the tape's height): how fast the hubs turn. */
+private const val TAPE_SPEED = 24f
 
 private const val LABEL_L = 0.07f
 private const val LABEL_W = 0.86f
 private const val LABEL_T = 0.07f
 private const val LABEL_H = 0.74f
+private const val WIN_L = 0.2f
+private const val WIN_W = 0.6f
 private const val WIN_T = 0.33f
 private const val WIN_H = 0.22f
+/** The hubs' centres, from each side. */
+private const val HUB_X = 0.29f
 
-/** The radius of a tape pack (as a share of the window's half-height) holding [share] of the tape. */
+/**
+ * The radius of a tape pack, as a share of the tape's height, holding [share] of the tape: from
+ * just the leader on the spool to a full pack, bigger than the window is tall.
+ */
 private fun packRadius(share: Float): Float {
-    val hub = 0.32f
-    val full = 0.95f
+    val empty = 0.105f
+    val full = 0.29f
     // The tape's area grows with the square of the radius.
-    return sqrt(hub * hub + (full * full - hub * hub) * share.coerceIn(0f, 1f))
+    return sqrt(empty * empty + (full * full - empty * empty) * share.coerceIn(0f, 1f))
 }
 
-/** Under everything: the shell, its screws, and the label's white. */
-private fun DrawScope.drawShell() {
+/** Fixed specks for the grain of the plastic and the paper, as shares of the width and height. */
+private fun grainPoints(): List<Offset> {
+    val r = java.util.Random(7)
+    return List(2200) { Offset(r.nextFloat(), r.nextFloat()) }
+}
+
+private fun DrawScope.windowRect() = Rect(Offset(size.width * WIN_L, size.height * WIN_T), Size(size.width * WIN_W, size.height * WIN_H))
+
+private fun DrawScope.windowPath(): Path {
+    val r = windowRect()
+    return Path().apply { addRoundRect(RoundRect(r, CornerRadius(r.height * 0.12f))) }
+}
+
+/**
+ * Under everything: the shell of smoked plastic, lit from the upper left, with its moulded edge,
+ * the lip round the label, grain, and grip ribs at the lower corners; then the label's paper.
+ */
+private fun DrawScope.drawShell(grain: List<Offset>) {
     val w = size.width
     val h = size.height
-    val r = h * 0.06f
-    // The shell: dark smoked plastic with a lighter edge.
-    drawRoundRect(Color(0xFF26282D), cornerRadius = CornerRadius(r, r))
-    drawRoundRect(Color(0xFF3B3E45), cornerRadius = CornerRadius(r, r), style = Stroke(h * 0.012f))
-    // Screws in the corners.
-    listOf(Offset(w * 0.035f, h * 0.06f), Offset(w * 0.965f, h * 0.06f), Offset(w * 0.035f, h * 0.94f), Offset(w * 0.965f, h * 0.94f)).forEach { c ->
-        drawCircle(Color(0xFF9AA0A8), h * 0.02f, c)
-        drawLine(Color(0xFF55595F), c - Offset(h * 0.013f, 0f), c + Offset(h * 0.013f, 0f), h * 0.006f)
+    val r = h * 0.055f
+    drawRoundRect(Brush.verticalGradient(listOf(Color(0xFF3B3E45), Color(0xFF27292E), Color(0xFF1C1E22))), cornerRadius = CornerRadius(r))
+    // The moulding's edge: lit along the top and left, in shadow along the bottom and right.
+    val edge = h * 0.014f
+    drawRoundRect(
+        Brush.linearGradient(
+            listOf(Color.White.copy(alpha = 0.30f), Color.White.copy(alpha = 0.05f), Color.Black.copy(alpha = 0.5f)),
+            start = Offset(0f, 0f), end = Offset(w * 0.45f, h),
+        ),
+        topLeft = Offset(edge / 2, edge / 2), size = Size(w - edge, h - edge), cornerRadius = CornerRadius(r), style = Stroke(edge),
+    )
+    // The grain of the plastic.
+    drawPoints(grain.map { Offset(it.x * w, it.y * h) }, PointMode.Points, Color.White.copy(alpha = 0.05f), strokeWidth = 1.3f)
+    // The lip the label sits inside: a groove in shadow with a lit rim outside it.
+    val lip = h * 0.016f
+    val lipRect = Rect(Offset(w * LABEL_L - lip, h * LABEL_T - lip), Size(w * LABEL_W + 2 * lip, h * LABEL_H + 2 * lip))
+    drawRoundRect(Color.Black.copy(alpha = 0.45f), lipRect.topLeft, lipRect.size, CornerRadius(r * 0.7f), style = Stroke(h * 0.007f))
+    drawRoundRect(
+        Color.White.copy(alpha = 0.07f), lipRect.topLeft - Offset(h * 0.006f, h * 0.006f),
+        Size(lipRect.width + h * 0.012f, lipRect.height + h * 0.012f), CornerRadius(r * 0.8f), style = Stroke(h * 0.004f),
+    )
+    // Grip ribs at the two lower corners, between the screws and the foot.
+    for (x0 in listOf(w * 0.07f, w * 0.80f)) {
+        for (i in 0 until 6) {
+            val y = h * (0.845f + i * 0.021f)
+            drawLine(Color.Black.copy(alpha = 0.5f), Offset(x0, y), Offset(x0 + w * 0.13f, y), h * 0.006f)
+            drawLine(Color.White.copy(alpha = 0.08f), Offset(x0, y + h * 0.006f), Offset(x0 + w * 0.13f, y + h * 0.006f), h * 0.004f)
+        }
     }
-    // The label: aluminium-white with the Walkman's orange and blue stripes along its top.
-    drawRoundRect(Retro.Cream, Offset(w * LABEL_L, h * LABEL_T), Size(w * LABEL_W, h * LABEL_H), CornerRadius(r * 0.6f, r * 0.6f))
+    // The label: slightly warm paper, a little darker towards its foot.
+    drawRoundRect(
+        Brush.verticalGradient(listOf(Color(0xFFF4F0E7), Color(0xFFE5DFD1))),
+        Offset(w * LABEL_L, h * LABEL_T), Size(w * LABEL_W, h * LABEL_H), CornerRadius(h * 0.03f),
+    )
 }
 
-/** Over the label (and the cover on it): the stripes, the window and its reels, the foot. */
-private fun DrawScope.drawMechanism(supply: Float, takeup: Float, supplyAngle: Float, takeupAngle: Float) {
+/**
+ * Over the label and the cover printed on it: the paper's fibre, the stripes, the label's edge,
+ * and the window cut through it, dark inside.
+ */
+private fun DrawScope.drawLabelPrint(grain: List<Offset>) {
     val w = size.width
     val h = size.height
-    val labelL = w * LABEL_L
-    val labelT = h * LABEL_T
-    val labelW = w * LABEL_W
-    drawRect(Retro.Orange, Offset(labelL, labelT + h * 0.015f), Size(labelW, h * 0.014f))
-    drawRect(Retro.Background, Offset(labelL, labelT + h * 0.029f), Size(labelW, h * 0.014f))
-    // The window over the reels.
-    val winL = w * 0.18f
-    val winT = h * WIN_T
-    val winW = w * 0.64f
-    val winH = h * WIN_H
-    drawRoundRect(Color(0xFF15161A), Offset(winL, winT), Size(winW, winH), CornerRadius(winH * 0.5f, winH * 0.5f))
-    val cy = winT + winH / 2
-    val unit = winH / 2
-    val left = Offset(w * 0.31f, cy)
-    val right = Offset(w * 0.69f, cy)
-    // The tape packs: brown, a little glossy.
-    val tape = Brush.radialGradient(listOf(Color(0xFF6B4A33), Color(0xFF3E2A1D)))
-    drawCircle(tape, supply * unit, left)
-    drawCircle(tape, takeup * unit, right)
-    // The hubs: white with six teeth, turning.
-    drawHub(left, unit * 0.42f, supplyAngle)
-    drawHub(right, unit * 0.42f, takeupAngle)
-    // The foot: the trapezoid where the heads go in, with its holes.
-    val footT = h * 0.84f
-    val foot = Path().apply {
-        moveTo(w * 0.2f, h)
-        lineTo(w * 0.25f, footT)
-        lineTo(w * 0.75f, footT)
-        lineTo(w * 0.8f, h)
-        close()
+    val l = w * LABEL_L
+    val t = h * LABEL_T
+    val lw = w * LABEL_W
+    val lh = h * LABEL_H
+    clipRect(l, t, l + lw, t + lh) {
+        // Paper: a matte speckle of light and dark fibre over the print.
+        drawPoints(grain.map { Offset(l + it.x * lw, t + it.y * lh) }, PointMode.Points, Color.White.copy(alpha = 0.10f), strokeWidth = 1.5f)
+        drawPoints(grain.take(1100).map { Offset(l + (1 - it.y) * lw, t + it.x * lh) }, PointMode.Points, Color.Black.copy(alpha = 0.10f), strokeWidth = 1.2f)
     }
-    drawPath(foot, Color(0xFF1C1D21))
-    listOf(0.36f, 0.5f, 0.64f).forEach { x -> drawCircle(Color(0xFF0C0C0E), h * 0.028f, Offset(w * x, h * 0.92f)) }
+    drawRect(Retro.Orange, Offset(l, t + h * 0.015f), Size(lw, h * 0.014f))
+    drawRect(Retro.Background, Offset(l, t + h * 0.029f), Size(lw, h * 0.014f))
+    // The paper's edge on the plastic.
+    drawRoundRect(Color.Black.copy(alpha = 0.4f), Offset(l, t), Size(lw, lh), CornerRadius(h * 0.03f), style = Stroke(1.3f))
+    // The window: the cassette's inside, dark, behind clear plastic; a rib down the middle.
+    val win = windowRect()
+    drawPath(windowPath(), Color(0xFF0A0A0C))
+    drawRect(Color(0xFF151619), Offset(w * 0.485f, win.top), Size(w * 0.03f, win.height))
 }
 
-private fun DrawScope.drawHub(c: Offset, radius: Float, angle: Float) {
-    drawCircle(Color(0xFFE9ECEF), radius, c)
-    drawCircle(Color(0xFF15161A), radius * 0.55f, c)
+/** In the window: the two packs of tape and the white spools they're wound on, turning. */
+private fun DrawScope.drawReels(supply: Float, takeup: Float, supplyAngle: Float, takeupAngle: Float) {
+    val w = size.width
+    val h = size.height
+    val win = windowRect()
+    val cy = win.center.y
+    val left = Offset(w * HUB_X, cy)
+    val right = Offset(w * (1 - HUB_X), cy)
+    clipPath(windowPath()) {
+        drawPack(left, supply * h)
+        drawPack(right, takeup * h)
+        drawSpool(left, h * 0.095f, supplyAngle)
+        drawSpool(right, h * 0.095f, takeupAngle)
+    }
+}
+
+/** A pack of tape wound tight: deep brown, fine rings where the layers lie, a satin sheen. */
+private fun DrawScope.drawPack(c: Offset, r: Float) {
+    drawCircle(Brush.radialGradient(listOf(Color(0xFF5C3B27), Color(0xFF3D2617), Color(0xFF25170E)), center = c, radius = r), r, c)
+    var rr = r * 0.97f
+    var i = 0
+    val inner = size.height * 0.1f
+    while (rr > inner) {
+        drawCircle(if (i % 3 == 0) Color.Black.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.04f), rr, c, style = Stroke(1f))
+        rr -= r * 0.03f + (i % 4) * 0.7f
+        i++
+    }
+    drawCircle(
+        Brush.sweepGradient(
+            listOf(Color.Transparent, Color.White.copy(alpha = 0.12f), Color.Transparent, Color.Transparent, Color.White.copy(alpha = 0.07f), Color.Transparent, Color.Transparent),
+            center = c,
+        ),
+        r, c,
+    )
+    drawCircle(Color(0xFF7A5238).copy(alpha = 0.7f), r, c, style = Stroke(1.5f))
+}
+
+/**
+ * A spool: white plastic shaded to the lower right, a drive hole with six teeth round its edge,
+ * and the clip that holds the leader, all turning together.
+ */
+private fun DrawScope.drawSpool(c: Offset, r: Float, angle: Float) {
+    drawCircle(
+        Brush.radialGradient(listOf(Color(0xFFFAFAF8), Color(0xFFDCDDDA), Color(0xFFB4B6B3)), center = c - Offset(r * 0.3f, r * 0.3f), radius = r * 1.5f),
+        r, c,
+    )
+    drawCircle(Color.Black.copy(alpha = 0.35f), r, c, style = Stroke(r * 0.06f))
+    val hole = r * 0.62f
+    drawCircle(Color(0xFF0D0D0F), hole, c)
     rotate(angle, c) {
         repeat(6) { i ->
-            val a = (i * 60.0) * PI / 180
-            val p = Offset(c.x + (radius * 0.55f * cos(a)).toFloat(), c.y + (radius * 0.55f * sin(a)).toFloat())
-            drawCircle(Color(0xFFE9ECEF), radius * 0.16f, p)
+            rotate(i * 60f, c) {
+                drawRoundRect(
+                    Brush.horizontalGradient(listOf(Color(0xFFF0F0EE), Color(0xFFC9CBC8)), startX = c.x - r * 0.09f, endX = c.x + r * 0.09f),
+                    Offset(c.x - r * 0.09f, c.y - hole - r * 0.02f), Size(r * 0.18f, r * 0.3f), CornerRadius(r * 0.04f),
+                )
+            }
         }
-        // A spoke so the turning is easy to see.
-        drawLine(Color(0xFFE9ECEF), c, Offset(c.x + radius * 0.5f, c.y), radius * 0.14f)
+        drawRect(Color(0xFF9EA19E), Offset(c.x + r * 0.7f, c.y - r * 0.08f), Size(r * 0.26f, r * 0.16f))
     }
+    drawCircle(Color.Black.copy(alpha = 0.45f), hole, c, style = Stroke(r * 0.05f))
 }
+
+/**
+ * On top: the window's clear plastic (a raised edge, glare and a streak of reflected light), the
+ * foot along the bottom with its openings, the tape running across them and the felt pad, and the
+ * five screws.
+ */
+private fun DrawScope.drawGlassAndFoot() {
+    val w = size.width
+    val h = size.height
+    val win = windowRect()
+    val cr = CornerRadius(win.height * 0.12f)
+    drawRoundRect(
+        Brush.linearGradient(
+            listOf(Color.White.copy(alpha = 0.17f), Color.White.copy(alpha = 0.04f), Color.Transparent, Color.White.copy(alpha = 0.05f)),
+            start = win.topLeft, end = Offset(win.left + win.width * 0.6f, win.bottom + win.height * 0.4f),
+        ),
+        win.topLeft, win.size, cr,
+    )
+    clipPath(windowPath()) {
+        rotate(-28f, win.center) {
+            val x = win.center.x - win.width * 0.16f
+            drawRect(
+                Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.13f), Color.Transparent), startX = x, endX = x + win.width * 0.09f),
+                Offset(x, win.top - win.height), Size(win.width * 0.09f, win.height * 3),
+            )
+        }
+    }
+    drawRoundRect(Color.White.copy(alpha = 0.32f), win.topLeft, win.size, cr, style = Stroke(h * 0.006f))
+    drawRoundRect(
+        Color.Black.copy(alpha = 0.6f), win.topLeft - Offset(h * 0.005f, h * 0.005f),
+        Size(win.width + h * 0.01f, win.height + h * 0.01f), cr, style = Stroke(h * 0.004f),
+    )
+
+    // The foot: the raised trapezoid where the heads go in.
+    val footT = h * 0.82f
+    val foot = Path().apply {
+        moveTo(w * 0.19f, h)
+        lineTo(w * 0.235f, footT)
+        lineTo(w * 0.765f, footT)
+        lineTo(w * 0.81f, h)
+        close()
+    }
+    drawPath(foot, Brush.verticalGradient(listOf(Color(0xFF36393F), Color(0xFF232529)), startY = footT, endY = h))
+    drawLine(Color.White.copy(alpha = 0.2f), Offset(w * 0.235f, footT), Offset(w * 0.765f, footT), h * 0.006f)
+    drawLine(Color.Black.copy(alpha = 0.55f), Offset(w * 0.19f, h), Offset(w * 0.235f, footT), h * 0.006f)
+    drawLine(Color.Black.copy(alpha = 0.55f), Offset(w * 0.81f, h), Offset(w * 0.765f, footT), h * 0.006f)
+    // The openings along the bottom edge, the tape running across behind them.
+    val openT = h * 0.905f
+    fun opening(x: Float, ow: Float) {
+        val left = w * x - w * ow / 2
+        drawRect(Color(0xFF070708), Offset(left, openT), Size(w * ow, h - openT))
+        drawRect(Brush.verticalGradient(listOf(Color(0xFF5A3926), Color(0xFF3A2416)), startY = h * 0.955f, endY = h * 0.977f), Offset(left, h * 0.955f), Size(w * ow, h * 0.022f))
+        drawRect(Color.Black.copy(alpha = 0.6f), Offset(left, openT), Size(w * ow, h * 0.01f))
+    }
+    opening(0.27f, 0.05f)
+    opening(0.73f, 0.05f)
+    opening(0.5f, 0.085f)
+    for (x in listOf(0.35f, 0.65f)) {
+        drawCircle(Color(0xFF070708), h * 0.03f, Offset(w * x, h * 0.94f))
+        drawCircle(Color.White.copy(alpha = 0.09f), h * 0.03f, Offset(w * x, h * 0.94f), style = Stroke(h * 0.004f))
+    }
+    for (x in listOf(0.41f, 0.59f)) drawRect(Color(0xFF070708), Offset(w * x - w * 0.008f, h * 0.93f), Size(w * 0.016f, h * 0.07f))
+    // The pressure pad: felt on a small metal spring, pressing the tape in the head's opening.
+    drawRect(Color(0xFF8C8F93), Offset(w * 0.475f, h * 0.925f), Size(w * 0.05f, h * 0.012f))
+    drawRect(Color(0xFFD9D4C8), Offset(w * 0.482f, h * 0.937f), Size(w * 0.036f, h * 0.018f))
+    listOf(
+        Offset(w * 0.035f, h * 0.06f), Offset(w * 0.965f, h * 0.06f), Offset(w * 0.035f, h * 0.94f), Offset(w * 0.965f, h * 0.94f), Offset(w * 0.5f, h * 0.865f),
+    ).forEach { drawScrew(it, h * 0.024f) }
+}
+
+/** A Phillips screw sunk in the shell: a shadowed recess, a domed metal head, the cross. */
+private fun DrawScope.drawScrew(c: Offset, r: Float) {
+    drawCircle(Color.Black.copy(alpha = 0.55f), r * 1.18f, c + Offset(r * 0.1f, r * 0.14f))
+    drawCircle(Brush.radialGradient(listOf(Color(0xFFEDEFF1), Color(0xFFA9AEB4), Color(0xFF666B72)), center = c - Offset(r * 0.35f, r * 0.35f), radius = r * 1.6f), r, c)
+    val k = r * 0.62f
+    val s = r * 0.22f
+    drawLine(Color(0xFF34383E), c - Offset(k, 0f), c + Offset(k, 0f), s)
+    drawLine(Color(0xFF34383E), c - Offset(0f, k), c + Offset(0f, k), s)
+    drawLine(Color.White.copy(alpha = 0.3f), c - Offset(k, -s * 0.7f), c + Offset(-s * 0.6f, s * 0.7f), r * 0.07f)
+}
+

@@ -550,7 +550,7 @@ private fun NowPlayingPager(
     Column(modifier) {
         HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), pageSpacing = 12.dp) { page ->
             when {
-                page == 0 -> CassettePage(deck, Modifier.fillMaxSize(), onFullScreen = onTapeFullScreen)
+                page == 0 -> TapeDeck(deck, Modifier.fillMaxSize(), compact = compact, onFullScreen = onTapeFullScreen)
                 page == 2 && queuePage != null -> queuePage(Modifier.fillMaxSize().padding(horizontal = if (compact) 0.dp else 12.dp))
                 else -> Deck(deck, Modifier.fillMaxSize(), compact = compact)
             }
