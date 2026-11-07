@@ -62,6 +62,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.semantics.contentDescription
@@ -177,6 +181,63 @@ internal fun LyricLines(model: DeckModel, modifier: Modifier) {
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * The whole lyrics straight on the body, no panel: centred, the line being sung large and white,
+ * the rest smaller and faint, scrolling so the sung line stays in the middle. A tap on a timed
+ * line goes to it. Untimed lyrics just scroll; with none, nothing shows.
+ */
+@Composable
+internal fun LyricsFlow(model: DeckModel, modifier: Modifier) {
+    val l = model.lyrics.lyrics ?: run {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            if (model.lyrics.loading) Text("Finding the lyrics…", color = Retro.Muted, fontSize = 15.sp)
+        }
+        return
+    }
+    val at = l.lineAt(model.positionMs)
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    BoxWithConstraints(modifier) {
+        val half = maxHeight / 2
+        val halfPx = with(androidx.compose.ui.platform.LocalDensity.current) { half.toPx() }
+        // Keep the sung line in the middle: glide it there when it's in view, jump when it isn't.
+        LaunchedEffect(at, l) {
+            if (at < 0) return@LaunchedEffect
+            val item = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == at + 1 }
+            if (item != null) {
+                list.animateScrollBy(item.offset + item.size / 2f - halfPx)
+            } else {
+                list.scrollToItem(at + 1)
+                list.scrollBy(-(halfPx - 30f))
+            }
+        }
+        androidx.compose.foundation.lazy.LazyColumn(
+            state = list,
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { Spacer(Modifier.height(half - 20.dp)) }
+            items(l.lines.size) { i ->
+                val line = l.lines[i]
+                val now = i == at
+                Text(
+                    line.text.ifBlank { "♪" },
+                    color = if (now) Retro.OnShell else Retro.Muted.copy(alpha = 0.55f),
+                    fontSize = if (now) 22.sp else 17.sp,
+                    fontWeight = if (now) FontWeight.SemiBold else FontWeight.Normal,
+                    lineHeight = if (now) 28.sp else 22.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (l.synced && line.timeMs >= 0) Modifier.clickable { model.onSeek(line.timeMs) } else Modifier)
+                        .padding(horizontal = 8.dp),
+                )
+            }
+            item { Spacer(Modifier.height(half)) }
         }
     }
 }
