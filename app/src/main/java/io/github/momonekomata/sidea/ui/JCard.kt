@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -32,6 +33,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,7 +51,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import kotlinx.coroutines.launch
 
-/** The paper insert of a cassette case: header with the tape's title, then a ruled track list. */
+/** A panel of the player's aluminium: a header printed with its title, then a ruled list. */
 @Composable
 fun JCard(
     title: String,
@@ -77,7 +80,7 @@ fun JCard(
                 Box(
                     Modifier.align(Alignment.Center).size(64.dp).background(Retro.Orange, RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center,
-                ) { Text(c.toString(), color = Retro.Cream, fontFamily = Retro.Hand, fontWeight = FontWeight.Bold, fontSize = 34.sp) }
+                ) { Text(c.toString(), color = Color.White, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, fontSize = 34.sp) }
             }
         }
     }
@@ -178,8 +181,8 @@ fun JCardFrame(
             .clip(RoundedCornerShape(6.dp))
             .background(Retro.Cream),
     ) {
-        Box(Modifier.fillMaxWidth().height(6.dp).background(Retro.Orange))
-        Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.fillMaxWidth().height(4.dp).background(Retro.Orange))
+        Row(Modifier.padding(horizontal = 18.dp, vertical = if (art != null) 8.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
             // The album cover where a real J-card has its front panel.
             if (art != null) {
                 Image(
@@ -189,17 +192,24 @@ fun JCardFrame(
                     modifier = Modifier.padding(end = 12.dp).size(56.dp).clip(RoundedCornerShape(3.dp)),
                 )
             }
-            Column {
+            // Printed like the name on a Walkman's lid, heavy slanted capitals in navy, with what's
+            // in it on the same line: one line, so the list gets the height.
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    title,
+                    title.uppercase(),
                     color = Retro.Ink,
-                    fontFamily = Retro.Hand,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp,
+                    fontFamily = Retro.Logo,
+                    fontWeight = FontWeight.Black,
+                    fontStyle = FontStyle.Italic,
+                    letterSpacing = 1.sp,
+                    fontSize = 18.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    // The title always shows; the counts beside it give way when it's narrow.
+                    modifier = Modifier.widthIn(max = 240.dp),
                 )
-                Text(subtitle, color = Retro.InkFaint, fontFamily = Retro.Mono, fontSize = 11.sp, maxLines = 1)
+                Box(Modifier.padding(start = 10.dp).width(12.dp).height(2.dp).background(Retro.Orange))
+                Text(subtitle, color = Retro.InkFaint, fontFamily = Retro.Mono, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 6.dp))
             }
         }
         HorizontalDivider(color = Retro.Ink.copy(alpha = 0.6f), thickness = 1.5.dp)

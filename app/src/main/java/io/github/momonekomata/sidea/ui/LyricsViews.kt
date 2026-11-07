@@ -74,7 +74,8 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry
                     else -> "No lyrics found for ${state.song}"
                 }
                 Text(text, color = Retro.Muted, fontSize = 14.sp, textAlign = TextAlign.Center)
-                if (state.missed) TextButton(onClick = onRetry) { Text("Retry", color = Retro.Orange) }
+                // Retry looks online again, so it's only offered when that's switched on.
+                if (state.missed && Settings.current.onlineLyrics) TextButton(onClick = onRetry) { Text("Retry", color = Retro.Orange) }
             }
             return@Box
         }
@@ -114,7 +115,9 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry
         LazyColumn(
             state = list,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 20.dp),
+            // Japanese lyrics have the ふりがな / Romaji switches along the top: the first line
+            // (and its furigana) starts below them rather than under them.
+            contentPadding = PaddingValues(top = if (japanese) 48.dp else 20.dp, bottom = 20.dp),
         ) {
             itemsIndexed(lyrics.lines) { i, line ->
                 val lit = i == current

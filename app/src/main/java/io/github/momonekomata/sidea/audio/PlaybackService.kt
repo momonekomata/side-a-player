@@ -66,8 +66,10 @@ class PlaybackService : Service() {
         )
         session = MediaSession(this, "SideA").apply {
             setCallback(object : MediaSession.Callback() {
-                override fun onPlay() = Player.togglePlay()
-                override fun onPause() = Player.togglePlay()
+                // Play and pause mean exactly that: a car stereo that sends Play on connecting
+                // mustn't pause the music. Only the play/pause toggle key toggles.
+                override fun onPlay() = Player.play()
+                override fun onPause() = Player.pause()
                 override fun onSkipToNext() = Player.next()
                 override fun onSkipToPrevious() = Player.previous()
                 override fun onSeekTo(pos: Long) = Player.seekTo(pos)

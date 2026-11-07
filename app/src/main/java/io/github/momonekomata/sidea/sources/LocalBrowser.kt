@@ -84,6 +84,31 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
         return null
     }
 
+    /**
+     * A Library song: the same as one listed by browsing, its .lrc and folder cover included.
+     * They're looked up in the folder when wanted, so a .lrc added (or edited) since the scan
+     * counts.
+     */
     override fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track =
-        track(Uri.parse(id), name, size, folderPath, folderName)
+        track(Uri.parse(id), name, size, folderPath, folderName).copy(
+            lyricsFile = { ctx ->
+                val u = existingChild(ctx, folderPath, lrcName(name)) ?: throw java.io.FileNotFoundException(lrcName(name))
+                ctx.contentResolver.openInputStream(u)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+            },
+            folderArt = { ctx ->
+                val u = folderCover(ctx, folderPath) ?: throw java.io.FileNotFoundException("no cover")
+                ctx.contentResolver.openInputStream(u)!!.use { it.readBytes() }
+            },
+        )
+
+    private fun folderCover(ctx: Context, folder: String): Uri? {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folder)
+        val cols = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+        val rows = ArrayList<Pair<String, String>>()
+        ctx.contentResolver.query(children, cols, null, null, null)?.use { c ->
+            while (c.moveToNext()) rows += c.getString(0) to (c.getString(1) ?: continue)
+        }
+        val name = pickFolderCover(rows.map { it.second }) ?: return null
+        return DocumentsContract.buildDocumentUriUsingTree(treeUri, rows.first { it.second == name }.first)
+    }
 }

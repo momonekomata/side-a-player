@@ -153,7 +153,7 @@ object Library {
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     Log.w(TAG, "scan of ${src.name} failed", e)
-                    updateSource(src.id) { it.copy(lastError = e.message ?: e.javaClass.simpleName) }
+                    updateSource(src.id) { it.copy(lastError = io.github.momonekomata.sidea.sources.friendlyError(e)) }
                 }
             }
             _scan.value = ScanState()
@@ -186,7 +186,8 @@ object Library {
             folders++
             for (e in entries) {
                 when (e) {
-                    is Entry.Folder -> queue.addLast(e.path to e.name)
+                    // Hidden folders (.thumbnails, .trash) hold no music worth listing.
+                    is Entry.Folder -> if (!e.name.startsWith(".")) queue.addLast(e.path to e.name)
                     is Entry.Song -> {
                         val k = known[e.track.id]
                         if (k != null && k.first == e.track.sizeBytes && k.second) unchanged += e.track.id else todo += Triple(e, path, name)
@@ -235,6 +236,23 @@ object Library {
         ) to (ra != null)
     }
 
+    // ---- favourites and playlists, for Focus ----
+
+    /**
+     * The lists as they are now, by id ([FAVORITES_LIST] and each playlist's id) with their songs
+     * in order. Lists not given are dropped.
+     */
+    fun syncLists(lists: Map<String, List<String>>) {
+        if (!::db.isInitialized) return
+        scope.launch {
+            runCatching {
+                db.keepLists(lists.keys)
+                lists.forEach { (k, ids) -> db.setList(k, ids) }
+            }.onFailure { Log.w(TAG, "couldn't keep the lists", it) }
+            _version.update { it + 1 }
+        }
+    }
+
     // ---- plays ----
 
     /** A song started playing (from anywhere): counted for Most played and the play filters. */
@@ -270,10 +288,28 @@ object Library {
         else -> RemoteBrowser(appContext, server, RemoteStores.get(appContext, server) { s -> store.save(s); RemoteStores.update(s) })
     }
 
+    /** The Library's track for a song id (from favourites, a playlist, the saved queue), if it has it. */
+    fun trackById(id: String): Track? {
+        if (!::db.isInitialized) return null
+        return runCatching { db.track(id) }.getOrNull()?.let(::trackOf)
+    }
+
     /** A playable track for [t], with the Library's names on it. */
     fun trackOf(t: LibTrack): Track? {
         val src = _sources.value.firstOrNull { it.id == t.source } ?: return null
-        val track = runCatching { browserFor(src)?.songFromIndex(t.id, t.file, t.size, t.folder, t.folderName) }.getOrNull() ?: return null
-        return track.copy(title = t.title, artist = t.artist.ifBlank { t.albumArtist }, album = t.album)
+        val browser = browserFor(src) ?: return null
+        val track = runCatching { browser.songFromIndex(t.id, t.file, t.size, t.folder, t.folderName) }.getOrNull() ?: return null
+        // The song's .lrc and its folder's cover, as browsing the folder finds them. Looked up
+        // when first wanted (the folder is listed once), so they're as they are now, not as at
+        // the scan: a .lrc added or edited since counts.
+        val listed by lazy {
+            runCatching { kotlinx.coroutines.runBlocking { browser.list(t.folder) } }.getOrNull()
+                ?.filterIsInstance<Entry.Song>()?.firstOrNull { it.name == t.file }?.track
+        }
+        return track.copy(
+            title = t.title, artist = t.artist.ifBlank { t.albumArtist }, album = t.album,
+            lyricsFile = track.lyricsFile ?: { ctx -> listed?.lyricsFile?.invoke(ctx) ?: throw java.io.FileNotFoundException("no .lrc") },
+            folderArt = track.folderArt ?: { ctx -> listed?.folderArt?.invoke(ctx) ?: throw java.io.FileNotFoundException("no cover") },
+        )
     }
 }

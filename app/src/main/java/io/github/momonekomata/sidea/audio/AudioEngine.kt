@@ -53,8 +53,13 @@ data class EngineState(
 class UpNext(val tag: Any, val open: () -> PlayableSource?)
 
 interface EngineCallbacks {
-    /** Called on a background thread near the end of a song; null if nothing follows. */
-    fun upNext(): UpNext?
+    /**
+     * Called on a background thread near the end of a song; null if nothing follows. [after] is
+     * the tag of the song being decoded when it was itself a gapless hand-over (null for the
+     * song the queue started): the queue may not have moved on to it yet, so "next" has to be
+     * counted from it, not from the queue's current song.
+     */
+    fun upNext(after: Any?): UpNext?
     /** The gapless hand-over reached the speaker: the song with [tag] is now playing. */
     fun onAdvanced(tag: Any)
     /** Playback ran out without a hand-over (end of queue, gapless off, or a format change). */
@@ -175,6 +180,8 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
         @Volatile private var headAtBase = 0L
         @Volatile private var rate = 44100
         @Volatile private var next: Segment? = null
+        /** The tag of the song the decoder is on, once a hand-over has happened. */
+        @Volatile private var decodingTag: Any? = null
 
         private var prefetch: Thread? = null
         @Volatile private var prefetched: Pair<UpNext, PcmDecoder>? = null
@@ -273,6 +280,7 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                             handOverSource?.let { watchRefill(it, handOver.second) }
                             handOverSource = null
                             decodedUs = 0
+                            decodingTag = handOver.first.tag
                             next = Segment(flushHead + written, handOver.first.tag, handOver.second.durationUs, facts(handOver.second, plan, t))
                             continue
                         }
@@ -335,9 +343,10 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
             }
             if (!gapless || prefetch != null || d.durationUs <= 0) return
             if (d.durationUs - decodedUs > PREFETCH_US) return
+            val after = decodingTag
             prefetch = Thread({
                 try {
-                    val up = callbacks.upNext() ?: return@Thread
+                    val up = callbacks.upNext(after) ?: return@Thread
                     val src = up.open() ?: return@Thread
                     prefetchSource = src
                     if (cancelled) { (src as? PlayableSource.Stream)?.dataSource?.close(); return@Thread }

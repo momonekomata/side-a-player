@@ -14,10 +14,7 @@ import io.github.momonekomata.sidea.ui.SideATheme
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
 
-    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let(vm::openLocal)
-    }
-
+    /** A folder on the phone for the Library (Settings → Music sources). */
     private val pickLibraryFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(vm::addLibraryTree)
     }
@@ -32,7 +29,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             SideATheme {
-                SideAScreen(vm, pickFolder = { pickFolder.launch(null) }, pickLibraryFolder = { pickLibraryFolder.launch(null) })
+                SideAScreen(vm, pickLibraryFolder = { pickLibraryFolder.launch(null) })
             }
         }
     }

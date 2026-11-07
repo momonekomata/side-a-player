@@ -1,5 +1,12 @@
 package io.github.momonekomata.sidea.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -194,12 +201,28 @@ private fun CloudFields(kind: NasKind, clientId: String, onId: (String) -> Unit,
 }
 
 @Composable
-fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Unit) {
+fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onSources: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Settings") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Where the Library's music comes from: folders on the phone, NAS and cloud.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Retro.Orange)
+                        .clickable(onClick = onSources)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Music sources", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("Phone folders, NAS and cloud for the Library", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
+                    }
+                    Text("›", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
                 LabeledSwitch("Exclusive USB driver", prefs.exclusiveUsb) { onChange(prefs.copy(exclusiveUsb = it)) }
                 Note("For phones whose Android can't send USB audio bit-perfect (most Samsungs): WALKDECK drives the DAC itself, at each file's own rate, after you allow USB access. Other apps can't use the DAC while WALKDECK holds it. Volume is then WALKDECK's own: the volume keys drive it, and 100 % is bit-perfect.")
                 LabeledSwitch("Gapless playback", prefs.gapless) { onChange(prefs.copy(gapless = it)) }
@@ -221,7 +244,7 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onDismiss: () -> Uni
                     Note("Free key from developer.musixmatch.com. The free plan gives part of each song's lyrics; timed lyrics need a paid plan. Leave blank to skip Musixmatch.")
                     LabeledSwitch("lyrics.ovh · plain lyrics, open", prefs.lyricsOvh) { onChange(prefs.copy(lyricsOvh = it)) }
                     LabeledSwitch("Save found lyrics beside the songs", prefs.saveLyrics) { onChange(prefs.copy(saveLyrics = it)) }
-                    Note("As a .lrc file with the song's name (timed when the lyrics are), in the same folder on the phone or the NAS. Most players read these. The audio files themselves are never changed. An existing .lrc is never overwritten.")
+                    Note("As a .lrc file with the song's name (timed when the lyrics are), in the same folder on the phone or the NAS. Most players read these. The audio files themselves are never changed, and a .lrc that's already there is never overwritten.")
                 }
             }
         },

@@ -69,8 +69,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import io.github.momonekomata.sidea.BrowseState
-import io.github.momonekomata.sidea.SearchState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.OutlinedTextField
@@ -83,7 +81,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import io.github.momonekomata.sidea.MainViewModel
 import io.github.momonekomata.sidea.Settings
-import io.github.momonekomata.sidea.SourceTab
 import io.github.momonekomata.sidea.audio.EngineState
 import io.github.momonekomata.sidea.audio.EqConfig
 import io.github.momonekomata.sidea.audio.SignalPaths
@@ -126,10 +123,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
-fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit, pickLibraryFolder: () -> Unit) {
-    val ui by vm.ui.collectAsStateWithLifecycle()
+fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     val queue by Player.queue.collectAsStateWithLifecycle()
     val engine by Player.state.collectAsStateWithLifecycle()
     val parked by Player.parked.collectAsStateWithLifecycle()
@@ -138,7 +135,9 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit, pickLibraryFolder: ()
     val prefs by Settings.prefs.collectAsStateWithLifecycle()
     val localArt by vm.nowArt.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val ui by vm.ui.collectAsStateWithLifecycle()
     var settingsOpen by remember { mutableStateOf(false) }
+    var sourcesOpen by rememberSaveable { mutableStateOf(false) }
     var eqOpen by remember { mutableStateOf(false) }
     // Cover or lyrics in the square; kept across songs, so lyrics stay up once chosen.
     var showLyrics by rememberSaveable { mutableStateOf(false) }
@@ -153,12 +152,9 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit, pickLibraryFolder: ()
         }
     }
 
-    val isNas = ui.tab == SourceTab.NAS
-    BackHandler(enabled = (ui.tab == SourceTab.LOCAL && (ui.local?.path?.size ?: 0) > 1) || (isNas && ui.nas != null)) {
-        vm.up(isNas)
-    }
+    // Back walks up out of an artist, album or genre opened in the Library.
     val libraryUi by vm.library.ui.collectAsStateWithLifecycle()
-    BackHandler(enabled = ui.tab == SourceTab.LIBRARY && libraryUi.stack.isNotEmpty()) { vm.library.back() }
+    BackHandler(enabled = libraryUi.stack.isNotEmpty()) { vm.library.back() }
 
     val localImage = remember(localArt) { localArt?.asImageBitmap() }
     val deck = localDeck(queue, engine, parked, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite).copy(
@@ -167,21 +163,21 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit, pickLibraryFolder: ()
         onToggleLyrics = { showLyrics = !showLyrics },
         onRetryLyrics = vm::retryLyrics,
     )
-    // A dot on the tab of whatever is playing, so it's easy to find again.
-    val playing = buildSet {
-        if (engine.isPlaying) queue.current?.let { add(if (ui.nas?.entries?.any { e -> e is Entry.Song && e.track.id == it.id } == true) SourceTab.NAS else SourceTab.LOCAL) }
-    }
 
     // Landscape: full screen. The system bars hide (swipe from an edge to peek), and the header's
-    // buttons move into the tab row so the cards and the deck get the whole height.
+    // buttons move beside the deck so the card and the deck get the whole height.
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     ImmersiveMode(landscape)
-    val headerIcons: @Composable RowScope.() -> Unit = {
+    val headerIcons: @Composable () -> Unit = {
         HeaderIcons(eqActive = prefs.eq.isActive, onEq = { eqOpen = true }, onSettings = { settingsOpen = true })
     }
+    // What the lid says: bit-perfect only when the path really is.
+    val out = engine.output
+    val spec = if (out != null && engine.error == null && (out.bitPerfect || out.exclusive != null)) "STEREO · BIT-PERFECT" else "STEREO PORTABLE PLAYER"
 
     // The queue lives beside the deck (swipe left).
     val queuePage: @Composable (Modifier) -> Unit = { m -> QueueCard(vm, queue, tags, localImage, m) }
+    val library: @Composable (Modifier) -> Unit = { m -> LibraryCard(vm, queue, onSources = { sourcesOpen = true }, m) }
 
     Column(
         Modifier
@@ -189,89 +185,78 @@ fun SideAScreen(vm: MainViewModel, pickFolder: () -> Unit, pickLibraryFolder: ()
             .background(Retro.Background)
             .then(if (landscape) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier.safeDrawingPadding()),
     ) {
-        if (!landscape) Header(headerIcons)
+        if (!landscape) Header(spec) { headerIcons() }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (maxWidth >= 600.dp) {
-                WideLayout(vm, ui.tab, deck, playing, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage) { m ->
-                    SourceCard(vm, ui.tab, queue, tags, pickFolder, pickLibraryFolder, m)
-                }
+                WideLayout(deck, short = maxHeight < 520.dp, trailing = if (landscape) headerIcons else null, queuePage = queuePage, card = library)
             } else {
-                PhoneLayout(vm, ui.tab, deck, lyrics, playing, queuePage) { tab, m -> SourceCard(vm, tab, queue, tags, pickFolder, pickLibraryFolder, m) }
+                PhoneLayout(deck, lyrics, queuePage, card = library)
             }
         }
     }
 
     val songMenu by vm.songMenu.collectAsStateWithLifecycle()
     songMenu?.let { SongMenuDialog(vm, it) }
-    ui.certPrompt?.let { CertificateDialog(it, onTrust = { vm.trustCertificate(it) }, onDismiss = vm::dismissCertPrompt) }
     if (eqOpen) EqScreen(prefs.eq, onChange = { c -> Settings.update { it.copy(eq = c) } }, onDismiss = { eqOpen = false })
     if (settingsOpen) {
-        SettingsDialog(prefs, onChange = { p -> Settings.update { p } }, onDismiss = { settingsOpen = false })
+        SettingsDialog(
+            prefs,
+            onChange = { p -> Settings.update { p } },
+            onSources = { settingsOpen = false; sourcesOpen = true },
+            onDismiss = { settingsOpen = false },
+        )
     }
+    if (sourcesOpen) SourcesScreen(vm, pickLibraryFolder, onDismiss = { vm.closeServer(); sourcesOpen = false })
+    // After the sources screen, so it shows above it when a server asks to be trusted.
+    ui.certPrompt?.let { CertificateDialog(it, onTrust = { vm.trustCertificate(it) }, onDismiss = vm::dismissCertPrompt) }
 }
 
 /**
- * Wide screens. Unfolded: the card on the left page, the deck on the right, its square sized so
- * the controls fit under it. A phone on its side: the card and a compact deck, square beside the
- * controls.
+ * Wide screens. Unfolded: the Library on the left page, the deck on the right, its square sized
+ * so the controls fit under it. A phone on its side: the Library and a compact deck, square beside
+ * the controls, with the EQ and Settings buttons at the far edge.
  */
 @Composable
 private fun WideLayout(
-    vm: MainViewModel,
-    tab: SourceTab,
     deck: DeckModel,
-    playing: Set<SourceTab>,
     short: Boolean,
-    trailing: (@Composable RowScope.() -> Unit)?,
+    trailing: (@Composable () -> Unit)?,
     queuePage: (@Composable (Modifier) -> Unit)?,
     card: @Composable (Modifier) -> Unit,
 ) {
-    Column {
-        Row(Modifier.weight(1f).padding(horizontal = if (trailing != null) 6.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(if (short) 8.dp else 16.dp)) {
-            // Sideways the deck takes the larger share: the cover is as tall as the screen, and the
-            // controls beside it need room for all three keys.
-            card(Modifier.weight(if (short) 0.85f else 1f).fillMaxHeight().padding(vertical = if (short) 4.dp else 8.dp))
-            NowPlayingPager(
-                deck,
-                Modifier.weight(if (short) 1.6f else 1.15f).fillMaxHeight().padding(vertical = if (short) 4.dp else 8.dp),
-                compact = short,
-                queuePage = queuePage,
-            )
+    Row(Modifier.fillMaxSize().padding(start = if (trailing != null) 6.dp else 12.dp, end = if (trailing != null) 0.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(if (short) 8.dp else 16.dp)) {
+        // Sideways the deck takes the larger share: the cover is as tall as the screen, and the
+        // controls beside it need room for all three keys.
+        card(Modifier.weight(1f).fillMaxHeight().padding(vertical = if (short) 6.dp else 8.dp))
+        NowPlayingPager(
+            deck,
+            Modifier.weight(if (short) 1.25f else 1.15f).fillMaxHeight().padding(vertical = if (short) 6.dp else 8.dp),
+            compact = short,
+            queuePage = queuePage,
+        )
+        if (trailing != null) {
+            Column(Modifier.fillMaxHeight().padding(vertical = 4.dp), verticalArrangement = Arrangement.Top) { trailing() }
         }
-        SourceTabs(tab, playing, vm::selectTab, trailing)
     }
 }
 
 /**
- * Phone: the sources are cards you swipe between (or pick from the tab row), and what's playing
- * sits in a mini player at the bottom. Tap it or swipe it up for the full deck with lyrics;
- * swipe down or press Back to put it away.
+ * Phone: the Library fills the screen, and what's playing sits in a mini player at the bottom.
+ * Tap it or swipe it up for the full deck with lyrics; swipe down or press Back to put it away.
  */
 @Composable
 private fun PhoneLayout(
-    vm: MainViewModel,
-    tab: SourceTab,
     deck: DeckModel,
     lyrics: LyricsState,
-    playing: Set<SourceTab>,
     queuePage: (@Composable (Modifier) -> Unit)?,
-    card: @Composable (SourceTab, Modifier) -> Unit,
+    card: @Composable (Modifier) -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = expanded) { expanded = false }
-    val pager = rememberPagerState(initialPage = tab.ordinal) { SourceTab.entries.size }
-    LaunchedEffect(pager.settledPage) { vm.selectTab(SourceTab.entries[pager.settledPage]) }
-    LaunchedEffect(tab) { if (pager.currentPage != tab.ordinal) pager.animateScrollToPage(tab.ordinal) }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            SourceTabs(tab, playing, vm::selectTab)
-            HorizontalPager(
-                state = pager,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                pageSpacing = 12.dp,
-            ) { page -> card(SourceTab.entries[page], Modifier.fillMaxSize()) }
+            card(Modifier.weight(1f).fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp))
             MiniPlayer(deck, lyrics.lyrics, onExpand = { expanded = true })
         }
         AnimatedVisibility(
@@ -374,26 +359,21 @@ private fun ExpandedDeck(deck: DeckModel, queuePage: (@Composable (Modifier) -> 
 }
 
 @Composable
-private fun Header(icons: @Composable RowScope.() -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        // Lettered like the name on a portable cassette player's lid: heavy italic capitals and a
-        // small spec line, with the orange stripe.
-        Column {
-            Text(
-                androidx.compose.ui.text.buildAnnotatedString {
-                    append("WALK")
-                    pushStyle(androidx.compose.ui.text.SpanStyle(color = Retro.Orange))
-                    append("DECK")
-                    pop()
-                },
-                color = Color(0xFFE9EDF3), fontSize = 26.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(22.dp).height(3.dp).background(Retro.Orange))
-                Text("STEREO · BIT-PERFECT", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 9.sp, letterSpacing = 2.sp, modifier = Modifier.padding(start = 6.dp))
-            }
-        }
-        Spacer(Modifier.weight(1f))
+private fun Header(spec: String, icons: @Composable () -> Unit) {
+    // One slim line, so the Library gets the screen: the name as on a Walkman's lid (heavy
+    // italic capitals), the orange stripe and the spec beside it, then the buttons.
+    Row(Modifier.fillMaxWidth().height(44.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            androidx.compose.ui.text.buildAnnotatedString {
+                append("WALK")
+                pushStyle(androidx.compose.ui.text.SpanStyle(color = Retro.Orange))
+                append("DECK")
+                pop()
+            },
+            color = Color(0xFFE9EDF3), fontFamily = Retro.Logo, fontSize = 20.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 1.sp,
+        )
+        Box(Modifier.padding(start = 10.dp).width(14.dp).height(2.dp).background(Retro.Orange))
+        Text(spec, color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 8.sp, letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 5.dp))
         icons()
     }
 }
@@ -425,42 +405,6 @@ private fun ImmersiveMode(on: Boolean) {
     }
 }
 
-/** All six sources fit on one line with equal widths; no sideways scrolling. */
-@Composable
-private fun SourceTabs(selected: SourceTab, playing: Set<SourceTab>, onSelect: (SourceTab) -> Unit, trailing: (@Composable RowScope.() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = if (trailing != null) 2.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        SourceTab.entries.forEach { tab ->
-            val on = tab == selected
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    // The chosen source is a silver slider, the others printed on the blue.
-                    .then(if (on) Modifier.brushedMetal() else Modifier)
-                    .clickable { onSelect(tab) }
-                    .padding(vertical = 8.dp),
-            ) {
-                Text(
-                    tab.short,
-                    color = if (on) Retro.OnMetal else Retro.Muted,
-                    fontFamily = Retro.Mono,
-                    fontSize = 10.sp,
-                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                    maxLines = 1,
-                )
-                Box(
-                    Modifier
-                        .padding(top = 4.dp)
-                        .size(5.dp)
-                        .clip(CircleShape)
-                        .background(if (tab in playing) Retro.Led else Color.Transparent),
-                )
-            }
-        }
-        trailing?.invoke(this)
-    }
-}
 
 // ---- Deck models ----
 
@@ -477,12 +421,12 @@ private fun localDeck(
     val t = queue.current
     val facts = engine.output
     val status = when {
-        t == null -> "Pick a song from Local or NAS"
+        t == null -> "Pick a song from the Library"
         engine.error != null -> "ERROR · ${engine.error}"
         // Before Threading: a NAS refill can be what's holding the song up.
         engine.bufferNote != null -> engine.bufferNote!!
         // Paused with the DAC handed back, or brought back from last time: Play carries on.
-        parked != null && !engine.isPlaying && !engine.isBuffering -> "Paused · press play to carry on"
+        parked != null && !engine.isPlaying && !engine.isBuffering -> "Paused · press play"
         facts == null -> "Threading the tape…"
         else -> summary(facts, engine.outputNote)
     }
@@ -513,8 +457,9 @@ private fun localDeck(
 /** One line next to the badge: what the file is and where it goes. */
 /** Two lines under the badge: what the file is, and where it goes. */
 private fun summary(f: StreamFacts, note: String?): String {
-    val bits = f.sourceBits?.takeIf { it > 1 }?.let { " · $it-bit" } ?: ""
-    val src = if (f.dsd != null) "DSD${f.sourceRate / 44_100} · ${"%.1f".format(f.sourceRate / 1e6)} MHz" else "${f.codec} · ${SignalPaths.khz(f.sourceRate)}$bits"
+    // Lossy files have no bit depth of their own; what the decoder hands out isn't the file's.
+    val bits = f.sourceBits?.takeIf { it > 1 && SignalPaths.isLossless(f.codec) }?.let { " · $it-bit" } ?: ""
+    val src = if (f.dsd != null) "DSD${f.sourceRate / 44_100} · ${"%.1f".format(f.sourceRate / 1e6)} MHz" else "${SignalPaths.codecName(f.codec)} · ${SignalPaths.khz(f.sourceRate)}$bits"
     val dest = f.deviceName ?: f.device.label
     val out = when {
         f.bitPerfect -> "→ $dest · bit-perfect ${SignalPaths.khz(f.outputRate)} ${f.outputFormat.label}"
@@ -523,222 +468,9 @@ private fun summary(f: StreamFacts, note: String?): String {
     return "$src\n$out"
 }
 
-@Composable
-private fun SourceCard(
-    vm: MainViewModel,
-    tab: SourceTab,
-    queue: QueueState,
-    tags: Map<String, Tags>,
-    pickFolder: () -> Unit,
-    pickLibraryFolder: () -> Unit,
-    modifier: Modifier,
-) {
-    val ui by vm.ui.collectAsStateWithLifecycle()
-    when (tab) {
-        SourceTab.LIBRARY -> LibraryCard(vm, queue, pickLibraryFolder, modifier)
-        SourceTab.LOCAL -> {
-            val local = ui.local
-            if (local == null) {
-                JCard("Local music", "no folder chosen", modifier) {
-                    item {
-                        JCardNote("Choose the folder that holds your music. FLAC, WAV, ALAC/M4A and MP3 are read in place.") {
-                            CardButton("Choose folder", pickFolder)
-                        }
-                    }
-                }
-            } else {
-                BrowserCard(vm, false, local, queue, tags, modifier, onUp = { vm.up(false) }, onFolder = { vm.openFolder(false, it) }, onSong = { vm.play(false, it) }, onRetry = { vm.retry(false) }) {
-                    item { JCardRow("", "Change music folder…", onClick = pickFolder) }
-                }
-            }
-        }
-        SourceTab.NAS -> NasCard(vm, ui.nas, ui.nasServers, queue, tags, modifier)
-        SourceTab.FAVORITES -> FavoritesCard(vm, queue, modifier)
-    }
-}
-
-@Composable
-private fun BrowserCard(
-    vm: MainViewModel,
-    isNas: Boolean,
-    state: BrowseState,
-    queue: QueueState,
-    tags: Map<String, Tags>,
-    modifier: Modifier,
-    onUp: () -> Unit,
-    onFolder: (Entry.Folder) -> Unit,
-    onSong: (Entry.Song) -> Unit,
-    onRetry: () -> Unit,
-    footer: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {},
-) {
-    val search by vm.search.collectAsStateWithLifecycle()
-    search?.takeIf { it.isNas == isNas }?.let { s ->
-        SearchCard(vm, s, queue, tags, modifier)
-        return
-    }
-    // Each folder keeps its own scroll position, so going back up lands where you left off.
-    val scrollKey = "${state.browser.title}:${state.currentPath}"
-    // Restored only once the folder's listing is in: a list that's still "Reading…" is a few
-    // lines long and would clamp (and then save) the position as the top.
-    val ready = !state.loading && state.error == null
-    val list = remember(scrollKey, ready) { if (ready) vm.scrollFor(scrollKey).let { (i, o) -> LazyListState(i, o) } else LazyListState() }
-    LaunchedEffect(list, scrollKey, ready) {
-        if (!ready) return@LaunchedEffect
-        snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }
-            .collect { (i, o) -> vm.saveScroll(scrollKey, i, o) }
-    }
-    val headerItems = if (state.path.size > 1) 2 else 1
-    val librarySources by io.github.momonekomata.sidea.library.Library.sources.also { vm.library }.collectAsStateWithLifecycle()
-    val inLibrary = remember(librarySources, state.currentPath) { vm.inLibrary(isNas) }
-    val letters = remember(state.entries, tags, ready) {
-        if (!ready || state.entries.size < LETTERS_FROM) emptyList()
-        else letterIndex(state.entries.map { e -> if (e is Entry.Song) e.track.displayTitle(tags) else e.name }, headerItems)
-    }
-    val songs = state.entries.count { it is Entry.Song }
-    val folders = state.entries.size - songs
-    val context = LocalContext.current
-    val firstSong = state.entries.firstOrNull { it is Entry.Song } as Entry.Song?
-    val cover by produceState<ImageBitmap?>(null, firstSong?.track?.id) {
-        value = firstSong?.let { ArtworkStore.load(context, it.track)?.asImageBitmap() }
-    }
-    JCard(state.currentName, "$songs songs · $folders folders · ${state.browser.title}", modifier, art = cover, listState = list, letters = letters, pinned = {
-        // Always in reach, however far down the folder is scrolled. Searches this folder and
-        // everything in it; open it in the music folder to skip the rest of the share.
-        SearchBar(if (state.path.size > 1) "Search ${state.currentName}…" else "Search ${state.browser.title.lowercase()}…") { vm.openSearch(isNas) }
-    }) {
-        if (state.path.size > 1) item { JCardRow("‹", "Back to ${state.path[state.path.size - 2].first}", onClick = onUp) }
-        item {
-            // Point the Library at this folder: it, and everything in it, gets scanned in.
-            if (inLibrary) JCardRow("✓", "In the Library", "with everything inside it", onClick = { vm.tabTo(SourceTab.LIBRARY) })
-            else JCardRow("＋", "Add this folder to the Library", "scans it and every folder inside it", onClick = { vm.addToLibrary(isNas) })
-        }
-        when {
-            state.loading -> item { JCardNote("Reading…") }
-            state.error != null -> item { JCardNote(state.error) { CardButton("Try again", onRetry) } }
-            else -> {
-                var n = 0
-                state.entries.forEach { e ->
-                    when (e) {
-                        is Entry.Folder -> item { JCardRow("▸", e.name, "folder", onClick = { onFolder(e) }) }
-                        is Entry.Song -> {
-                            n++
-                            val number = "%02d".format(n)
-                            item {
-                                val t = tags[e.track.id]
-                                val detail = listOfNotNull(t?.artist, t?.album).joinToString(" · ").ifEmpty { e.name }
-                                JCardRow(t?.trackNumber?.let { "%02d".format(it) } ?: number, e.track.displayTitle(tags), detail, current = queue.current?.id == e.track.id, onLongClick = { vm.openSongMenu(e.track) }, onClick = { onSong(e) })
-                            }
-                        }
-                    }
-                }
-                if (state.entries.isEmpty()) item { JCardNote("No folders or music files here.") }
-            }
-        }
-        footer()
-    }
-}
-
-/** Search across the whole library, folders included, titles and artists from tags. */
-@Composable
-private fun SearchCard(vm: MainViewModel, s: SearchState, queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
-    BackHandler { vm.closeSearch() }
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
-    val subtitle = if (s.indexing) "reading ${s.scopeName}… ${s.foldersRead} folders" else "${s.results.size} found in ${s.scopeName} · indexed ${agoText(s.indexedAt)}"
-    JCardFrame("Search", subtitle, modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp)) {
-            OutlinedTextField(
-                value = s.query,
-                onValueChange = vm::setQuery,
-                singleLine = true,
-                placeholder = { Text("Title, artist, album, folder", color = Retro.InkFaint) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Retro.Ink, unfocusedTextColor = Retro.Ink,
-                    focusedBorderColor = Retro.Orange, unfocusedBorderColor = Retro.InkFaint, cursorColor = Retro.Orange,
-                ),
-                modifier = Modifier.weight(1f).focusRequester(focus),
-            )
-            if (!s.indexing) TextButton(onClick = vm::rescanSearch) { Text("Rescan", color = Retro.InkFaint) }
-            TextButton(onClick = vm::closeSearch) { Text("Close", color = Retro.Ink) }
-        }
-        LazyColumn(Modifier.fillMaxSize()) {
-            if (s.query.isNotBlank() && s.results.isEmpty() && !s.indexing) item { JCardNote("Nothing matches “${s.query}”.") }
-            s.results.forEach { f ->
-                item {
-                    when (val e = f.entry) {
-                        is Entry.Song -> {
-                            val t = tags[e.track.id]
-                            val where = f.crumbs.drop(1).joinToString(" / ") { it.first }.ifEmpty { f.crumbs.first().first }
-                            JCardRow("♪", e.track.displayTitle(tags), listOfNotNull(t?.artist, where).joinToString(" · "), current = queue.current?.id == e.track.id, onLongClick = { vm.openSongMenu(e.track) }, onClick = { vm.playFound(f) })
-                        }
-                        is Entry.Folder -> JCardRow("▸", e.name, f.crumbs.dropLast(1).drop(1).joinToString(" / ") { it.first }.ifEmpty { "folder" }, onClick = { vm.openFound(f) })
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Playlists, then favourite songs from Local and the NAS, newest first. A playlist opens in place. */
-@Composable
-private fun FavoritesCard(vm: MainViewModel, queue: QueueState, modifier: Modifier) {
-    val favorites by vm.favorites.collectAsStateWithLifecycle()
-    val playlists by vm.playlists.collectAsStateWithLifecycle()
-    val openId by vm.openPlaylist.collectAsStateWithLifecycle()
-    var creating by remember { mutableStateOf(false) }
-    playlists.firstOrNull { it.id == openId }?.let { p ->
-        PlaylistCard(vm, p, queue, modifier)
-        return
-    }
-    var showMost by rememberSaveable { mutableStateOf(false) }
-    val most by vm.mostPlayed.collectAsStateWithLifecycle()
-    val switcher: @Composable () -> Unit = {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            QueueToggle("♥ Favourites", !showMost, Modifier.weight(1f)) { showMost = false }
-            QueueToggle("▲ Most played", showMost, Modifier.weight(1f)) { showMost = true }
-        }
-    }
-    if (showMost) {
-        // The 50 songs played most, from anywhere: the Library, a folder, a playlist.
-        JCard("Most played", "top ${most.size} · counted each time a song starts", modifier, pinned = switcher) {
-            if (most.isEmpty()) item { JCardNote("Songs you play show up here, most played first.") }
-            most.forEachIndexed { i, p ->
-                item(key = "m:" + p.id) {
-                    JCardRow(
-                        "%02d".format(i + 1), p.title, listOf(p.artist, "${p.count} play${if (p.count == 1) "" else "s"}").filter { it.isNotBlank() }.joinToString(" · "),
-                        current = queue.current?.id == p.id,
-                        onLongClick = { vm.openSongMenu(Favorite(p.id, p.title, p.artist, p.album, p.size)) },
-                        onClick = { vm.playMostPlayed(i) },
-                    )
-                }
-            }
-        }
-        return
-    }
-    val headerItems = playlists.size + 1
-    val letters = remember(favorites, headerItems) { if (favorites.size < LETTERS_FROM) emptyList() else letterIndex(favorites.map { it.title }, headerItems) }
-    JCard("Favourites", "${favorites.size} songs · ${playlists.size} playlists", modifier, letters = letters, pinned = switcher) {
-        playlists.forEach { p ->
-            item { JCardRow("▤", p.name, "playlist · ${p.songs.size} songs", onClick = { vm.showPlaylist(p.id) }) }
-        }
-        item { JCardRow("+", "New playlist", onClick = { creating = true }) }
-        if (favorites.isEmpty()) item { JCardNote("Tap ♡ on the deck, or long-press a song, to keep it here.") }
-        favorites.forEachIndexed { i, f ->
-            item {
-                JCardRow(
-                    "%02d".format(i + 1), f.title, listOf(f.artist, f.album).filter { it.isNotBlank() }.joinToString(" · "),
-                    current = queue.current?.id == f.id,
-                    onLongClick = { vm.openSongMenu(f) },
-                    onClick = { vm.playFavorites(i) },
-                )
-            }
-        }
-    }
-    if (creating) PlaylistNameDialog(onCreate = { vm.newPlaylist(it, null); creating = false }, onDismiss = { creating = false })
-}
-
 /**
- * The deck, and the queue a swipe left of it.
+ * The deck, the cassette turning (swipe left), and the queue (swipe left again). The names
+ * under them take taps too.
  */
 @Composable
 private fun NowPlayingPager(
@@ -747,23 +479,25 @@ private fun NowPlayingPager(
     compact: Boolean,
     queuePage: (@Composable (Modifier) -> Unit)?,
 ) {
-    val pages = if (queuePage != null) 2 else 1
-    val pager = rememberPagerState { pages }
+    val labels = if (queuePage != null) listOf("DECK", "TAPE", "QUEUE") else listOf("DECK", "TAPE")
+    val pager = rememberPagerState { labels.size }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     Column(modifier) {
         HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), pageSpacing = 12.dp) { page ->
-            if (page == 1 && queuePage != null) {
-                queuePage(Modifier.fillMaxSize().padding(horizontal = 12.dp))
-            } else if (compact) {
-                Deck(deck, Modifier.fillMaxSize(), compact = true)
-            } else {
-                Deck(deck, Modifier.fillMaxSize())
+            when {
+                page == 2 && queuePage != null -> queuePage(Modifier.fillMaxSize().padding(horizontal = if (compact) 0.dp else 12.dp))
+                page == 1 -> CassettePage(deck, Modifier.fillMaxSize(), compact = compact)
+                else -> Deck(deck, Modifier.fillMaxSize(), compact = compact)
             }
         }
-        if (pages > 1) {
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
-                listOf("DECK", "QUEUE").forEachIndexed { i, label ->
-                    Text(label, color = if (pager.currentPage == i) Retro.Orange else Retro.Muted, fontFamily = Retro.Mono, fontSize = 10.sp, letterSpacing = 2.sp)
-                }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)) {
+            labels.forEachIndexed { i, label ->
+                Text(
+                    label,
+                    color = if (pager.currentPage == i) Retro.Orange else Retro.Muted,
+                    fontFamily = Retro.Mono, fontSize = 11.sp, letterSpacing = 2.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable { scope.launch { pager.animateScrollToPage(i) } }.padding(horizontal = 10.dp, vertical = if (compact) 4.dp else 6.dp),
+                )
             }
         }
     }
@@ -979,60 +713,6 @@ private fun playedAgo(atMs: Long): String {
     }
 }
 
-@Composable
-private fun PlaylistCard(vm: MainViewModel, p: io.github.momonekomata.sidea.sources.Playlist, queue: QueueState, modifier: Modifier) {
-    BackHandler { vm.showPlaylist(null) }
-    var deleting by remember { mutableStateOf(false) }
-    JCard(p.name, "playlist · ${p.songs.size} songs", modifier) {
-        item { JCardRow("‹", "Back to Favourites", onClick = { vm.showPlaylist(null) }) }
-        if (p.songs.isEmpty()) item { JCardNote("Long-press a song anywhere and pick Add to playlist.") }
-        p.songs.forEachIndexed { i, f ->
-            item {
-                JCardRow(
-                    "%02d".format(i + 1), f.title, listOf(f.artist, f.album).filter { it.isNotBlank() }.joinToString(" · "),
-                    current = queue.current?.id == f.id,
-                    onLongClick = { vm.openSongMenu(f, p.id, i) },
-                    onClick = { vm.playPlaylist(p.id, i) },
-                )
-            }
-        }
-        item { JCardRow("✕", "Delete playlist", onClick = { deleting = true }) }
-    }
-    if (deleting) {
-        AlertDialog(
-            onDismissRequest = { deleting = false },
-            title = { Text("Delete “${p.name}”?") },
-            text = { Text("The songs stay where they are; only the list goes.") },
-            confirmButton = { TextButton({ vm.deletePlaylist(p.id); deleting = false }) { Text("Delete") } },
-            dismissButton = { TextButton({ deleting = false }) { Text("Cancel") } },
-        )
-    }
-}
-
-@Composable
-private fun NasCard(vm: MainViewModel, nas: BrowseState?, servers: List<NasServer>, queue: QueueState, tags: Map<String, Tags>, modifier: Modifier) {
-    var editing by remember { mutableStateOf<NasServer?>(null) }
-    var adding by remember { mutableStateOf(false) }
-    if (nas != null) {
-        BrowserCard(vm, true, nas, queue, tags, modifier, onUp = { vm.up(true) }, onFolder = { vm.openFolder(true, it) }, onSong = { vm.play(true, it) }, onRetry = { vm.retry(true) }) {
-            item { JCardRow("⏏", "Disconnect", onClick = vm::closeServer) }
-        }
-    } else {
-        JCard("NAS & cloud", "${servers.size} · SMB, SFTP, FTP(S), WebDAV, Drive, OneDrive, Dropbox", modifier) {
-            servers.forEach { s ->
-                item {
-                    val detail = if (s.kind.cloud) s.kind.label + if (s.refreshToken.isBlank()) " · not signed in" else "" else "${s.kind.label} · ${s.address}"
-                    JCardRow(s.kind.name.take(3), s.name, detail, action = "Edit" to { editing = s }, onClick = { if (s.kind.cloud && s.refreshToken.isBlank()) editing = s else vm.openServer(s) })
-                }
-            }
-            item { JCardRow("+", "Add a NAS or cloud storage", onClick = { adding = true }) }
-        }
-    }
-    if (adding) NasServerDialog(null, servers, onSave = { vm.saveServer(it); adding = false }, onSignIn = { vm.signInCloud(it); adding = false }, onDelete = {}, onDismiss = { adding = false })
-    editing?.let { s ->
-        NasServerDialog(s, servers, onSave = { vm.saveServer(it); editing = null }, onSignIn = { vm.signInCloud(it); editing = null }, onDelete = { vm.deleteServer(it); editing = null }, onDismiss = { editing = null })
-    }
-}
 
 @Composable
 fun CardButton(text: String, onClick: () -> Unit) {
@@ -1041,36 +721,4 @@ fun CardButton(text: String, onClick: () -> Unit) {
         colors = ButtonDefaults.outlinedButtonColors(contentColor = Retro.Ink),
         border = androidx.compose.foundation.BorderStroke(1.dp, Retro.Ink),
     ) { Text(text) }
-}
-
-/** Lists at least this long get the A–Z index down their edge. */
-private const val LETTERS_FROM = 20
-
-/** "just now", "5 min ago", "3 h ago", "2 days ago". */
-private fun agoText(atMs: Long): String {
-    val m = (System.currentTimeMillis() - atMs) / 60_000
-    return when {
-        m < 1 -> "just now"
-        m < 60 -> "$m min ago"
-        m < 60 * 24 -> "${m / 60} h ago"
-        else -> "${m / (60 * 24)} days ago"
-    }
-}
-
-/** A search field drawn on the card; tapping it opens the search. */
-@Composable
-private fun SearchBar(hint: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(50))
-            .background(Retro.CreamShade)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Filled.Search, null, tint = Retro.InkFaint, modifier = Modifier.size(18.dp))
-        Text(hint, color = Retro.InkFaint, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp))
-    }
 }

@@ -110,10 +110,13 @@ object SignalPaths {
         return SignalPath(stages)
     }
 
-    private fun codecName(c: String) = when (c.uppercase()) {
+    /** What a codec is called, from Android's name for it ("MP4A-LATM" is AAC). */
+    fun codecName(c: String) = when (c.uppercase()) {
         "RAW" -> "PCM"
         "MPEG" -> "MP3"
         "MP4A-LATM" -> "AAC"
+        "VORBIS" -> "Vorbis"
+        "OPUS" -> "Opus"
         else -> c.uppercase()
     }
 
@@ -122,5 +125,10 @@ object SignalPaths {
         return (if (abs(k - Math.round(k)) < 1e-9) "%.0f" else "%.1f").format(k) + " kHz"
     }
 
-    private fun signed(db: Double) = (if (db > 0) "+" else "") + "%.1f".format(db)
+    /** "+3.0", "-6.2", and "0.0" for anything that rounds to nothing (never "-0.0"). */
+    fun signed(db: Double): String {
+        val r = Math.round(db * 10) / 10.0
+        if (r == 0.0) return "0.0"
+        return (if (r > 0) "+" else "") + "%.1f".format(r)
+    }
 }

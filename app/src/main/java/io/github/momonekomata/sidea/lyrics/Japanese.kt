@@ -26,15 +26,19 @@ object Japanese {
     fun annotate(line: String): JapaneseLine {
         val pieces = ArrayList<Ruby>()
         val romaji = StringBuilder()
+        var prevJapanese = false
         for (t in tokenizer.tokenize(line)) {
             val surface = t.surface
             val reading = t.reading.takeIf { it != "*" && it.isNotBlank() }?.toHiragana()
             pieces += furigana(surface, reading)
             // Romaji: a word at a time, spaced; particles said the way they're said.
+            val pos = t.partOfSpeechLevel1
             val sound = when {
-                t.partOfSpeechLevel1 == "助詞" && surface == "は" -> "wa"
-                t.partOfSpeechLevel1 == "助詞" && surface == "へ" -> "e"
-                t.partOfSpeechLevel1 == "助詞" && surface == "を" -> "o"
+                pos == "助詞" && surface == "は" -> "wa"
+                pos == "助詞" && surface == "へ" -> "e"
+                pos == "助詞" && surface == "を" -> "o"
+                // Japanese punctuation as its Latin counterpart: 、 → , and so on.
+                surface.all { it in PUNCTUATION } -> surface.map { PUNCTUATION.getValue(it) }.joinToString("")
                 reading != null -> toRomaji(reading)
                 surface.any { it.isKana() } -> toRomaji(surface.toHiragana())
                 else -> surface
@@ -43,9 +47,16 @@ object Japanese {
                 if (surface.isNotBlank() && romaji.isNotEmpty() && !romaji.endsWith(" ")) romaji.append(' ')
                 continue
             }
-            val joins = sound.first().isLetter().not() || t.partOfSpeechLevel1 == "記号"
+            // Endings belong to their word: 歩こう is "arukou", not "aruko u"; 歩いて "aruite".
+            // (After a Japanese word only: "Rock だ" stays "Rock da".)
+            val ending = prevJapanese && (pos == "助動詞" || (pos == "助詞" && t.partOfSpeechLevel2 == "接続助詞" && surface in TE_FORMS) ||
+                t.partOfSpeechLevel2 == "接尾")
+            val joins = sound.first().isLetter().not() || pos == "記号" || ending
             if (romaji.isNotEmpty() && !romaji.endsWith(" ") && !joins) romaji.append(' ')
+            // A word after punctuation gets its space back: "aoi, sora".
+            if (romaji.isNotEmpty() && romaji.last() in ",.!?" && sound.first().isLetter()) romaji.append(' ')
             romaji.append(sound)
+            prevJapanese = surface.any { it.isKana() || it.isKanji() }
         }
         return JapaneseLine(merge(pieces), romaji.toString().replace(Regex(" +"), " ").trim())
     }
@@ -80,6 +91,14 @@ object Japanese {
         }
         return out
     }
+
+    /** The te-form joiners, which read as part of the verb before them. */
+    private val TE_FORMS = setOf("て", "で", "ば")
+
+    private val PUNCTUATION = mapOf(
+        '、' to ",", '。' to ".", '，' to ",", '．' to ".", '！' to "!", '？' to "?", '・' to " ",
+        '「' to "\"", '」' to "\"", '『' to "\"", '』' to "\"", '（' to "(", '）' to ")", '　' to " ", '…' to "…", '～' to "~", '〜' to "~",
+    )
 
     // ---- kana ----
 

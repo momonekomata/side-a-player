@@ -78,12 +78,14 @@ data class LibFilter(
     val yearFrom: Int? = null,
     val yearTo: Int? = null,
     val losslessOnly: Boolean = false,
+    /** Only the songs of one list: [FAVORITES_LIST] or a playlist's id; shown in its order. */
+    val list: String? = null,
 ) {
     /** How many filters (not the search) are set, for the Filter button. */
     val count get() = listOf(
         genres.isNotEmpty(), codecs.isNotEmpty(), rates.isNotEmpty(), bits.isNotEmpty(), sources.isNotEmpty(),
         yearFrom != null || yearTo != null, losslessOnly, artists.isNotEmpty(), composers.isNotEmpty(), labels.isNotEmpty(),
-        channels.isNotEmpty(), compilationsOnly, topPlayed != null, playedWithinDays != null, addedWithinDays != null,
+        channels.isNotEmpty(), compilationsOnly, topPlayed != null, playedWithinDays != null, addedWithinDays != null, list != null,
     ).count { it } + inspect.size
 }
 
@@ -111,9 +113,17 @@ data class LibFacets(
     val channels: List<Pair<Int, Int>>,
     val compilations: Int,
     val played: Int,
+    /** Songs in the Library per list ([FAVORITES_LIST], playlist ids). */
+    val lists: Map<String, Int> = emptyMap(),
 )
 
-class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null, 2) {
+/** Ranks a song's format: lossless first, then rate, then bits; "codec|rate|bits" follows the rank. */
+private const val BEST_FORMAT = "printf('%d%010d%03d|%s|%d|%s', codec IN ('FLAC','ALAC','WAV','AIFF','DSD'), rate, coalesce(bits, 0), codec, rate, coalesce(bits, ''))"
+
+/** Focus on the favourites: the [LibFilter.list] for them. Playlists use their own ids. */
+const val FAVORITES_LIST = "fav"
+
+class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE tracks (
@@ -124,6 +134,7 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
                 composer TEXT, label TEXT, compilation INTEGER)""",
         )
         createPlays(db)
+        createLists(db)
         db.execSQL("CREATE INDEX t_source ON tracks(source)")
         db.execSQL("CREATE INDEX t_albumBy ON tracks(albumBy COLLATE NOCASE)")
         db.execSQL("CREATE INDEX t_album ON tracks(album COLLATE NOCASE)")
@@ -139,6 +150,13 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
             db.execSQL("UPDATE tracks SET probed = 0")
             createPlays(db)
         }
+        if (oldVersion < 3) createLists(db)
+    }
+
+    /** Favourites and playlists, mirrored from where they're kept, so Focus can filter on them. */
+    private fun createLists(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS lists (list TEXT NOT NULL, id TEXT NOT NULL, pos INTEGER)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS l_list ON lists(list, id)")
     }
 
     /** Plays of any song, in the Library or not: how many, the last one, and its names to show. */
@@ -261,6 +279,7 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
             parts += "(" + f.channels.joinToString(" OR ") { if (it >= 3) "channels >= 3" else "channels = $it" } + ")"
         }
         if (f.compilationsOnly) parts += "compilation = 1"
+        f.list?.let { parts += "id IN (SELECT id FROM lists WHERE list = ?)"; args += it }
         f.topPlayed?.let { parts += "id IN (SELECT id FROM plays ORDER BY count DESC LIMIT $it)" }
         f.playedWithinDays?.let { parts += "id IN (SELECT id FROM plays WHERE last >= ?)"; args += (System.currentTimeMillis() - it * 86_400_000L).toString() }
         f.addedWithinDays?.let { parts += "added >= ?"; args += (System.currentTimeMillis() - it * 86_400_000L).toString() }
@@ -299,10 +318,22 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
             source?.let { add("source = ?" to it) }
         }
         val (w, a) = where(f, extra)
-        val order = if (album != null) "disc, track, file COLLATE NOCASE" else "title COLLATE NOCASE, artist COLLATE NOCASE"
-        return readableDatabase.rawQuery("SELECT $trackCols FROM tracks $w ORDER BY $order LIMIT $limit", a).use { c ->
+        // A favourites or playlist Focus keeps the list's own order (newest favourite first).
+        val inList = f.list != null && album == null
+        val order = when {
+            album != null -> "disc, track, file COLLATE NOCASE"
+            inList -> "(SELECT min(pos) FROM lists WHERE lists.list = ? AND lists.id = tracks.id)"
+            else -> "title COLLATE NOCASE, artist COLLATE NOCASE"
+        }
+        val args = if (inList) a + f.list!! else a
+        return readableDatabase.rawQuery("SELECT $trackCols FROM tracks $w ORDER BY $order LIMIT $limit", args).use { c ->
             buildList { while (c.moveToNext()) add(c.track()) }
         }
+    }
+
+    /** One song by its id, if it's in the Library. */
+    fun track(id: String): LibTrack? = readableDatabase.rawQuery("SELECT $trackCols FROM tracks WHERE id = ?", arrayOf(id)).use { c ->
+        if (c.moveToFirst()) c.track() else null
     }
 
     fun artists(f: LibFilter, genre: String? = null): List<LibArtist> {
@@ -321,16 +352,56 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
         // By an artist: newest first, like a discography. Otherwise by title.
         val order = if (artist != null) "min(year) DESC, album COLLATE NOCASE" else "album COLLATE NOCASE"
         return readableDatabase.rawQuery(
-            "SELECT album, albumBy, min(year), count(*), min(id), max(rate), max(bits), max(codec) FROM tracks $w " +
+                // The album's best file, whole: lossless before lossy, then rate, then bit depth. Taking
+            // max() of each column on its own would mix files into a format none of them has.
+            "SELECT album, albumBy, min(year), count(*), min(id), max($BEST_FORMAT) FROM tracks $w " +
                 "GROUP BY albumBy COLLATE NOCASE, album COLLATE NOCASE ORDER BY $order", a,
         ).use { c ->
             buildList {
                 while (c.moveToNext()) {
-                    add(LibAlbum(c.getString(0).orEmpty(), c.getString(1).orEmpty(), if (c.isNull(2)) null else c.getInt(2), c.getInt(3), c.getString(4), c.getInt(5), if (c.isNull(6)) null else c.getInt(6), c.getString(7).orEmpty()))
+                    val (codec, rate, bits) = bestFormat(c.getString(5))
+                    add(LibAlbum(c.getString(0).orEmpty(), c.getString(1).orEmpty(), if (c.isNull(2)) null else c.getInt(2), c.getInt(3), c.getString(4), rate, bits, codec))
                 }
             }
         }
     }
+
+    /** "codec|rate|bits" from [BEST_FORMAT]'s ranking string. */
+    private fun bestFormat(s: String?): Triple<String, Int, Int?> {
+        val p = s.orEmpty().split('|')
+        return Triple(p.getOrNull(1).orEmpty(), p.getOrNull(2)?.toIntOrNull() ?: 0, p.getOrNull(3)?.toIntOrNull())
+    }
+
+    // ---- lists: favourites and playlists, for Focus ----
+
+    /** Replaces the songs of [list] (favourites or a playlist), in their order. */
+    fun setList(list: String, ids: List<String>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("lists", "list = ?", arrayOf(list))
+            val st = db.compileStatement("INSERT INTO lists (list, id, pos) VALUES (?, ?, ?)")
+            ids.forEachIndexed { i, id ->
+                st.bindString(1, list); st.bindString(2, id); st.bindLong(3, i.toLong())
+                st.executeInsert()
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Lists that aren't among [keep] any more (a deleted playlist) go. */
+    fun keepLists(keep: Set<String>) {
+        val db = writableDatabase
+        val have = db.rawQuery("SELECT DISTINCT list FROM lists", null).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+        (have - keep).forEach { db.delete("lists", "list = ?", arrayOf(it)) }
+    }
+
+    /** How many of each list's songs are in the Library. */
+    fun listCounts(): Map<String, Int> = readableDatabase.rawQuery(
+        "SELECT list, count(*) FROM lists WHERE id IN (SELECT id FROM tracks) GROUP BY list", null,
+    ).use { c -> buildMap { while (c.moveToNext()) put(c.getString(0), c.getInt(1)) } }
 
     fun genres(f: LibFilter): List<LibGenre> {
         val (w, a) = where(f)
@@ -374,6 +445,7 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
             channels = counted("SELECT CASE WHEN channels >= 3 THEN 3 ELSE channels END, count(*) FROM tracks WHERE channels > 0 GROUP BY 1 ORDER BY 1", number),
             compilations = db.rawQuery("SELECT count(*) FROM tracks WHERE compilation = 1", null).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 },
             played = db.rawQuery("SELECT count(*) FROM plays", null).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 },
+            lists = listCounts(),
         )
     }
 }

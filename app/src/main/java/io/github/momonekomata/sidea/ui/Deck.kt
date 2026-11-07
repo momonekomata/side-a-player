@@ -114,10 +114,15 @@ fun Deck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean = fal
         .clip(RoundedCornerShape(10.dp))
         .brushedMetal()
     if (compact) {
-        Row(panel.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            ArtSquare(model, Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true))
-            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                Controls(model, compact = true) { showPath = true }
+        // A phone on its side: the cover no wider than about two fifths of the panel, so the
+        // song, the badge and all the keys get a roomy column beside it.
+        BoxWithConstraints(panel.padding(10.dp)) {
+            val art = minOf(maxHeight, maxWidth * 0.42f)
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                ArtSquare(model, Modifier.size(art))
+                Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
+                    Controls(model, compact = true) { showPath = true }
+                }
             }
         }
     } else {
@@ -376,7 +381,7 @@ private fun SeekBar(model: DeckModel) {
  * little while held; PLAY turns orange while the tape runs.
  */
 @Composable
-private fun DeckKey(icon: ImageVector, label: String, caption: String, wide: Boolean = false, lit: Boolean = false, height: Dp = 52.dp, onHold: (() -> Unit)? = null, onClick: () -> Unit) {
+internal fun DeckKey(icon: ImageVector, label: String, caption: String, wide: Boolean = false, lit: Boolean = false, height: Dp = 52.dp, onHold: (() -> Unit)? = null, onClick: () -> Unit) {
     val narrow = height < 48.dp
     val hold by rememberUpdatedState(onHold)
     val click by rememberUpdatedState(onClick)

@@ -139,7 +139,7 @@ object CloudSignIn {
                     out.write(body)
                     out.flush()
                 }
-                val page = { msg: String -> "<html><body style=\"font-family:sans-serif;padding:2em;background:#111;color:#eee\"><h2>WALKDECK</h2><p>$msg</p></body></html>" }
+                val page = { msg: String -> "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>WALKDECK</title></head><body style=\"font-family:sans-serif;padding:2em;background:#111;color:#eee\"><h2>WALKDECK</h2><p>$msg</p></body></html>" }
                 when {
                     query["error"] != null -> {
                         reply("200 OK", page("Signing in didn't finish (${query["error"]}). You can close this tab."))

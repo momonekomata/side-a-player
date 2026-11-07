@@ -15,7 +15,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class LibSegment(val label: String) { ARTISTS("Artists"), ALBUMS("Albums"), TRACKS("Tracks"), GENRES("Genres"), SOURCES("Sources") }
+/** The Library's views. Where the music comes from is in Settings → Music sources. */
+enum class LibSegment(val label: String) { ARTISTS("Artists"), ALBUMS("Albums"), TRACKS("Tracks"), GENRES("Genres") }
 
 /** Where you've gone into the Library from a tab: an artist, an album, a genre or a source. */
 sealed interface LibDrill {
@@ -78,10 +79,6 @@ class LibraryModel(private val scope: CoroutineScope) {
                 LibSegment.ALBUMS -> LibView(albums = db.albums(f))
                 LibSegment.TRACKS -> LibView(tracks = db.tracks(f))
                 LibSegment.GENRES -> LibView(genres = db.genres(f))
-                LibSegment.SOURCES -> {
-                    val counts = db.sourceCounts(f)
-                    LibView(sources = sources.map { it to (counts[it.id] ?: 0) })
-                }
             }
         }
     }
@@ -94,7 +91,11 @@ class LibraryModel(private val scope: CoroutineScope) {
 
     fun segment(s: LibSegment) = set { it.copy(segment = s, stack = emptyList()) }
     fun search(text: String) = set { it.copy(filter = it.filter.copy(query = text)) }
-    fun filter(f: LibFilter) = set { it.copy(filter = f.copy(query = it.filter.query)) }
+    /** A Focus newly on favourites or a playlist shows its songs, in the list's order. */
+    fun filter(f: LibFilter) = set {
+        val toList = f.list != null && f.list != it.filter.list
+        it.copy(filter = f.copy(query = it.filter.query), segment = if (toList) LibSegment.TRACKS else it.segment, stack = if (toList) emptyList() else it.stack)
+    }
     fun open(d: LibDrill) = set { it.copy(stack = it.stack + d) }
 
     /** False at the top, so Back can leave the card. */

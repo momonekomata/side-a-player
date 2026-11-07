@@ -94,9 +94,12 @@ object Player {
     private class Slot(val tracks: List<Track>, val index: Int)
 
     private val callbacks = object : EngineCallbacks {
-        override fun upNext(): UpNext? {
+        override fun upNext(after: Any?): UpNext? {
             val q = _queue.value
-            val i = q.nextIndex(auto = true) ?: return null
+            // Right after a hand-over the queue still points at the song before it: count from
+            // the song being decoded, or a short song would be handed over to itself again.
+            val from = (after as? Slot)?.takeIf { it.tracks === q.tracks }?.let { q.copy(index = it.index) } ?: q
+            val i = from.nextIndex(auto = true) ?: return null
             val t = q.tracks.getOrNull(i) ?: return null
             return UpNext(Slot(q.tracks, i)) { runBlocking(Dispatchers.IO) { t.opener(appContext) } }
         }
@@ -376,8 +379,13 @@ object Player {
     fun skipBy(deltaMs: Long) {
         val s = engine.state.value
         if (_queue.value.current == null) return
-        val to = (s.positionMs + deltaMs).coerceIn(0, if (s.durationMs > 0) s.durationMs - 500 else Long.MAX_VALUE)
-        if (parkedAtMs != null) parkedAtMs = to else seekTo(to)
+        // Parked (paused with the DAC handed back, or brought back from last time), the engine
+        // knows nothing: the spot and length are the parked ones.
+        val parked = _parked.value
+        val at = parked?.positionMs ?: s.positionMs
+        val length = parked?.durationMs?.takeIf { it > 0 } ?: s.durationMs
+        val to = (at + deltaMs).coerceIn(0, if (length > 0) (length - 500).coerceAtLeast(0) else Long.MAX_VALUE)
+        if (parked != null) parkedAtMs = to else seekTo(to)
     }
 
     // ---- remembering the queue between runs ----
@@ -407,6 +415,9 @@ object Player {
             .put("position", pos)
             .put("duration", dur)
             .put("repeat", q.repeat.name)
+            .put("shuffle", q.shuffle)
+            // Shuffled, the order to go back to when shuffle is turned off: places in [songs].
+            .put("original", org.json.JSONArray(if (q.shuffle) q.original.map { o -> kept.indexOfFirst { it === o } }.filter { it >= 0 } else emptyList()))
             .put("songs", with(io.github.momonekomata.sidea.sources.FavoritesJson) { songs.json() })
         saved.edit().putString("queue", json.toString()).apply()
     }
@@ -421,18 +432,32 @@ object Player {
         val songs = with(io.github.momonekomata.sidea.sources.FavoritesJson) { o.optJSONArray("songs")?.list() }.orEmpty()
         val want = o.optInt("index", 0)
         val tracks = ArrayList<Track>()
+        val bySaved = HashMap<Int, Track>()
         var index = 0
         songs.forEachIndexed { i, f ->
             val t = resolve(f) ?: return@forEachIndexed
             if (i == want) index = tracks.size
             tracks += t
+            bySaved[i] = t
         }
         if (tracks.isEmpty()) return
+        val shuffle = o.optBoolean("shuffle", false)
+        val original = o.optJSONArray("original")?.let { a -> (0 until a.length()).mapNotNull { bySaved[a.optInt(it, -1)] } }
+            // Songs missing from the saved order (it's only kept while shuffled) go at its end.
+            ?.let { order -> order + tracks.filter { t -> order.none { it === t } } }
+            ?.takeIf { shuffle && it.size == tracks.size } ?: tracks
         main.post {
             if (_queue.value.current != null) return@post
             restored = true
-            _queue.value = QueueState(tracks, index.coerceIn(0, tracks.size - 1), repeat = runCatching { RepeatMode.valueOf(o.optString("repeat")) }.getOrDefault(RepeatMode.OFF))
+            _queue.value = QueueState(
+                tracks, index.coerceIn(0, tracks.size - 1), shuffle = shuffle,
+                repeat = runCatching { RepeatMode.valueOf(o.optString("repeat")) }.getOrDefault(RepeatMode.OFF),
+                original = original,
+            )
             _parked.value = Resume(o.optLong("position"), o.optLong("duration"))
+            // The media session comes up with the song, paused, so a headset's play button or
+            // the lock screen can carry on with it before the app's own Play is pressed.
+            runCatching { appContext.startForegroundService(Intent(appContext, PlaybackService::class.java)) }
         }
     }
 
@@ -486,6 +511,18 @@ object Player {
             s.error != null || s.output == null -> startCurrent()
             else -> if (requestFocus()) engine.resume()
         }
+    }
+
+    /** Play, as a headset or the lock screen means it: carries on if paused, nothing if playing. */
+    fun play() {
+        val s = engine.state.value
+        if (_queue.value.current == null || s.isPlaying || s.isBuffering) return
+        togglePlay()
+    }
+
+    /** Pause, as a headset or the lock screen means it: nothing if already paused. */
+    fun pause() {
+        if (engine.state.value.isPlaying) togglePlay()
     }
 
     fun next(auto: Boolean = false) {

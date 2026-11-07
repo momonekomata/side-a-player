@@ -78,7 +78,9 @@ fun EqScreen(config: EqConfig, onChange: (EqConfig) -> Unit, onDismiss: () -> Un
                 IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "Close", tint = Retro.Muted) }
             }
             Text(
-                if (config.isActive) "On · playback shows ENHANCED; DSD plays as PCM while it's on"
+                // The badge is the weakest stage: through Android's mixer it stays HIGH QUALITY,
+                // EQ or not. Only a bit-perfect path with the EQ in it reads ENHANCED.
+                if (config.isActive) "On · a bit-perfect path shows ENHANCED; DSD plays as PCM while it's on"
                 else "Off or flat · the bit-perfect path is untouched",
                 color = if (config.isActive) Color(0xFF6FB8FF) else Retro.Muted,
                 fontFamily = Retro.Mono,
@@ -230,7 +232,7 @@ private fun AutoEqPasteDialog(onImport: (EqConfig) -> Unit, onDismiss: () -> Uni
     )
 }
 
-private fun signed(db: Double) = (if (db > 0.05) "+" else "") + "%.1f".format(db)
+private fun signed(db: Double) = io.github.momonekomata.sidea.audio.SignalPaths.signed(db)
 
 private fun formatHz(f: Double) = if (f >= 1000) "%.2f kHz".format(f / 1000).replace(".00 ", " ") else "%.0f Hz".format(f)
 

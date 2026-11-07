@@ -31,7 +31,13 @@ class JapaneseTest {
         assertEquals("君の名前を呼んでいる", l.pieces.joinToString("") { it.text })
         assertEquals("きみ", l.pieces.first { it.text == "君" }.ruby)
         assertEquals("なまえ", l.pieces.first { it.text == "名前" }.ruby)
-        assertEquals("kimi no namae o yon de iru", l.romaji)
+        assertEquals("kimi no namae o yonde iru", l.romaji)
+    }
+
+    @Test
+    fun endingsJoinTheirWordAndPunctuationIsLatin() {
+        // う after 歩こ is the verb's ending, and 、 a comma.
+        assertEquals("arukou, aoi sora", Japanese.annotate("歩こう、青い空").romaji)
     }
 
     @Test
@@ -39,7 +45,7 @@ class JapaneseTest {
         val l = Japanese.annotate("今日は Rock だ")
         assertEquals("今日は Rock だ", l.pieces.joinToString("") { it.text })
         assertTrue(l.romaji, l.romaji.startsWith("kyou wa"))
-        assertTrue(l.romaji, "Rock" in l.romaji)
+        assertTrue(l.romaji, l.romaji.endsWith("Rock da"))
     }
 
     @Test

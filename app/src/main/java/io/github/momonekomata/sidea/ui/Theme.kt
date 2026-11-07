@@ -12,26 +12,32 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 
 /**
- * The classic portable cassette player: an anodised blue body, a brushed-aluminium faceplate,
- * silver piano keys with printed labels, an orange button, and the cream paper insert of the tape.
+ * The first Walkman's colours: a metallic blue body, a brushed-aluminium faceplate and silver
+ * keys with navy printing, and the orange hotline button. The Library is a panel of that
+ * aluminium, printed in navy, rather than a paper tape insert.
  */
 object Retro {
-    /** The body. */
-    val Background = Color(0xFF1B2D52)
+    /** The body: metallic Walkman blue. */
+    val Background = Color(0xFF24446F)
     /** Dialogs and the EQ: the body's darker underside. */
-    val Panel = Color(0xFF14213D)
-    val Shell = Color(0xFF223763)
-    val ShellEdge = Color(0xFF3A5285)
-    val Cream = Color(0xFFF1E6D2)
-    val CreamShade = Color(0xFFE2D4BC)
-    val Ink = Color(0xFF3B2F27)
-    val InkFaint = Color(0xFF8A7A6B)
-    val Orange = Color(0xFFE8742A)
+    val Panel = Color(0xFF1A3256)
+    val Shell = Color(0xFF2D5083)
+    val ShellEdge = Color(0xFF4C6EA5)
+    /** Text printed on the blue body. */
+    val OnShell = Color(0xFFEEF2F8)
+    /** The Library's panel: light brushed aluminium, and its darker grooves. */
+    val Cream = Color(0xFFEDEFF2)
+    val CreamShade = Color(0xFFD6DBE1)
+    /** Navy printing on the aluminium. */
+    val Ink = Color(0xFF16233A)
+    val InkFaint = Color(0xFF5A6679)
+    /** The hotline button. */
+    val Orange = Color(0xFFEC6F1E)
     val Tape = Color(0xFF4A3426)
     val Led = Color(0xFF7CF08A)
     val Amber = Color(0xFFFFB547)
     /** Secondary text and icons on the blue body. */
-    val Muted = Color(0xFFA3B5D6)
+    val Muted = Color(0xFFB2C3DE)
 
     /** The faceplate: brushed aluminium, and what's printed on it. */
     val MetalLight = Color(0xFFDDE1E6)
@@ -43,10 +49,17 @@ object Retro {
     /** The little dark window the quality light sits in. */
     val Lcd = Color(0xFF10151C)
 
-    /** Typewriter for the deck's printed text; cursive stands in for the handwritten J-card. */
+    /** Typewriter for the deck's printed text. */
     val Mono = FontFamily.Monospace
-    val Hand = FontFamily.Cursive
+    /**
+     * The lettering on a Walkman's lid: a heavy, slanted sans (set Black and Italic). The
+     * Library's header and the WALKDECK name use it.
+     */
+    val Logo = FontFamily.SansSerif
 }
+
+/** "1 song", "2 songs". */
+fun plural(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"
 
 /** Brushed aluminium: a soft top-to-bottom sheen with fine horizontal grain. */
 fun Modifier.brushedMetal(): Modifier = this
@@ -79,7 +92,7 @@ fun SideATheme(content: @Composable () -> Unit) {
             background = Retro.Background,
             surface = Retro.Panel,
             surfaceContainerHigh = Retro.Panel,
-            onSurface = Color(0xFFEDF1F7),
+            onSurface = Retro.OnShell,
             onSurfaceVariant = Retro.Muted,
         ),
         content = content,

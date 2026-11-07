@@ -1,12 +1,12 @@
 # WALKDECK
 
 A bit-perfect music player for your own files, designed for the Samsung Galaxy S26 Ultra and
-dressed like the classic blue-and-silver portable cassette player: an anodised blue body, a
-brushed-aluminium faceplate, silver piano keys with REW / PLAY / FF printed on them (PLAY turns
-orange while the tape runs, and the keys sink when pressed), the quality light in a small dark
-window, and the cream paper insert of the tape for the track lists. Full-width cover art (tap it
-for lyrics), and WALKDECK's own USB driver for DACs, since Samsung's Android has no bit-perfect USB
-mode.
+dressed like the first Walkman: a metallic blue body, a brushed-aluminium faceplate, silver piano
+keys with REW / PLAY / FF printed on them (PLAY turns orange while the tape runs, and the keys sink
+when pressed), the orange hotline colour, the quality light in a small dark window, and the
+Library printed in navy on an aluminium panel, its name in heavy slanted capitals like the lid's
+lettering. Full-width cover art (tap it for lyrics), a cassette whose reels turn while it plays,
+and WALKDECK's own USB driver for DACs, since Samsung's Android has no bit-perfect USB mode.
 
 This is the `s26` branch of Side A, renamed WALKDECK. It plays only music you own, on the phone, a NAS or a cloud
 drive; the streaming-app remote control on `main` is gone. It installs as its own app
@@ -22,8 +22,9 @@ replacing it.
 | **WebDAV** | http/https, Basic auth (Synology, QNAP, Nextcloud) | Same |
 | **Google Drive**, **OneDrive**, **Dropbox** | Their official APIs, signed in through the browser | Same |
 
-Every source gets the same treatment: tags, covers, `.lrc` lyrics (read and saved), search, favourites
-and playlists, and bit-perfect output.
+Sources are set up in **Settings → Music sources** and their folders added to the **Library**,
+which is where all music is browsed and played. Every source gets the same treatment: tags, covers,
+`.lrc` lyrics (read and saved), search, favourites and playlists, and bit-perfect output.
 
 ## Bit-perfect output
 
@@ -102,16 +103,22 @@ no decoder for a file, the error says which format it is.
 
 ## Library
 
-Instead of browsing folders, point WALKDECK at them: open a folder in **Local** or **Remote**
-(any NAS or cloud) and tap **Add this folder to the Library**, or add a folder on the phone from
-the Library's Sources tab. Add as many as you like; everything inside them is scanned in, with each
+The Library is the app's one screen for music. Point it at your folders in **Settings → Music
+sources**: **Add a folder on the phone** (Android's folder picker; SD cards and USB drives too), or
+add a NAS or cloud server there, tap it, go into the folder you want and tap **Add this folder to the
+Library**. Tap a Library folder in that list to remove it. (A folder that was open in the old Local
+tab joins the Library by itself on the first start of this version.) Add as many as you like;
+everything inside them is scanned in (hidden folders such as `.thumbnails` are skipped), with each
 song's tags (title, artist, album artist, album, genre, year, track and disc) and what's inside the
 file (format, sample rate, bit depth, channels, length) read from the file itself, a few kilobytes
 each, so it's cheap over a NAS too. It all lives in a database on the phone.
 
-* **Artists** (by album artist), **Albums** (with covers, year and best format), **Tracks**,
-  **Genres** and **Sources** tabs; tap through artist → albums → songs, genre → albums. Play or
+* **Artists** (by album artist), **Albums** (with covers, year and the format of the album's best
+  file), **Tracks** and **Genres**; tap through artist → albums → songs, genre → albums. Play or
   Shuffle a whole album, artist or genre.
+* **Your lists** at the top of Focus: **♥ Favourites** and each **playlist** (and + New playlist).
+  Focusing on one shows its songs in its own order (newest favourite first); the line above them
+  leaves the list, or deletes a playlist. Long-press a song there to take it out of the playlist.
 * **Search** across titles, artists, albums, genres, file and folder names and formats at once;
   every word must match.
 * **Albums** as a grid of covers or a list (the ▦ / ☰ button).
@@ -120,9 +127,9 @@ each, so it's cheap over a NAS too. It all lives in a database on the phone.
   added in the last day…year, compilations, storage locations, the inspector (no genre, no year,
   no artist, untagged, duplicates, albums in several formats), format, sample rate, bit depth and
   channel layout, plus lossless only. Every section shows its top six, with View more. Focus and
-  search apply to every tab.
+  search apply to every view.
 * Rescans only read songs that are new or changed size, and drop songs that are gone. Each source
-  is rescanned on start when it's half a day old, or with Rescan in the Sources tab. FTPS songs get
+  is rescanned on start when it's half a day old, or with Rescan in Music sources. FTPS songs get
   their tags once they've been played (FTPS can't read just part of a file).
 * Long-press a song for Play Next / Play Last, favourites and playlists, as everywhere.
 
@@ -130,21 +137,20 @@ each, so it's cheap over a NAS too. It all lives in a database on the phone.
 
 Shuffle and repeat (all / one) beside the transport keys; hold ⏮/⏭ to rewind or fast-forward.
 Swipe the transport keys left for −10 / −5 / +5 / +10 s (on a phone held sideways, shuffle and
-repeat are there too). ♡ beside the title adds a song to **Favourites** (the ♥ tab), which works for
-local and NAS songs. **Search** (top of a folder card) covers the folder you're in and everything
-under it, so open it in your music folder rather than at the top of the share. The first search
-reads those folders once; the index (with each song's title, artist and album) is kept on the phone,
-so later searches there, or in any folder inside it, start at once. **Rescan** picks up new files. Going back up a folder
-returns to where you were scrolled. Long lists (20 entries or more) get an A–Z index down the right
+repeat are there too). ♡ beside the title adds a song to **Favourites** (Focus → ♥ Favourites).
+Long lists (20 entries or more) get an A–Z index down the right
 edge: touch or slide along it to jump to a letter; digits file under #, and Thai, kana, kanji and
 hangul get a mark each after Z.
 
-**Most played**: the Favourites tab's other side lists the 50 songs played most, from anywhere
-(the Library, a folder, a playlist). A play counts when a song starts.
+**Most played**: Focus → Most played narrows the Library to the songs played most, from anywhere.
+A play counts when a song starts.
 
-**Long-press a song** (in a folder, search, Favourites, a playlist, the queue or the history) for
-add to / remove from favourites, play next, add to queue and add to playlist. Playlists sit in the
-Favourites tab above the favourite songs. Swipe the deck left for the **queue**, laid out like Apple Music's: Shuffle, Repeat and Clear stay
+Under the deck, **DECK · TAPE · QUEUE** (swipe, or tap the names): **TAPE** is a cassette with the
+song's name and artist on its label; its reels turn while it plays and the tape winds from the left
+reel onto the right as the song goes on, with REW / PLAY / FF under it.
+
+**Long-press a song** (in the Library, a playlist, the queue or the history) for
+add to / remove from favourites, play next, add to queue and add to playlist. The **queue**, laid out like Apple Music's: Shuffle, Repeat and Clear stay
 at the top; what played is above (scroll up for more), then the song playing with its cover, then
 **Playing Next**. Drag a song by its ≡ handle to move it, swipe it left to remove it, tap it to
 jump there, or long-press it for the song menu (Play Next, Play Last, Remove from Queue,
@@ -152,9 +158,9 @@ favourites, playlists). Long-press any song elsewhere for **Play Next** (right a
 **Play Last** (end of the queue).
 
 The queue, the song and where it had got to are kept on the phone: after the app is closed (or a
-DAC is pulled out), the deck shows the last song paused at that spot, and Play carries on. Local
-and NAS folders reopen where you left them, the NAS server included, and the search bar stays
-pinned at the top of every folder card.
+DAC is pulled out), the deck shows the last song paused at that spot, with shuffle as it was, and
+Play (in the app, on the lock screen or a headset) carries on; ±5/±10 s skip from that spot too.
+Play and pause from a headset, car or the lock screen do exactly that: Play never pauses.
 
 ## NAS playback
 
@@ -192,13 +198,13 @@ Unplugging headphones or the DAC pauses instead of switching to the speaker.
 
 ## Phone layout
 
-On the phone, the sources are cards: swipe between them or tap the tab row (Local, Remote and
-Favourites; a green dot marks what's playing). What's playing sits in a mini player at the bottom,
-showing cover, title, quality, play/pause and next. Tap it or swipe up for the full deck (cover and
-lyrics); swipe down or press Back to put it away. Unfolded (≥600 dp wide), it's the
-two-page case layout. Turned sideways, WALKDECK goes full screen: the system bars hide (swipe
-from an edge to peek), the title bar goes, and EQ and Settings move to the end of the tab row. On a
-phone's short landscape screen it's three columns: cards, a compact deck, and lyrics.
+On the phone, the Library fills the screen under a slim title line (EQ and Settings at its end).
+What's playing sits in a mini player at the bottom, showing cover, title, quality, play/pause and
+next. Tap it or swipe up for the full deck (cover and lyrics, the tape, the queue); swipe down or
+press Back to put it away. Unfolded (≥600 dp wide), it's two pages: the Library and the deck.
+Turned sideways, WALKDECK goes full screen: the system bars hide (swipe from an edge to peek), the
+title line goes, and it's two panels, the Library and the deck (cover beside the song, badge and
+keys), with EQ and Settings at the far edge.
 
 ## Signal path and quality badge
 
@@ -235,7 +241,7 @@ sung is lit and kept in view), and tap again for the cover. The choice sticks fr
 ## Artwork
 
 Covers come from the file (FLAC pictures, ID3 APIC, MP4 `covr`, DSF's ID3), else from the folder
-(`cover.jpg`, `folder.jpg`, `front.jpg`, `AlbumArt*.jpg`, or a lone image). The cover fills the deck, and shows in the J-card header, the mini player, on the lock screen
+(`cover.jpg`, `folder.jpg`, `front.jpg`, `AlbumArt*.jpg`, or a lone image). The cover fills the deck, and shows in the mini player, the queue, on the lock screen
 and in the notification.
 
 ## Gapless playback
@@ -298,14 +304,16 @@ Lyrics found online are saved as a `.lrc` with the song's name in the song's fol
 or the NAS, over WebDAV or FTPS), timed when the lyrics are, so step 2 finds them next time and
 other players can use them too. WALKDECK never writes into the audio files themselves: rewriting a
 multi-hundred-megabyte file over the network to add a few kilobytes risks the file for little gain,
-and DSD and WAV have no common lyrics tag anyway. When the file or its `.lrc` only has plain lyrics,
-WALKDECK still looks online for timed ones, and if it finds them they replace the plain `.lrc` (plain
-lyrics never replace anything). Settings → "Save found lyrics beside the songs" turns it off. For the local folder this needs write access,
-which the folder picker grants; a folder chosen with an older version may need choosing again.
+and DSD and WAV have no common lyrics tag anyway. A `.lrc` that's already there is never
+overwritten (it may be one you wrote): when it only has plain lyrics, WALKDECK may show timed ones
+found online, but leaves the file alone. Settings → "Save found lyrics beside the songs" turns it
+off. For a folder on the phone this needs write access, which the folder picker grants; a folder
+added with an older version may need adding again in Music sources.
 
 ## NAS and cloud storage
 
-Add servers and cloud accounts in the Remote tab (+). Passwords and sign-in tokens are kept with
+Add servers and cloud accounts in Settings → Music sources (+ Add a NAS or cloud storage), then tap
+one to choose which of its folders go in the Library. Passwords and sign-in tokens are kept with
 EncryptedSharedPreferences (Android Keystore).
 
 * **SMB**: host (or IP), and the share as the folder, e.g. `Music` or `Media/Music` (SMB can't list
@@ -340,7 +348,7 @@ page; the cloud then sends the browser back to a small web server WALKDECK runs 
    or sign-ins expire after 7 days while it's in testing (Google will warn that the app isn't
    verified; that's expected for an app only you use).
 3. Credentials → Create credentials → OAuth client ID → **Desktop app**. Copy the client ID and
-   client secret into WALKDECK (Remote → + → Google Drive) and tap **Save & sign in**.
+   client secret into WALKDECK (Settings → Music sources → + → Google Drive) and tap **Save & sign in**.
 
 **OneDrive** (personal, work or school)
 1. [portal.azure.com](https://portal.azure.com) → App registrations → New registration. Account
