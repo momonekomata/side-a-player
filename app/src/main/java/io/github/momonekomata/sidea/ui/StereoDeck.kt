@@ -107,9 +107,13 @@ fun StereoFullScreen(model: DeckModel, closeLabel: String, onClose: () -> Unit) 
                         if (model.subtitle.isNotBlank()) {
                             Text(model.subtitle, color = Retro.Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                         }
-                        Box(Modifier.padding(vertical = 10.dp).fillMaxWidth(0.6f).height(1.dp).background(Retro.Muted.copy(alpha = 0.5f)))
-                        // The sung lines always show here, whichever way the deck's lyrics key is set.
-                        LyricLines(model.copy(showLyrics = false), Modifier.weight(1f).fillMaxWidth())
+                        Spacer(Modifier.height(12.dp))
+                        // The whole lyrics, scrolling with the song (the line being sung lit; tap a
+                        // line to go to it), whichever way the deck's lyrics key is set.
+                        LyricsSquare(
+                            model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek,
+                            Modifier.weight(1f).fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(8.dp)),
+                        )
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { SmallLabelKey(closeLabel, closeLabel, onClose) }
                     }
                 }
