@@ -125,6 +125,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBarsPadding
 
 @Composable
 fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
@@ -189,12 +192,18 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     var tapeFull by rememberSaveable(landscape) { mutableStateOf(landscape) }
     BackHandler(enabled = tapeFull) { tapeFull = false }
     ImmersiveMode(landscape || tapeFull)
-    // A phone's full player covers the whole screen, header and all, from edge to edge.
+    // A phone's full player opens under the header; with the lyrics up it covers the whole
+    // screen, header and all.
     var expanded by rememberSaveable { mutableStateOf(false) }
     val phone = LocalConfiguration.current.screenWidthDp < 600
     BackHandler(enabled = expanded && phone && !tapeFull) { expanded = false }
     if (tapeFull) {
-        TapeFullScreen(deck, closeLabel = if (landscape) "‹ LIBRARY" else "✕ CLOSE", onClose = { tapeFull = false })
+        val close = if (landscape) "‹ LIBRARY" else "✕ CLOSE"
+        if (prefs.theme == io.github.momonekomata.sidea.AppTheme.STEREO) {
+            StereoFullScreen(deck, closeLabel = close, onClose = { tapeFull = false })
+        } else {
+            TapeFullScreen(deck, closeLabel = close, onClose = { tapeFull = false })
+        }
     } else Box(Modifier.fillMaxSize()) {
         Column(
             Modifier
@@ -215,8 +224,12 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
             }
         }
         if (phone) {
+            // Under the header; with the lyrics up it rises to the top of the screen over it.
+            val headerBottom = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 44.dp
+            val top by androidx.compose.animation.core.animateDpAsState(if (deck.showLyrics) 0.dp else headerBottom, label = "deck-top")
             AnimatedVisibility(
                 visible = expanded,
+                modifier = Modifier.padding(top = top),
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
             ) {
@@ -543,7 +556,13 @@ private fun NowPlayingPager(
 ) {
     val pages = if (queuePage != null) 3 else 2
     val pager = rememberPagerState(initialPage = 1) { pages }
-    val safe = if (edgeToEdge) Modifier.safeDrawingPadding().padding(top = 8.dp, bottom = 8.dp) else Modifier
+    // Under the header the top is already clear of the status bar; with the lyrics up (the deck
+    // risen to the screen's top) it isn't.
+    val safe = when {
+        !edgeToEdge -> Modifier
+        deck.showLyrics -> Modifier.safeDrawingPadding().padding(top = 8.dp, bottom = 8.dp)
+        else -> Modifier.navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp)
+    }
     HorizontalPager(pager, modifier, pageSpacing = if (edgeToEdge) 0.dp else 12.dp) { page ->
         when {
             page == 0 -> TapeDeck(deck, Modifier.fillMaxSize().then(safe).padding(horizontal = if (edgeToEdge) 8.dp else 0.dp), compact = compact, onFullScreen = onTapeFullScreen)

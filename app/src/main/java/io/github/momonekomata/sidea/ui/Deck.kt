@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -186,7 +187,10 @@ private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, on
     BoxWithConstraints(modifier.fillMaxSize().brushedMetal(model.tint)) {
         val keysH = 104.dp + bottomInset
         // As tall as the room allows, up to a touch taller than wide (barely cropping the cover).
-        val artH = minOf(maxWidth * 1.06f, maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
+        // The lyrics take all the room down to the song, starting under the status bar.
+        val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+        val artH = if (model.showLyrics) (maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
+        else minOf(maxWidth * 1.06f, maxHeight - keysH - 190.dp).coerceAtLeast(140.dp)
         Column(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -197,18 +201,22 @@ private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, on
                     .drawWithContent {
                         drawContent()
                         drawRect(
-                            Brush.verticalGradient(0f to Color.Black, 0.62f to Color.Black, 1f to Color.Transparent),
+                            Brush.verticalGradient(0f to Color.Black, (if (model.showLyrics) 0.86f else 0.62f) to Color.Black, 1f to Color.Transparent),
                             blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
                         )
                     },
             ) {
-                ArtSquare(model, Modifier.fillMaxSize(), shape = RectangleShape, hintAlign = Alignment.CenterEnd)
-                // The status bar's icons over the cover: a little shade behind them.
-                Box(Modifier.fillMaxWidth().height(72.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent))))
+                ArtSquare(model, Modifier.fillMaxSize().padding(top = if (model.showLyrics) statusTop else 0.dp), shape = RectangleShape, hintAlign = Alignment.CenterEnd)
+                // With the lyrics up the deck reaches the top of the screen: a little shade behind
+                // the status bar's icons.
+                if (model.showLyrics) {
+                    Box(Modifier.fillMaxWidth().height(72.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent))))
+                }
             }
+            // The song and its format sit down by the seek bar and the keys.
             Column(
-                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp).padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
             ) {
                 SongInfo(model, ink, compact = false, onPath)
             }

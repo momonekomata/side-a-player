@@ -87,34 +87,56 @@ fun StereoDeck(model: DeckModel, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * The Stereo theme's full screen (a phone turned on its side opens on it): the player standing
+ * at the screen's full height, and beside it the song and the line being sung. Upright, just the
+ * player. A key closes it.
+ */
+@Composable
+fun StereoFullScreen(model: DeckModel, closeLabel: String, onClose: () -> Unit) {
+    Box(Modifier.fillMaxSize().anodizedBlue()) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(12.dp)) {
+            if (maxWidth > maxHeight) {
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                    StereoBody(model, Modifier.fillMaxHeight().aspectRatio(0.66f))
+                    Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 12.dp)) {
+                        Text(
+                            model.title.ifBlank { "Nothing playing" }, color = Retro.OnShell, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
+                        if (model.subtitle.isNotBlank()) {
+                            Text(model.subtitle, color = Retro.Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                        }
+                        Box(Modifier.padding(vertical = 10.dp).fillMaxWidth(0.6f).height(1.dp).background(Retro.Muted.copy(alpha = 0.5f)))
+                        // The sung lines always show here, whichever way the deck's lyrics key is set.
+                        LyricLines(model.copy(showLyrics = false), Modifier.weight(1f).fillMaxWidth())
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { SmallLabelKey(closeLabel, closeLabel, onClose) }
+                    }
+                }
+            } else {
+                StereoBody(model, Modifier.fillMaxSize().padding(bottom = 44.dp))
+                Box(Modifier.align(Alignment.BottomEnd)) { SmallLabelKey(closeLabel, closeLabel, onClose) }
+            }
+        }
+    }
+}
+
 @Composable
 private fun StereoBody(model: DeckModel, modifier: Modifier) {
     BoxWithConstraints(modifier) {
         val w = maxWidth
         val h = maxHeight
         val stripW = w * 0.17f
-        val top = 20.dp
-        // The orange button, standing on the top edge.
-        KeyBox(
-            Modifier.offset(x = w * 0.2f).width(w * 0.17f).height(top + 6.dp),
-            orange = true, latched = model.playing, onClick = model.onToggle,
-        ) { _ ->
-            Icon(
-                if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White,
-                modifier = Modifier.padding(bottom = 6.dp).size(16.dp),
-            )
-        }
         val shape = RoundedCornerShape(10.dp)
         Row(
             Modifier
                 .fillMaxSize()
-                .padding(top = top)
                 .shadow(8.dp, shape)
                 .clip(shape),
         ) {
             // The body's left side, turning away into shadow.
             Box(Modifier.width(7.dp).fillMaxHeight().background(Brush.horizontalGradient(listOf(Color(0xFF0E1D45), Color(0xFF1B3672), Color(0xFF2A55A4)))))
-            BluePanel(model, Modifier.weight(1f).fillMaxHeight(), w - stripW - 7.dp, h - top)
+            BluePanel(model, Modifier.weight(1f).fillMaxHeight(), w - stripW - 7.dp, h)
             SilverSide(model, Modifier.width(stripW).fillMaxHeight(), stripW)
         }
     }
@@ -322,10 +344,18 @@ private fun SilverSide(model: DeckModel, modifier: Modifier, w: Dp) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceEvenly,
     ) {
+        model.shuffle?.let { on -> SideKey(Icons.Filled.Shuffle, "Shuffle", k, led = on, onClick = model.onShuffle) }
         SideKey(Icons.Filled.SkipPrevious, "Previous", k, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
         SideKey(Icons.Filled.FastRewind, "Back 10 seconds", k) { model.onSkip(-10_000) }
+        // PLAY, in the row with the others at the middle: the orange key, held down while playing.
+        SquareKey(k * 1.12f, orange = true, latched = model.playing, onClick = model.onToggle) { _ ->
+            Icon(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White, modifier = Modifier.size(k * 0.55f))
+        }
         SideKey(Icons.Filled.FastForward, "Forward 10 seconds", k) { model.onSkip(10_000) }
         SideKey(Icons.Filled.SkipNext, "Next", k, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
+        model.repeat?.let { r ->
+            SideKey(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", k, led = r != RepeatMode.OFF, onClick = model.onRepeat)
+        }
         // The small round button on the side: the heart.
         model.favorite?.let { fav ->
             Box(
@@ -340,10 +370,6 @@ private fun SilverSide(model: DeckModel, modifier: Modifier, w: Dp) {
             ) {
                 Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favourite", tint = if (fav) Retro.Orange else Retro.OnMetalMuted, modifier = Modifier.size(k * 0.36f))
             }
-        }
-        model.shuffle?.let { on -> SideKey(Icons.Filled.Shuffle, "Shuffle", k, led = on, onClick = model.onShuffle) }
-        model.repeat?.let { r ->
-            SideKey(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", k, led = r != RepeatMode.OFF, onClick = model.onRepeat)
         }
     }
 }

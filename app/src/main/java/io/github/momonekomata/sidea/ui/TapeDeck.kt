@@ -157,7 +157,7 @@ fun TapeDeck(model: DeckModel, modifier: Modifier = Modifier, compact: Boolean =
  * and the next one fainter under it. Nothing when the lyrics aren't timed or are open on the tape.
  */
 @Composable
-private fun LyricLines(model: DeckModel, modifier: Modifier) {
+internal fun LyricLines(model: DeckModel, modifier: Modifier) {
     val l = model.lyrics.lyrics
     val at = l?.lineAt(model.positionMs) ?: -1
     Box(modifier.padding(horizontal = 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
@@ -285,7 +285,7 @@ private fun GlassPane(modifier: Modifier) {
 
 /** A small grey key with a word on it. */
 @Composable
-private fun SmallLabelKey(text: String, label: String, onClick: () -> Unit) {
+internal fun SmallLabelKey(text: String, label: String, onClick: () -> Unit) {
     Text(
         text, color = Retro.OnMetal, fontFamily = Retro.Mono, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
         modifier = Modifier
