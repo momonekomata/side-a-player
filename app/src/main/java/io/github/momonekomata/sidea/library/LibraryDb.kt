@@ -335,8 +335,12 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
 
     private val trackCols = "id, source, folder, folderName, file, size, title, artist, albumArtist, album, genre, year, track, disc, duration, codec, rate, bits, channels, composer, label, compilation"
 
-    /** Songs matching [f], in title order, or album order when [album] is given. */
-    fun tracks(f: LibFilter, artist: String? = null, album: String? = null, genre: String? = null, source: String? = null, limit: Int = 20_000): List<LibTrack> {
+    /**
+     * Songs matching [f], in title order, or album order when [album] is given. All of them by
+     * default: a cap cut the Tracks tab off part-way (by raw text order, so the Thai, Japanese and
+     * Korean titles were the ones missing).
+     */
+    fun tracks(f: LibFilter, artist: String? = null, album: String? = null, genre: String? = null, source: String? = null, limit: Int = Int.MAX_VALUE): List<LibTrack> {
         val extra = buildList {
             artist?.let { add("albumBy = ? COLLATE NOCASE" to it) }
             album?.let { add("(albumBy || char(1) || album) = ? COLLATE NOCASE" to it) }
@@ -356,6 +360,16 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
             buildList { while (c.moveToNext()) add(c.track()) }
         }
     }
+
+    /** The folders of [source] that have songs. */
+    fun folders(source: String): List<String> = readableDatabase.rawQuery("SELECT DISTINCT folder FROM tracks WHERE source = ?", arrayOf(source)).use { c ->
+        buildList { while (c.moveToNext()) c.getString(0)?.let(::add) }
+    }
+
+    /** The songs of one folder, in album order. */
+    fun folderTracks(source: String, folder: String): List<LibTrack> = readableDatabase.rawQuery(
+        "SELECT $trackCols FROM tracks WHERE source = ? AND folder = ? ORDER BY disc, track, file COLLATE NOCASE", arrayOf(source, folder),
+    ).use { c -> buildList { while (c.moveToNext()) add(c.track()) } }
 
     /** One song by its id, if it's in the Library. */
     fun track(id: String): LibTrack? = readableDatabase.rawQuery("SELECT $trackCols FROM tracks WHERE id = ?", arrayOf(id)).use { c ->

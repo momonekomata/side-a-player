@@ -171,6 +171,14 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
             else -> letterIndex(labels, above)
         }
     }
+    // ก, あ, 한 … open up to their own letters on the index.
+    val subLetters = remember(labels, above, gridded) {
+        when {
+            labels.size < 20 -> emptyMap()
+            gridded -> subLetterIndex(labels, 0).mapValues { (_, l) -> l.map { (c, i) -> c to above + i / 3 } }
+            else -> subLetterIndex(labels, above)
+        }
+    }
 
     // Swipe sideways to change tab: Artists · Albums · Tracks · Genres · ♥ (· the open playlist).
     // The card follows the finger a little; a long enough swipe moves one tab and it springs back.
@@ -210,7 +218,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
         }
 
     // Where a pager owns the sideways swipe (landscape), the tabs are taps only.
-    JCard(top?.title ?: "Library", subtitle, modifier.then(if (swipeTabs) swiping else Modifier).nestedScroll(hideSearch), listState = list, letters = letters, pinned = {
+    JCard(top?.title ?: "Library", subtitle, modifier.then(if (swipeTabs) swiping else Modifier).nestedScroll(hideSearch), listState = list, letters = letters, subLetters = subLetters, pinned = {
         Column {
           androidx.compose.animation.AnimatedVisibility(
               showSearch,

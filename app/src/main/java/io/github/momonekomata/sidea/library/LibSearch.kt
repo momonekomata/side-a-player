@@ -104,7 +104,7 @@ object Relevance {
 internal fun LibraryDb.searchAll(f: LibFilter, current: LibSegment, othersEach: Int = 25): LibSearchResult {
     val q = f.query
     // The open tab is shown whole; a big Tracks result from another tab only needs its best.
-    val trackLimit = if (current == LibSegment.TRACKS) 20_000 else 5_000
+    val trackLimit = if (current == LibSegment.TRACKS) Int.MAX_VALUE else 5_000
     val bySegment = mapOf(
         LibSegment.ARTISTS to artists(f).map { LibHit(LibSegment.ARTISTS, Relevance.score(q, it.name), artist = it) },
         LibSegment.ALBUMS to albums(f).map { LibHit(LibSegment.ALBUMS, Relevance.score(q, it.title, listOf(it.by)), album = it) },

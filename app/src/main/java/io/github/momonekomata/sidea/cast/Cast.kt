@@ -377,16 +377,31 @@ object Cast {
      */
     fun load(track: Track, startMs: Long, paused: Boolean, next: Track?) {
         val d = _target.value ?: return
-        // A song chosen while reconnecting: that's what to play now.
-        reconnectJob?.cancel()
-        this.paused = paused
-        nextTrack = next
-        quietUntil = System.currentTimeMillis() + 8000
-        wasPlaying = false
-        _state.value = EngineState(isBuffering = true, positionMs = startMs, durationMs = _state.value.durationMs.takeIf { currentUri != null } ?: 0)
         io.launch {
+            // A song the device can't play (ALAC on a Chromecast) is turned down before anything
+            // changes: the song it plays goes on, and the deck keeps showing that one.
+            val media = if (d.kind == Kind.GOOGLE_CAST) {
+                try {
+                    castMedia(d, track)
+                } catch (e: CastRefused) {
+                    val keep = playingTrack
+                    withContext(Dispatchers.Main) { onRefused(track, e.message.orEmpty(), keep) }
+                    return@launch
+                } catch (t: Throwable) {
+                    if (t is kotlinx.coroutines.CancellationException) throw t
+                    _state.update { it.copy(isBuffering = false, isPlaying = false, error = "${d.name}: ${t.message ?: t.javaClass.simpleName}") }
+                    return@launch
+                }
+            } else null
+            // A song chosen while reconnecting: that's what to play now.
+            reconnectJob?.cancel()
+            this@Cast.paused = paused
+            nextTrack = next
+            quietUntil = System.currentTimeMillis() + 8000
+            wasPlaying = false
+            _state.value = EngineState(isBuffering = true, positionMs = startMs, durationMs = _state.value.durationMs.takeIf { currentUri != null } ?: 0)
             try {
-                if (d.kind == Kind.GOOGLE_CAST) loadCast(d, track, startMs, paused, next) else loadUpnp(d, track, startMs, paused, next)
+                if (media != null) loadCast(d, track, media, startMs, paused, next) else loadUpnp(d, track, startMs, paused, next)
             } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 _state.update { it.copy(isBuffering = false, isPlaying = false, error = "${d.name}: ${t.message ?: t.javaClass.simpleName}") }
@@ -394,10 +409,30 @@ object Cast {
         }
     }
 
+    /** Shows [why] the current song isn't playing on the device. */
+    fun fail(why: String) {
+        val d = _target.value ?: return
+        _state.update { it.copy(isBuffering = false, isPlaying = false, error = "${d.name}: $why") }
+    }
+
+    /** A song this kind of device can't play; the message says why. */
+    class CastRefused(why: String) : java.io.IOException(why)
+
+    /**
+     * A song the device can't play was chosen ([why] says so). [keep] is the song the device
+     * still plays (it goes on), or null when it plays nothing. Called on the main thread.
+     */
+    var onRefused: (track: Track, why: String, keep: Track?) -> Unit = { _, _, _ -> }
+
+    /** The song the device has (playing or paused), as handed to it. */
+    @Volatile private var loadedTrack: Track? = null
+    val playingTrack: Track? get() = loadedTrack.takeIf { currentUri != null }
+
     private fun loadUpnp(d: Device, track: Track, startMs: Long, paused: Boolean, next: Track?) {
         val (uri, meta) = item(d, track)
         avt(d, "SetAVTransportURI", "CurrentURI" to uri, "CurrentURIMetaData" to meta)
         currentUri = uri
+        loadedTrack = track
         nextUri = null
         avt(d, "Play", "Speed" to "1")
         if (startMs > 1500) {
@@ -411,10 +446,11 @@ object Cast {
         queueNext(d, next)
     }
 
-    private fun loadCast(d: Device, track: Track, startMs: Long, paused: Boolean, next: Track?) {
+    private fun loadCast(d: Device, track: Track, prepared: Pair<String, JSONObject>, startMs: Long, paused: Boolean, next: Track?) {
         val s = castSession(d)
-        val (uri, media) = castMedia(d, track)
+        val (uri, media) = prepared
         currentUri = uri
+        loadedTrack = track
         nextUri = null
         castItems.clear()
         castContent = null
@@ -574,6 +610,7 @@ object Cast {
         val queued = nextUri
         if (queued != null && uri == queued) {
             currentUri = queued
+            loadedTrack = nextTrack
             nextUri = null
             withContext(Dispatchers.Main) { onAdvanced() }
         }
@@ -621,6 +658,7 @@ object Cast {
                 if (content == nextUri) {
                     // Moved on by itself to the song queued next: gapless, as it should.
                     currentUri = content
+                    loadedTrack = nextTrack
                     nextUri = null
                     bg.launch(Dispatchers.Main) { onAdvanced() }
                 } else if (currentUri != null) {
@@ -724,7 +762,7 @@ object Cast {
             "audio/mp4" -> MediaServer.codecFor(i.token)
             else -> ""
         }
-        castUnsupported(codec)?.let { throw java.io.IOException(it) }
+        castUnsupported(codec)?.let { throw CastRefused(it) }
         val meta = JSONObject()
             .put("metadataType", 3) // MusicTrackMediaMetadata
             .put("title", i.title)
@@ -742,7 +780,7 @@ object Cast {
 
     /** Why a Cast device can't play [codec], or null when it can. */
     internal fun castUnsupported(codec: String) = when (codec.uppercase()) {
-        "ALAC" -> "Cast devices can't play Apple Lossless (ALAC)"
+        "ALAC" -> "Cast devices can't play ALAC (Apple Lossless)"
         "DSD" -> "Cast devices can't play DSD"
         "AIFF" -> "Cast devices can't play AIFF"
         else -> null

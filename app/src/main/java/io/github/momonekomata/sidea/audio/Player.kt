@@ -14,6 +14,7 @@ import io.github.momonekomata.sidea.audio.usb.UsbExclusive
 import io.github.momonekomata.sidea.cast.Cast
 import kotlinx.coroutines.flow.combine
 import io.github.momonekomata.sidea.sources.Track
+import io.github.momonekomata.sidea.sources.displayTitle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -316,6 +317,18 @@ object Player {
             val q = _queue.value
             q.nextIndex(auto = true)?.let { _queue.value = q.copy(index = it) }
         }
+        Cast.onRefused = { track, why, keep -> castRefused(track, why, keep) }
+        // The queue as it stands while it agrees with what the device plays: a song the device
+        // turns down puts this back.
+        fun agreed() {
+            val q = _queue.value
+            if (Cast.active && q.current != null && q.current === Cast.playingTrack) {
+                castQueue = q
+                refusedInARow = 0
+            }
+        }
+        scope.launch { _queue.collect { agreed() } }
+        scope.launch { Cast.state.collect { agreed() } }
         scope.launch {
             combine(engine.state, Cast.state, Cast.target) { e, c, t -> if (t != null) c else e }.collect { _state.value = it }
         }
@@ -323,6 +336,61 @@ object Player {
         // renderer gets the right song queued after the one it plays.
         scope.launch { _queue.collect { if (Cast.active && Cast.loaded) Cast.setNext(upcoming()) } }
     }
+
+    /** The queue as it was the last time its current song was the one on the Cast device. */
+    private var castQueue: QueueState? = null
+    /**
+     * How the last song was reached: 0 chosen (a tap), +1 by Next or the song before ending
+     * ([stepAuto]), -1 by Previous. A song the device can't play is refused when chosen and
+     * stepped over otherwise.
+     */
+    private var lastStep = 0
+    private var stepAuto = false
+    /** Songs stepped over in a row because the device can't play them: a queue of nothing but those stops. */
+    private var refusedInARow = 0
+
+    /**
+     * The Cast device can't play [track] (ALAC on a Chromecast, say). Chosen while another song
+     * plays: that one goes on, and the queue goes back to it. Reached by Next, Previous or the
+     * song before ending: stepped over, the same way. Chosen with nothing playing: the deck says
+     * why, on that song.
+     */
+    private fun castRefused(track: Track, why: String, keep: Track?) {
+        val q = _queue.value
+        if (q.current !== track) return // moved on since
+        val tags = io.github.momonekomata.sidea.sources.TagStore.tags.value
+        val title = track.displayTitle(tags)
+        val back = castQueue?.takeIf { keep != null && it.current === keep }
+            ?: keep?.let { k -> q.tracks.indexOfFirst { it === k }.takeIf { it >= 0 }?.let { q.copy(index = it) } }
+        val before = when {
+            q.index > 0 -> q.index - 1
+            q.repeat == RepeatMode.ALL -> q.tracks.size - 1
+            else -> null
+        }
+        when {
+            lastStep == 0 && back != null -> {
+                _queue.value = back
+                toast("“$title” wasn't played: ${why.replaceFirstChar { it.lowercase() }}")
+            }
+            lastStep != 0 && refusedInARow < q.tracks.size && (lastStep > 0 || before != null) -> {
+                refusedInARow++
+                toast("Skipped “$title”: ${why.replaceFirstChar { it.lowercase() }}")
+                if (lastStep > 0) {
+                    next(auto = stepAuto)
+                } else {
+                    _queue.value = q.copy(index = before!!)
+                    startCurrent(step = -1)
+                }
+            }
+            else -> {
+                // The device mustn't go on with a song the deck no longer shows.
+                if (keep != null) Cast.stopRemote()
+                Cast.fail(why)
+            }
+        }
+    }
+
+    private fun toast(text: String) = android.widget.Toast.makeText(appContext, text, android.widget.Toast.LENGTH_LONG).show()
 
     /** The song that follows the current one on its own, when gapless is on. */
     private fun upcoming(): Track? {
@@ -360,12 +428,14 @@ object Player {
         }
     }
 
-    fun playQueue(tracks: List<Track>, index: Int) {
+    fun playQueue(tracks: List<Track>, index: Int) = startQueue(tracks, index)
+
+    private fun startQueue(tracks: List<Track>, index: Int, step: Int = 0, auto: Boolean = false) {
         val q = _queue.value
         var next = QueueState(tracks, index, shuffle = false, repeat = q.repeat, original = tracks)
         if (q.shuffle) next = shuffled(next)
         _queue.value = next
-        startCurrent()
+        startCurrent(step = step, auto = auto)
     }
 
     // ---- editing the queue ----
@@ -612,18 +682,48 @@ object Player {
         if (state.value.isPlaying) togglePlay()
     }
 
+    /**
+     * The songs of the folder after [last]'s in the Library (in order), or of one at random when
+     * [random]; null at the Library's last folder or for a song not in the Library. Set by the Library.
+     */
+    var folderAfter: (suspend (last: Track, random: Boolean) -> List<Track>?)? = null
+
     fun next(auto: Boolean = false) {
         val q = _queue.value
         val i = q.nextIndex(auto)
         if (i == null) {
-            if (auto) {
+            if (auto && !playNextFolder(q)) {
                 if (Cast.active) Cast.stopRemote() else engine.stop()
                 abandonFocus()
             }
             return
         }
         _queue.value = q.copy(index = i)
-        startCurrent()
+        startCurrent(step = 1, auto = auto)
+    }
+
+    /**
+     * The queue ran out: with the setting on, the next folder plays on (a random one, shuffled,
+     * with shuffle on). Returns false when nothing follows, so playing stops.
+     */
+    private fun playNextFolder(q: QueueState): Boolean {
+        val last = q.current ?: return false
+        val find = folderAfter ?: return false
+        val on = if (q.shuffle) Settings.current.shuffleNextFolder else Settings.current.nextFolder
+        if (!on) return false
+        scope.launch {
+            val songs = runCatching { withContext(Dispatchers.IO) { find(last, q.shuffle) } }.getOrNull()
+            // Something else was chosen meanwhile: that wins.
+            if (_queue.value.current !== last) return@launch
+            if (songs.isNullOrEmpty()) {
+                if (Cast.active) Cast.stopRemote() else engine.stop()
+                abandonFocus()
+                return@launch
+            }
+            // Reached by itself: a first song the Cast device can't play is stepped over.
+            startQueue(songs, if (q.shuffle) songs.indices.random() else 0, step = 1, auto = true)
+        }
+        return true
     }
 
     /** Like a tape deck: rewinds the current song first, the previous one only near its start. */
@@ -634,7 +734,7 @@ object Player {
             return
         }
         _queue.value = q.copy(index = if (q.index > 0) q.index - 1 else q.tracks.size - 1)
-        startCurrent()
+        startCurrent(step = -1)
     }
 
     /** While parked, moves where Play will carry on from. */
@@ -658,8 +758,10 @@ object Player {
         abandonFocus()
     }
 
-    private fun startCurrent(startMs: Long = 0, paused: Boolean = false) {
+    private fun startCurrent(startMs: Long = 0, paused: Boolean = false, step: Int = 0, auto: Boolean = false) {
         val track = _queue.value.current ?: return
+        lastStep = step
+        stepAuto = auto
         openJob?.cancel()
         parkedAtMs = null
         main.removeCallbacks(parkLater)

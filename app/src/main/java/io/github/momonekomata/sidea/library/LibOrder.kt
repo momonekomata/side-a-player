@@ -30,6 +30,69 @@ object LibOrder {
         }
     }
 
+    private val ROW_OF = HashMap<Char, Char>().apply {
+        val rows = listOf("あいうえお", "かきくけこ", "さしすせそ", "たちつてと", "なにぬねの", "はひふへほ", "まみむめも", "やゆよ", "らりるれろ", "わゐゑをん")
+        for (r in rows) for (c in r) put(c, r[0])
+        // Small kana file with their full-size ones.
+        "ぁぃぅぇぉっゃゅょゎゕゖ".zip("あいうえおつやゆよわかけ").forEach { (s, b) -> put(s, getValue(b)) }
+    }
+    private const val HANGUL_INITIALS = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+
+    /** Thai vowels written before the consonant they follow in speech (เ แ โ ใ ไ). */
+    private fun isThaiPrevowel(c: Char) = c in 'เ'..'ไ'
+    private fun isThaiConsonant(c: Char) = c in 'ก'..'ฮ'
+
+    /**
+     * The letter within its script [label] files under, for the scripts the index opens up:
+     * Thai by its first consonant (ก–ฮ, past a leading เ แ โ ใ ไ), kana by its row (あ か さ …),
+     * hangul by its first consonant (ㄱ ㄴ ㄷ …), Cyrillic and Greek by their letter. Null for
+     * the rest (A–Z have no more; kanji would need their readings).
+     */
+    fun subInitialOf(label: String): Char? {
+        val text = sortText(label)
+        val cp = text.codePoints().findFirst().orElse(-1)
+        if (cp < 0) return null
+        return when (Character.UnicodeScript.of(cp)) {
+            Character.UnicodeScript.THAI -> text.firstOrNull(::isThaiConsonant) ?: 'ก'
+            Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA -> {
+                // Katakana and half-width kana as hiragana, without their dakuten (が → か).
+                var c = Normalizer.normalize(String(Character.toChars(cp)), Normalizer.Form.NFKD)[0]
+                if (c in 'ァ'..'ヶ') c -= 0x60
+                ROW_OF[c] ?: 'あ'
+            }
+            Character.UnicodeScript.HANGUL -> {
+                val initial = when (cp) {
+                    in 0xAC00..0xD7A3 -> HANGUL_INITIALS[(cp - 0xAC00) / 588]
+                    in 0x3131..0x314E -> cp.toChar()
+                    else -> 'ㅇ'
+                }
+                // Doubled consonants with their single ones (ㄲ under ㄱ), as Korean indexes do.
+                when (initial) { 'ㄲ' -> 'ㄱ'; 'ㄸ' -> 'ㄷ'; 'ㅃ' -> 'ㅂ'; 'ㅆ' -> 'ㅅ'; 'ㅉ' -> 'ㅈ'; else -> initial }
+            }
+            Character.UnicodeScript.CYRILLIC, Character.UnicodeScript.GREEK ->
+                Normalizer.normalize(String(Character.toChars(cp)), Normalizer.Form.NFD)[0].uppercaseChar()
+            else -> null
+        }
+    }
+
+    /** Thai as it sorts: a leading vowel after the consonant it's said after (เพลง sorts under พ). */
+    private fun thaiOrder(s: String): String {
+        if (s.none(::isThaiPrevowel)) return s
+        val out = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (isThaiPrevowel(c) && i + 1 < s.length && isThaiConsonant(s[i + 1])) {
+                out.append(s[i + 1]).append(c)
+                i += 2
+            } else {
+                out.append(c)
+                i++
+            }
+        }
+        return out.toString()
+    }
+
     /** Where an index letter's group comes: # first, then A–Z, then the other scripts. */
     fun rank(c: Char) = when {
         c == '#' -> 0
@@ -63,7 +126,7 @@ object LibOrder {
             val l = label(item)
             val i = initialOf(l)
             // NFKC: styled and full-width letters sort as the plain ones they stand for.
-            Key(l in unknown, rank(i), i, collator.getCollationKey(Normalizer.normalize(sortText(l), Normalizer.Form.NFKC)))
+            Key(l in unknown, rank(i), i, collator.getCollationKey(thaiOrder(Normalizer.normalize(sortText(l), Normalizer.Form.NFKC))))
         }
         val order = compareBy<Int>({ keys[it].last }, { keys[it].rank }, { keys[it].initial })
             .thenComparator { a, b -> keys[a].text.compareTo(keys[b].text) }

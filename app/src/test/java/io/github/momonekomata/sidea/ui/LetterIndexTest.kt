@@ -35,6 +35,39 @@ class LetterIndexTest {
     }
 
     @Test
+    fun scriptsOpenUpToTheirOwnLetters() {
+        val sub = io.github.momonekomata.sidea.library.LibOrder::subInitialOf
+        // Thai by the consonant, past a leading vowel.
+        assertEquals('ข', sub("ขอบคุณ"))
+        assertEquals('พ', sub("เพลงรัก"))
+        assertEquals('ฮ', sub("ฮัลโหล"))
+        // Kana by row; katakana, dakuten and small kana too.
+        assertEquals('あ', sub("あいしてる"))
+        assertEquals('か', sub("ガラス"))
+        assertEquals('さ', sub("ｼﾞｬｽﾞ"))
+        assertEquals('や', sub("ゃ"))
+        assertEquals('わ', sub("ヲタク"))
+        // Hangul by its first consonant, doubled ones with the single.
+        assertEquals('ㄱ', sub("까치"))
+        assertEquals('ㅎ', sub("한글"))
+        // Cyrillic and Greek by their letter; Latin and kanji don't open.
+        assertEquals('Е', sub("ёлка"))
+        assertEquals('Α', sub("άλφα"))
+        assertEquals(null, sub("Abbey Road"))
+        assertEquals(null, sub("東京"))
+
+        val labels = io.github.momonekomata.sidea.library.LibOrder.sorted(
+            listOf("Blue", "เพลงรัก", "กอด", "ขอบคุณ", "ปลา", "かぜ", "あめ", "サクラ", "東京", "Abbey Road"),
+        ) { it }
+        // Thai sorts by consonant, a leading vowel and all: กอด ขอบคุณ ปลา เพลงรัก.
+        assertEquals(listOf("Abbey Road", "Blue", "กอด", "ขอบคุณ", "ปลา", "เพลงรัก", "あめ", "かぜ", "サクラ", "東京"), labels)
+        assertEquals(
+            mapOf('ก' to listOf('ก' to 2, 'ข' to 3, 'ป' to 4, 'พ' to 5), 'あ' to listOf('あ' to 6, 'か' to 7, 'さ' to 8)),
+            subLetterIndex(labels, firstItem = 0),
+        )
+    }
+
+    @Test
     fun initials() {
         assertEquals('B', initialOf("  the beatles"))
         assertEquals('#', initialOf("...."))

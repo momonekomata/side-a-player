@@ -33,6 +33,10 @@ data class Prefs(
     val usbVolume: Float = 1f,
     /** How the app looks; the user picks it in Settings. */
     val theme: AppTheme = AppTheme.WALKMAN,
+    /** When the queue's last song ends (repeat off), the Library's next folder plays on. */
+    val nextFolder: Boolean = false,
+    /** The same with shuffle on: a folder picked at random plays on, shuffled. */
+    val shuffleNextFolder: Boolean = false,
 )
 
 /** The looks to choose from in Settings → Theme. */
@@ -65,6 +69,8 @@ object Settings {
             // A new key, so everyone starts at 100 % (bit-perfect) once, whatever the old 30 % saved.
             usbVolume = sp.getFloat("usbVolume100", 1f),
             theme = runCatching { AppTheme.valueOf(sp.getString("theme", null) ?: "") }.getOrDefault(AppTheme.WALKMAN),
+            nextFolder = sp.getBoolean("nextFolder", false),
+            shuffleNextFolder = sp.getBoolean("shuffleNextFolder", false),
             eq = runCatching { sp.getString("eq", null)?.let { eqFromJson(JSONObject(it)) } }.getOrNull() ?: EqConfig(),
         )
     }
@@ -85,6 +91,8 @@ object Settings {
             .putBoolean("exclusiveUsb", p.exclusiveUsb)
             .putFloat("usbVolume100", p.usbVolume)
             .putString("theme", p.theme.name)
+            .putBoolean("nextFolder", p.nextFolder)
+            .putBoolean("shuffleNextFolder", p.shuffleNextFolder)
             .putString("eq", eqToJson(p.eq).toString())
             .apply()
     }

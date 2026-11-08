@@ -106,6 +106,8 @@ object Library {
         db = LibraryDb(appContext)
         // Playlist files found by a scan join these.
         io.github.momonekomata.sidea.sources.Playlists.init(appContext)
+        // When a folder's songs run out, the player asks what comes next (Settings).
+        io.github.momonekomata.sidea.audio.Player.folderAfter = { last, random -> folderAfter(last, random) }
         // Playlists and cue sheets earlier scans took for songs ("Unknown artist" albums): out.
         runCatching { db.dropNonSongs() }
         _sources.value = runCatching {
@@ -340,6 +342,38 @@ object Library {
         NasKind.WEBDAV -> WebDavBrowser(server)
         NasKind.FTPS -> FtpsBrowser(appContext, server)
         else -> RemoteBrowser(appContext, server, RemoteStores.get(appContext, server) { s -> store.save(s); RemoteStores.update(s) })
+    }
+
+    /**
+     * The folder that plays after [last]'s when its songs run out: the next one in [last]'s source,
+     * in folder order (as a file browser lists them), or one at random when [random]. Null after the
+     * last folder, or for a song that isn't in the Library.
+     */
+    fun folderAfter(last: Track, random: Boolean): List<Track>? {
+        if (!::db.isInitialized) return null
+        val t = runCatching { db.track(last.id) }.getOrNull() ?: return null
+        val folders = db.folders(t.source)
+        val next = if (random) {
+            folders.filter { it != t.folder }.randomOrNull()
+        } else {
+            val sorted = folders.sortedWith(FolderOrder)
+            sorted.getOrNull(sorted.indexOf(t.folder) + 1)
+        } ?: return null
+        return db.folderTracks(t.source, next).mapNotNull(::trackOf).ifEmpty { null }
+    }
+
+    /** Folders as a file browser lists them: by each folder name along the path, "2" before "10". */
+    internal object FolderOrder : Comparator<String> {
+        private fun key(s: String) = PlaylistFiles.norm(s).replace(Regex("\\d+")) { it.value.padStart(8, '0') }
+        override fun compare(a: String, b: String): Int {
+            val x = PlaylistFiles.rawSegments(a)
+            val y = PlaylistFiles.rawSegments(b)
+            for (i in 0 until minOf(x.size, y.size)) {
+                val c = key(x[i]).compareTo(key(y[i]))
+                if (c != 0) return c
+            }
+            return x.size - y.size
+        }
     }
 
     /** The Library's track for a song id (from favourites, a playlist, the saved queue), if it has it. */

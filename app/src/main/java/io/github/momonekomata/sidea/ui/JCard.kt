@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +61,8 @@ fun JCard(
     art: ImageBitmap? = null,
     listState: LazyListState? = null,
     letters: List<Pair<Char, Int>> = emptyList(),
+    /** The letters a script mark among [letters] opens up to (ก → ก ข ค …), from [subLetterIndex]. */
+    subLetters: Map<Char, List<Pair<Char, Int>>> = emptyMap(),
     /** Stays put above the list while it scrolls (search, the queue's buttons). */
     pinned: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
@@ -70,64 +73,133 @@ fun JCard(
             HorizontalDivider(color = Retro.CreamShade, thickness = 1.dp)
         }
         val list = listState ?: rememberLazyListState()
-        var active by remember { mutableStateOf<Char?>(null) }
+        var active by remember { mutableStateOf<String?>(null) }
         Box(Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), state = list, content = content)
             if (letters.size > 1) {
-                LetterIndex(letters, list, { active = it }, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 6.dp))
+                LetterIndex(letters, subLetters, list, { active = it }, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 6.dp))
             }
             active?.let { c ->
                 Box(
                     Modifier.align(Alignment.Center).size(64.dp).background(Retro.Orange, RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center,
-                ) { Text(c.toString(), color = Color.White, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, fontSize = 34.sp) }
+                ) { Text(c, color = Color.White, fontFamily = Retro.Logo, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, fontSize = if (c.length > 1) 22.sp else 34.sp) }
             }
         }
     }
 }
 
-/** The index down the card's edge: touch or slide along it to jump to the first entry of a letter. */
+/** One mark on the index: a letter and the list item it jumps to, or a script that opens up, or the way back to A–Z. */
+private class Mark(val label: String, val item: Int, val opens: Char? = null, val back: Boolean = false)
+
+/**
+ * The index down the card's edge: touch or slide along it to jump to the first entry of a
+ * letter. A script's mark with letters of its own (ก, あ, 한 …) sits on a key: tapping it opens
+ * the bar up to that script's letters (ก ข ค … ฮ), with A–Z at the top to come back. Scrolling
+ * the list away from that script closes it too.
+ */
 @Composable
-private fun LetterIndex(letters: List<Pair<Char, Int>>, list: LazyListState, onActive: (Char?) -> Unit, modifier: Modifier) {
+private fun LetterIndex(letters: List<Pair<Char, Int>>, subLetters: Map<Char, List<Pair<Char, Int>>>, list: LazyListState, onActive: (String?) -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     var height by remember { mutableIntStateOf(1) }
-    var active by remember { mutableStateOf<Char?>(null) }
-    fun touch(y: Float) {
-        val (c, item) = letters[(y / height * letters.size).toInt().coerceIn(0, letters.size - 1)]
-        if (c == active) return
-        active = c
-        onActive(c)
-        scope.launch { list.scrollToItem(item) }
+    var open by remember(letters, subLetters) { mutableStateOf<Char?>(null) }
+    val marks = remember(letters, subLetters, open) {
+        val subs = open?.let { subLetters[it] }
+        if (subs != null) listOf(Mark("A-Z", -1, back = true)) + subs.map { (c, i) -> Mark(c.toString(), i) }
+        else letters.map { (c, i) -> Mark(c.toString(), i, opens = c.takeIf { subLetters.containsKey(it) }) }
+    }
+    // Scrolled away from the open script's rows (they're all off screen): back to A–Z.
+    LaunchedEffect(open) {
+        val g = open ?: return@LaunchedEffect
+        val start = letters.firstOrNull { it.first == g }?.second ?: return@LaunchedEffect
+        val end = letters.map { it.second }.filter { it > start }.minOrNull() ?: Int.MAX_VALUE
+        androidx.compose.runtime.snapshotFlow {
+            val shown = list.layoutInfo.visibleItemsInfo
+            if (shown.isEmpty()) true else shown.first().index < end && shown.last().index >= start
+        }.collect { inView -> if (!inView) open = null }
+    }
+    var active by remember { mutableStateOf<Mark?>(null) }
+    // Each mark has a slot of its own, the same height (at most 28 dp, so a short list of letters
+    // isn't strung out down the whole edge), and the marks sit centred: where one is drawn is
+    // where a touch finds it.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val slot = minOf(height.toFloat() / marks.size, with(density) { 28.dp.toPx() })
+    val top = (height - slot * marks.size) / 2
+    fun markAt(y: Float) = marks[((y - top) / slot).toInt().coerceIn(0, marks.size - 1)]
+    fun touch(m: Mark) {
+        if (m === active) return
+        active = m
+        onActive(if (m.back) "A–Z" else m.label)
+        if (!m.back) scope.launch { list.scrollToItem(m.item) }
     }
     Column(
         modifier
             .width(26.dp)
             .onSizeChanged { height = it.height.coerceAtLeast(1) }
-            .pointerInput(letters) {
+            .pointerInput(marks, slot, top) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     down.consume()
-                    touch(down.position.y)
+                    val first = markAt(down.position.y)
+                    touch(first)
+                    var slid = false
                     do {
                         val e = awaitPointerEvent()
-                        e.changes.forEach { if (it.pressed) { touch(it.position.y); it.consume() } }
+                        e.changes.forEach {
+                            if (it.pressed) {
+                                val m = markAt(it.position.y)
+                                if (m !== first) slid = true
+                                touch(m)
+                                it.consume()
+                            }
+                        }
                     } while (e.changes.any { it.pressed })
+                    val last = active
                     active = null
                     onActive(null)
+                    when {
+                        // Let go on A–Z: the whole index again.
+                        last?.back == true -> open = null
+                        // A tap on a script's key (not a slide past it): its letters.
+                        !slid && first.opens != null -> open = first.opens
+                    }
                 }
             },
-        verticalArrangement = Arrangement.SpaceEvenly,
+        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        letters.forEach { (c, _) ->
-            Text(
-                c.toString(),
-                color = if (c == active) Retro.Orange else Retro.InkFaint,
-                fontFamily = Retro.Mono,
-                fontWeight = FontWeight.Bold,
-                fontSize = 10.sp,
-                lineHeight = 10.sp,
-            )
+        val slotDp = with(density) { slot.toDp() }
+        marks.forEach { m ->
+            val on = m === active
+            Box(Modifier.height(slotDp).fillMaxWidth(), contentAlignment = Alignment.Center) { when {
+                m.back -> Text(
+                    "A-Z",
+                    color = Color.White,
+                    fontFamily = Retro.Mono,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 8.sp,
+                    lineHeight = 8.sp,
+                    modifier = Modifier.background(if (on) Retro.Ink else Retro.Orange, RoundedCornerShape(3.dp)).padding(horizontal = 2.dp, vertical = 3.dp),
+                )
+                m.opens != null -> Text(
+                    // A key to press: it opens up.
+                    m.label,
+                    color = if (on) Color.White else Retro.Ink,
+                    fontFamily = Retro.Mono,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    lineHeight = 12.sp,
+                    modifier = Modifier.background(if (on) Retro.Orange else Retro.CreamShade, RoundedCornerShape(3.dp)).padding(horizontal = 3.dp, vertical = 1.dp),
+                )
+                else -> Text(
+                    m.label,
+                    color = if (on) Retro.Orange else Retro.InkFaint,
+                    fontFamily = Retro.Mono,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    lineHeight = 10.sp,
+                )
+            } }
         }
     }
 }
@@ -142,6 +214,19 @@ fun letterIndex(labels: List<String>, firstItem: Int): List<Pair<Char, Int>> {
     labels.forEachIndexed { i, label -> first.getOrPut(initialOf(label)) { firstItem + i } }
     val rank = io.github.momonekomata.sidea.library.LibOrder::rank
     return first.entries.sortedWith(compareBy({ rank(it.key) }, { it.key })).map { it.key to it.value }
+}
+
+/**
+ * The letters inside each script mark of [letterIndex] that opens up (ก → ก ข ค …, あ → あ か さ …),
+ * each with the list item of its first entry. Only scripts with two letters or more.
+ */
+fun subLetterIndex(labels: List<String>, firstItem: Int): Map<Char, List<Pair<Char, Int>>> {
+    val out = LinkedHashMap<Char, LinkedHashMap<Char, Int>>()
+    labels.forEachIndexed { i, label ->
+        val sub = io.github.momonekomata.sidea.library.LibOrder.subInitialOf(label) ?: return@forEachIndexed
+        out.getOrPut(initialOf(label)) { LinkedHashMap() }.getOrPut(sub) { firstItem + i }
+    }
+    return out.filterValues { it.size > 1 }.mapValues { (_, m) -> m.entries.sortedBy { it.value }.map { it.key to it.value } }
 }
 
 /** The letter [label] files under; the Library's lists are sorted by the same rule ([io.github.momonekomata.sidea.library.LibOrder]). */

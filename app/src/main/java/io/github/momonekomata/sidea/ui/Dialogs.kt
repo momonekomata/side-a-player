@@ -240,6 +240,10 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onSources: () -> Uni
                 Note("For phones whose Android can't send USB audio bit-perfect (most Samsungs): WALKDECK drives the DAC itself, at each file's own rate, after you allow USB access. Other apps can't use the DAC while WALKDECK holds it. Volume is then WALKDECK's own: the volume keys drive it, and 100 % is bit-perfect.")
                 LabeledSwitch("Gapless playback", prefs.gapless) { onChange(prefs.copy(gapless = it)) }
                 Note("Opens the next song early and joins it to the current one with no gap, when both share a sample rate.")
+                LabeledSwitch("Play the next folder when one ends", prefs.nextFolder) { onChange(prefs.copy(nextFolder = it)) }
+                Note("After the last song of a folder (with repeat off), the folder after it in the Library plays on, in order. Off: playing stops there.")
+                LabeledSwitch("With shuffle: play another folder", prefs.shuffleNextFolder) { onChange(prefs.copy(shuffleNextFolder = it)) }
+                Note("With shuffle on, once a folder's songs have all played, a folder picked at random plays on, shuffled too. Off: playing stops there.")
                 LabeledSwitch("DSD as DoP to the USB DAC", prefs.dop) { onChange(prefs.copy(dop = it)) }
                 Note("Native DSD for DACs that understand DoP. Only used when the bit-perfect path is available; otherwise DSD is converted to 176.4 kHz PCM. Turn off if your DAC plays DSD as noise.")
                 LabeledSwitch("Find lyrics online", prefs.onlineLyrics) { onChange(prefs.copy(onlineLyrics = it)) }
