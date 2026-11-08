@@ -237,5 +237,19 @@ class LibraryModel(private val scope: CoroutineScope, private val prefs: android
         play(songs, 0, shuffle)
     }
 
+    /**
+     * Every song of an artist, an album or a genre, in album order, for the long-press menu.
+     * Focus's filters apply; the search doesn't (an album found by its name means all of it).
+     */
+    suspend fun songsOf(artist: String? = null, album: String? = null, genre: String? = null): List<Track> = withContext(Dispatchers.IO) {
+        val f = _ui.value.filter.copy(query = "", list = null)
+        val songs = if (album != null) {
+            Library.db.tracks(f, album = album)
+        } else {
+            Library.db.albums(f, artist = artist, genre = genre).flatMap { Library.db.tracks(f, album = it.key) }
+        }
+        songs.mapNotNull(Library::trackOf)
+    }
+
     fun trackOf(t: LibTrack): Track? = Library.trackOf(t)
 }

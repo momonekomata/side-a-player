@@ -70,6 +70,7 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
                         trackFor(full, f.size).copy(
                             lyricsFile = lrc[lrcKey(f.name)]?.let { lrcPath -> { fetchText(lrcPath) } },
                             folderArt = folderArt,
+                            modifiedMs = f.timestamp?.timeInMillis ?: 0,
                         ),
                     )
                     else -> null
@@ -95,6 +96,7 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
                 if (!ftp.storeFile(target, text.toByteArray().inputStream())) throw IOException("Can't save $target: ${ftp.replyString.trim()}")
             }
         },
+        cacheFile = { cacheFile(full) },
     )
 
     override fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track? {

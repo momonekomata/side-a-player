@@ -62,7 +62,7 @@ class SftpFs(private var server: NasServer, private val save: (NasServer) -> Uni
     override fun list(folder: String): List<RemoteItem> = sftp { ch ->
         ch.ls(folder).map { it as ChannelSftp.LsEntry }
             .filter { it.filename != "." && it.filename != ".." && !it.filename.startsWith("._") }
-            .map { e -> RemoteItem(e.filename, folder.trimEnd('/') + "/" + e.filename, e.attrs.isDir, e.attrs.size) }
+            .map { e -> RemoteItem(e.filename, folder.trimEnd('/') + "/" + e.filename, e.attrs.isDir, e.attrs.size, e.attrs.mTime * 1000L) }
     }
 
     override fun read(id: String, from: Long, to: Long, sink: (ByteArray, Int) -> Boolean) = sftp { ch ->

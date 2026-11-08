@@ -88,6 +88,12 @@ object Cast {
     var onEnded: () -> Unit = {}
     /** The device moved on to the song queued with [setNext] by itself. Called on the main thread. */
     var onAdvanced: () -> Unit = {}
+    /**
+     * The device no longer has the current song (it dropped it, or came back after the
+     * connection went without it): hand it over again from [positionMs], playing if [play].
+     * Called on the main thread.
+     */
+    var onReload: (positionMs: Long, play: Boolean) -> Unit = { _, _ -> }
 
     @Volatile private var currentUri: String? = null
     @Volatile private var nextUri: String? = null
@@ -104,7 +110,14 @@ object Cast {
     @Volatile private var session: CastSession? = null
     @Volatile private var castItemId = -1
     @Volatile private var castContent: String? = null
+    /** The device's last playerState (PLAYING, PAUSED, BUFFERING, IDLE). */
+    @Volatile private var castPlayer = ""
+    /** Counts MEDIA_STATUS messages, so a rejoin can wait for a fresh one. */
+    @Volatile private var castStatusCount = 0
     private val castItems = ConcurrentHashMap<Int, String>()
+    /** The song last queued after the current one, to queue it again after a reconnect. */
+    @Volatile private var nextTrack: Track? = null
+    private var reconnectJob: Job? = null
 
     /** A song has been handed to the device (so Play can just resume it). */
     val loaded get() = currentUri != null
@@ -198,8 +211,16 @@ object Cast {
         _state.value = EngineState(isBuffering = d.kind == Kind.GOOGLE_CAST)
         MediaServer.start(appContext)
         holdAwake(true)
+        reconnectJob?.cancel()
         if (d.kind == Kind.GOOGLE_CAST) {
-            io.launch { openSession(d) }
+            io.launch {
+                try {
+                    openSession(d)
+                    _state.update { it.copy(isBuffering = false) }
+                } catch (t: Throwable) {
+                    _state.value = EngineState(error = "Can't reach ${d.name} (${t.message ?: t.javaClass.simpleName})")
+                }
+            }
         } else {
             io.launch { runCatching { _volume.value = getVolume(d) } }
         }
@@ -211,6 +232,7 @@ object Cast {
     fun disconnect() {
         val d = _target.value ?: return
         pollJob?.cancel()
+        reconnectJob?.cancel()
         _target.value = null
         currentUri = null
         nextUri = null
@@ -221,7 +243,7 @@ object Cast {
         session = null
         io.launch {
             if (d.kind == Kind.GOOGLE_CAST) {
-                s?.onClosed = {}
+                s?.onClosed = { _, _ -> }
                 s?.onStatus = {}
                 runCatching { s?.stopApp() }
                 s?.close()
@@ -231,38 +253,104 @@ object Cast {
         }
     }
 
-    private fun openSession(d: Device) {
+    /**
+     * Connects to [d] and starts (or joins) its media player; throws if it can't. [fresh] forgets
+     * what the device's queue held; a rejoin after a dropped connection keeps it, as the device
+     * kept playing it.
+     */
+    private fun openSession(d: Device, fresh: Boolean = true): CastSession {
         session?.close()
-        castItemId = -1
-        castContent = null
-        castItems.clear()
+        session = null
+        if (fresh) {
+            castItemId = -1
+            castContent = null
+            castItems.clear()
+        }
+        castPlayer = ""
         val s = CastSession(d.host, d.port.takeIf { it > 0 } ?: 8009)
         s.onStatus = { if (session === s) onCastStatus(d, it) }
         s.onReceiver = { st ->
             st.optJSONObject("volume")?.let { v -> if (v.has("level")) _volume.value = (v.optDouble("level") * 100).roundToInt().coerceIn(0, 100) }
         }
-        s.onClosed = { why ->
-            if (session === s) {
-                currentUri = null
-                _state.update { it.copy(isPlaying = false, isBuffering = false, error = "${d.name}: $why") }
-            }
-        }
+        s.onClosed = { why, lost -> if (session === s) onSessionClosed(d, why, lost) }
         try {
             s.open()
-            session = s
-            _state.update { it.copy(isBuffering = false) }
         } catch (t: Throwable) {
             s.close()
-            _state.value = EngineState(error = "Can't reach ${d.name} (${t.message ?: t.javaClass.simpleName})")
+            throw t
         }
+        session = s
+        return s
     }
 
     /** The Cast session, opened again if it went (the device restarted, another phone took it). */
     private fun castSession(d: Device): CastSession {
         session?.takeIf { !it.closed }?.let { return it }
-        openSession(d)
-        return session?.takeIf { !it.closed } ?: throw java.io.IOException(_state.value.error ?: "Not connected")
+        return try {
+            openSession(d)
+        } catch (t: Throwable) {
+            throw java.io.IOException("can't reach it (${t.message ?: t.javaClass.simpleName})")
+        }
     }
+
+    /**
+     * The connection to [d] went. When it dropped by itself (the phone's Wi-Fi blinked, the device
+     * stopped answering for a moment) with a song on, connect again and carry on: the device
+     * usually played on meanwhile, and otherwise gets the song again from where it was. When the
+     * device ended it on purpose, stop and say why; Play starts it again.
+     */
+    private fun onSessionClosed(d: Device, why: String, lost: Boolean) {
+        if (_target.value?.key != d.key) return
+        refresh()
+        val st = _state.value
+        val uri = currentUri
+        val playing = st.isPlaying || (st.isBuffering && !paused)
+        val pos = st.positionMs
+        currentUri = null
+        if (!lost || uri == null) {
+            nextUri = null
+            _state.update { it.copy(isPlaying = false, isBuffering = false, bufferNote = null, error = "${d.name}: $why") }
+            return
+        }
+        _state.update { it.copy(isPlaying = false, isBuffering = true, bufferNote = "Reconnecting to ${d.name}…", error = null) }
+        reconnectJob?.cancel()
+        reconnectJob = io.launch { reconnect(d, uri, pos, playing, why) }
+    }
+
+    private suspend fun reconnect(d: Device, uri: String, pos: Long, playing: Boolean, why: String) {
+        for (wait in listOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L)) {
+            delay(wait)
+            if (_target.value?.key != d.key) return
+            val s = runCatching { openSession(d, fresh = false) }.getOrNull() ?: continue
+            // What the device is doing now: a fresh status for the media.
+            val seen = castStatusCount
+            runCatching { s.getStatus() }
+            val until = System.currentTimeMillis() + 4_000
+            while (castStatusCount == seen && System.currentTimeMillis() < until && !s.closed) delay(100)
+            if (s.closed) continue
+            val live = castPlayer.isNotEmpty() && castPlayer != "IDLE"
+            // Moved on meanwhile to the song queued next: the status already followed it.
+            val advanced = currentUri != null && castContent == currentUri
+            if (live && (castContent == uri || advanced)) {
+                // It played on: follow it again.
+                if (!advanced) currentUri = uri
+                if (playing && castPlayer == "PAUSED") runCatching { s.play() }
+                if (nextUri == null && !advanced) runCatching { queueNextCast(d, nextTrack) }
+                _state.update { it.copy(bufferNote = null, error = null) }
+            } else {
+                // It let the song go: hand it over again, from where it was.
+                nextUri = null
+                _state.update { it.copy(bufferNote = null) }
+                bg.launch(Dispatchers.Main) { onReload(pos, playing) }
+            }
+            return
+        }
+        nextUri = null
+        _state.update { it.copy(isPlaying = false, isBuffering = false, bufferNote = null, positionMs = pos, error = "Lost ${d.name} ($why). Press Play to try again.") }
+    }
+
+    /** The last song handed over was to stay paused. */
+    @Volatile private var paused = false
 
     private fun holdAwake(on: Boolean) {
         if (on) {
@@ -289,6 +377,10 @@ object Cast {
      */
     fun load(track: Track, startMs: Long, paused: Boolean, next: Track?) {
         val d = _target.value ?: return
+        // A song chosen while reconnecting: that's what to play now.
+        reconnectJob?.cancel()
+        this.paused = paused
+        nextTrack = next
         quietUntil = System.currentTimeMillis() + 8000
         wasPlaying = false
         _state.value = EngineState(isBuffering = true, positionMs = startMs, durationMs = _state.value.durationMs.takeIf { currentUri != null } ?: 0)
@@ -335,12 +427,20 @@ object Cast {
         polledPos = startMs
         polledAt = System.currentTimeMillis()
         quietUntil = System.currentTimeMillis() + 4000
-        if (castContent == uri) queueNext(d, next)
+        if (castContent == uri) {
+            queueNext(d, next)
+        } else if (!s.closed && _state.value.error == null) {
+            // No word from the device about the song: say so, rather than buffer for ever (Play
+            // then tries again).
+            currentUri = null
+            throw java.io.IOException("it didn't start the song")
+        }
     }
 
     /** Queues [track] on the device to follow the current song (or clears it with null). */
     fun setNext(track: Track?) {
         val d = _target.value ?: return
+        nextTrack = track
         if (currentUri == null) return
         io.launch { runCatching { queueNext(d, track) } }
     }
@@ -374,7 +474,20 @@ object Cast {
     }
 
     fun resume() = command { d ->
-        if (d.kind == Kind.GOOGLE_CAST) castSession(d).play() else avt(d, "Play", "Speed" to "1")
+        if (d.kind == Kind.GOOGLE_CAST) {
+            val s = castSession(d)
+            // The device let the song go (it stopped it, or another app cut in): there's nothing
+            // to carry on, so hand it over again from where it was.
+            if (castPlayer == "IDLE" || castPlayer == "" || s.mediaSessionId == null) {
+                val pos = _state.value.positionMs
+                currentUri = null
+                bg.launch(Dispatchers.Main) { onReload(pos, true) }
+                return@command
+            }
+            s.play()
+        } else {
+            avt(d, "Play", "Speed" to "1")
+        }
         _state.update { it.copy(isPlaying = true) }
         polledAt = System.currentTimeMillis()
     }
@@ -497,6 +610,8 @@ object Cast {
         val content = s.optJSONObject("media")?.optString("contentId")?.takeIf { it.isNotEmpty() } ?: castItems[itemId]
         if (content != null && itemId >= 0) castItems[itemId] = content
         val player = s.optString("playerState")
+        if (player.isNotEmpty()) castPlayer = player
+        castStatusCount++
         val now = System.currentTimeMillis()
         if (itemId != castItemId && content != null) {
             val before = castItemId
@@ -532,6 +647,16 @@ object Cast {
                     wasPlaying = false
                     currentUri = null
                     bg.launch(Dispatchers.Main) { onEnded() }
+                    return
+                }
+                (reason == "INTERRUPTED" || reason == "CANCELLED") && currentUri != null && castContent == currentUri && now > quietUntil -> {
+                    // The device let our song go by itself (stopped from its own controls or
+                    // a voice command, or cut off by something else), not for a song we sent.
+                    // It's paused where it was: Play hands it over again from there.
+                    currentUri = null
+                    wasPlaying = false
+                    if (s.has("currentTime")) polledPos = (s.optDouble("currentTime") * 1000).toLong()
+                    _state.update { it.copy(isPlaying = false, isBuffering = false, positionMs = polledPos) }
                     return
                 }
             }

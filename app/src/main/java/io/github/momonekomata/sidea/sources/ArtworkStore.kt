@@ -32,6 +32,12 @@ object ArtworkStore {
 
     fun cached(track: Track): Bitmap? = cache.get(track.id)
 
+    /** The file changed (a new cover embedded, say): its picture is read again when next wanted. */
+    fun forget(id: String) {
+        cache.remove(id)
+        missing.remove(id)
+    }
+
     suspend fun load(context: Context, track: Track): Bitmap? {
         cache.get(track.id)?.let { return it }
         if (track.id in missing) return null

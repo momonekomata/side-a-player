@@ -42,6 +42,19 @@ class QueueTest {
     }
 
     @Test
+    fun `a whole album plays next in its order, or goes on the end`() {
+        val album = listOf("a1", "a2").map { id -> Track(id = id, title = id, opener = { PlayableSource.File("/$id") }) }
+        val next = QueueState(tracks, 0).withNext(album)
+        assertEquals(listOf("t1", "a1", "a2", "t2", "t3"), next.tracks.map { it.id })
+        assertEquals(listOf("t1", "a1", "a2", "t2", "t3"), next.original.map { it.id })
+        assertEquals(listOf("t1", "t2", "t3", "a1", "a2"), QueueState(tracks, 0).withAdded(album).tracks.map { it.id })
+        val fresh = QueueState().withNext(album)
+        assertEquals("a1", fresh.current?.id)
+        assertEquals(2, fresh.tracks.size)
+        assertEquals(QueueState(tracks, 1), QueueState(tracks, 1).withNext(emptyList()))
+    }
+
+    @Test
     fun `removing a song before the current one keeps the current one playing`() {
         val q = QueueState(tracks, 2).without(0)
         assertEquals(listOf("t2", "t3"), q.tracks.map { it.id })

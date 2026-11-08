@@ -51,11 +51,15 @@ data class QueueState(
     }
 
     /** [t] straight after the current song, in play order and in the folder order shuffle returns to. */
-    fun withNext(t: Track): QueueState {
-        val cur = current ?: return QueueState(listOf(t), 0, shuffle, repeat)
+    fun withNext(t: Track): QueueState = withNext(listOf(t))
+
+    /** [songs] straight after the current song, in their order (an album, an artist's songs). */
+    fun withNext(songs: List<Track>): QueueState {
+        if (songs.isEmpty()) return this
+        val cur = current ?: return QueueState(songs, 0, shuffle, repeat)
         val at = original.indexOfFirst { it === cur }
-        val orig = if (at < 0) original + t else original.toMutableList().apply { add(at + 1, t) }
-        return copy(tracks = tracks.toMutableList().apply { add(index + 1, t) }, original = orig)
+        val orig = if (at < 0) original + songs else original.toMutableList().apply { addAll(at + 1, songs) }
+        return copy(tracks = tracks.toMutableList().apply { addAll(index + 1, songs) }, original = orig)
     }
 
     /** Without the song at [i] (not the current one), in both orders. */
@@ -77,8 +81,14 @@ data class QueueState(
     }
 
     /** [t] at the end of the queue. */
-    fun withAdded(t: Track): QueueState =
-        if (current == null) QueueState(listOf(t), 0, shuffle, repeat) else copy(tracks = tracks + t, original = original + t)
+    fun withAdded(t: Track): QueueState = withAdded(listOf(t))
+
+    /** [songs] at the end of the queue, in their order. */
+    fun withAdded(songs: List<Track>): QueueState = when {
+        songs.isEmpty() -> this
+        current == null -> QueueState(songs, 0, shuffle, repeat)
+        else -> copy(tracks = tracks + songs, original = original + songs)
+    }
 }
 
 /** The app-wide local player: a queue in front of [AudioEngine]. Shared by the UI and the service. */
@@ -300,6 +310,8 @@ object Player {
         // ---- casting ----
         Cast.init(appContext)
         Cast.onEnded = { next(auto = true) }
+        // The device lost the song (a dropped connection it didn't play through): send it again.
+        Cast.onReload = { pos, play -> if (Cast.active && _queue.value.current != null) startCurrent(startMs = pos, paused = !play) }
         Cast.onAdvanced = {
             val q = _queue.value
             q.nextIndex(auto = true)?.let { _queue.value = q.copy(index = it) }
@@ -394,6 +406,12 @@ object Player {
 
     /** Adds [t] to the end of the queue; plays it now if nothing is queued. */
     fun addToQueue(t: Track) = edit { it.withAdded(t) }
+
+    /** [songs] (an album, an artist's) after the current song, in order. */
+    fun playNext(songs: List<Track>) { if (songs.isNotEmpty()) edit { it.withNext(songs) } }
+
+    /** [songs] at the end of the queue, in order. */
+    fun addToQueue(songs: List<Track>) { if (songs.isNotEmpty()) edit { it.withAdded(songs) } }
 
     private fun edit(change: (QueueState) -> QueueState) {
         val q = _queue.value

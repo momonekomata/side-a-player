@@ -101,6 +101,8 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
         /** Google's Default Media Receiver: plays a URL, no app of our own to register. */
         const val DEFAULT_RECEIVER = "CC1AD845"
         private const val SENDER = "sender-walkdeck"
+        /** Longer than a few missed heartbeats (one each way every 5 s). */
+        const val READ_TIMEOUT_MS = 20_000
     }
 
     private var socket: SSLSocket? = null
@@ -115,8 +117,11 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
     var onStatus: (JSONObject) -> Unit = {}
     /** A RECEIVER_STATUS (volume, running apps). */
     var onReceiver: (JSONObject) -> Unit = {}
-    /** The connection went. */
-    var onClosed: (String) -> Unit = {}
+    /**
+     * The connection went. [lost] is true when it dropped (no answer, the network went) rather
+     * than the device ending it on purpose (it closed the player, another app took over).
+     */
+    var onClosed: (why: String, lost: Boolean) -> Unit = { _, _ -> }
 
     /** Connects, launches the Default Media Receiver (or joins it if it runs) and waits until it's ready. */
     fun open(timeoutMs: Long = 15_000) {
@@ -127,9 +132,12 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
         // store holds; the connection is to a device on the phone's own network, chosen by the user.
         val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(TrustAll), SecureRandom()) }
         val s = tls.socketFactory.createSocket(raw, host.hostAddress, port, true) as SSLSocket
-        s.soTimeout = 0
-        s.startHandshake()
         socket = s
+        // Never wait for ever: a device that stops answering (the phone's Wi-Fi dozed, the device
+        // restarted) would otherwise hold every command after it. The device pings every few
+        // seconds and answers ours, so a quiet read means the connection is gone.
+        s.soTimeout = READ_TIMEOUT_MS
+        s.startHandshake()
         out = s.outputStream
         send("receiver-0", NS_CONNECTION, JSONObject().put("type", "CONNECT"))
         thread(name = "cast-read", isDaemon = true) { readLoop(DataInputStream(s.inputStream)) }
@@ -156,6 +164,16 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
     fun close() {
         closed = true
         runCatching { socket?.close() }
+    }
+
+    /** Ends the session from this side for [why], once, and says so. */
+    private fun end(why: String, lost: Boolean) {
+        synchronized(this) {
+            if (closed) return
+            closed = true
+        }
+        runCatching { socket?.close() }
+        onClosed(why, lost)
     }
 
     /** Plays [media] (a Cast MediaInformation) from [startSec], or leaves it paused there. */
@@ -216,10 +234,7 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
                 handle(CastWire.decode(b))
             }
         } catch (t: Throwable) {
-            if (!closed) {
-                closed = true
-                onClosed(t.message ?: "Connection lost")
-            }
+            end(if (t is java.net.SocketTimeoutException) "it stopped answering" else "the connection dropped", lost = true)
         }
     }
 
@@ -227,7 +242,7 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
         val o = runCatching { JSONObject(m.payload) }.getOrNull() ?: return
         when (o.optString("type")) {
             "PING" -> runCatching { send(m.source, NS_HEARTBEAT, JSONObject().put("type", "PONG")) }
-            "CLOSE" -> if (m.source == transportId) { closed = true; onClosed("The device closed the player") }
+            "CLOSE" -> if (m.source == transportId) end("it closed the player", lost = false)
             "RECEIVER_STATUS" -> {
                 val status = o.optJSONObject("status") ?: return
                 val apps = status.optJSONArray("applications")
@@ -235,10 +250,11 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
                 if (app != null) {
                     transportId = app.optString("transportId")
                     sessionId = app.optString("sessionId")
-                } else if (transportId != null && apps != null) {
+                } else if (transportId != null && apps != null && apps.length() > 0) {
                     // Another app took the device over.
-                    closed = true
-                    onClosed("Another app is using the device now")
+                    onReceiver(status)
+                    end("another app is using it now", lost = false)
+                    return
                 }
                 onReceiver(status)
             }

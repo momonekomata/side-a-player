@@ -192,19 +192,35 @@ object Library {
                     is Entry.Folder -> if (!io.github.momonekomata.sidea.sources.isSystemFolder(e.name)) queue.addLast(e.path to e.name)
                     is Entry.Song -> {
                         val k = known[e.track.id]
-                        if (k != null && k.first == e.track.sizeBytes && k.second) unchanged += e.track.id else todo += Triple(e, path, name)
+                        if (k.unchanged(e.track.sizeBytes, e.track.modifiedMs)) unchanged += e.track.id else todo += Triple(e, path, name)
                     }
                 }
             }
             _scan.update { it.copy(folders = folders, songs = unchanged.size + todo.size) }
         }
         db.markSeen(unchanged, generation)
+        // A song that's changed since it was last read (retagged, say): what was kept of it as it
+        // was goes, so it's read and shown as it is now. A downloaded copy goes only when the file
+        // is known to have changed, not for a song read again because no time was kept for it.
+        val changed = todo.map { it.first.track }.filter { known[it.id] != null }
+        changed.forEach { t ->
+            io.github.momonekomata.sidea.sources.TagStore.forget(t.id)
+            io.github.momonekomata.sidea.sources.ArtworkStore.forget(t.id)
+            val k = known[t.id]!!
+            if (k.size != t.sizeBytes || (k.modified > 0 && t.modifiedMs > 0 && k.modified != t.modifiedMs)) {
+                runCatching { t.cacheFile?.invoke(appContext)?.delete() }
+            }
+        }
         _scan.update { it.copy(toRead = todo.size) }
         // Tags and format for the new and changed songs, a few at a time, saved in batches.
         val gate = Semaphore(3)
         todo.chunked(40).forEach { batch ->
             val rows = coroutineScope { batch.map { (song, folder, folderName) -> async { gate.withPermit { read(src, song, folder, folderName) } } }.awaitAll() }
-            db.put(rows.map { it.first }, rows.map { it.second }, generation)
+            // A song read before whose file can't be opened now (the network blinked) keeps
+            // what was read then, rather than drop to its file name; the next scan tries again.
+            val (fresh, unreadable) = rows.partition { (row, readable) -> readable || known[row.id]?.probed != true }
+            db.put(fresh.map { it.first }, fresh.map { it.second }, generation)
+            db.markSeen(unreadable.map { it.first.id }, generation)
             _scan.update { it.copy(read = it.read + batch.size) }
             _version.update { it + 1 }
         }
@@ -235,6 +251,7 @@ object Library {
             durationMs = format?.durationMs ?: 0, codec = codec, sampleRate = format?.sampleRate ?: 0,
             bits = format?.bits, channels = format?.channels ?: 0,
             composer = tags?.composer.orEmpty(), label = tags?.label.orEmpty(), compilation = tags?.compilation == true,
+            modified = t.modifiedMs,
         ) to (ra != null)
     }
 

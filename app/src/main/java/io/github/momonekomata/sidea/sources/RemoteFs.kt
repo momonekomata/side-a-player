@@ -14,7 +14,7 @@ import java.net.URLEncoder
  * One file or folder on a remote store. [id] is how the store finds it again: a path for SMB,
  * SFTP, FTP and Dropbox, an item id for Google Drive and OneDrive.
  */
-data class RemoteItem(val name: String, val id: String, val isFolder: Boolean, val size: Long)
+data class RemoteItem(val name: String, val id: String, val isFolder: Boolean, val size: Long, val modified: Long = 0)
 
 /**
  * The few things Side A needs from a file store: list a folder, read bytes from an offset, and
@@ -106,6 +106,7 @@ class RemoteBrowser(private val context: Context, private val server: NasServer,
                     trackFor(path, f.id, f.name, f.size, folderName).copy(
                         lyricsFile = lrc[lrcKey(f.name)]?.let { id -> { fs.readAll(id).toString(Charsets.UTF_8) } },
                         folderArt = folderArt,
+                        modifiedMs = f.modified,
                     ),
                 )
                 else -> null
@@ -125,6 +126,7 @@ class RemoteBrowser(private val context: Context, private val server: NasServer,
             else cacheFile(ctx, folder, id, name).takeIf { size > 0 && it.length() == size }?.let(::openFileAccess)
         },
         lyricsWriter = { _, text -> fs.write(folder, lrcName(name), text.toByteArray()) },
+        cacheFile = { ctx -> cacheFile(ctx, folder, id, name) },
     )
 
     override fun songFromIndex(id: String, name: String, size: Long, folderPath: String, folderName: String): Track? {

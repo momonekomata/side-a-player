@@ -23,7 +23,7 @@ import javax.net.ssl.HttpsURLConnection
 private val PROPFIND_BODY = """
     <?xml version="1.0" encoding="utf-8"?>
     <d:propfind xmlns:d="DAV:"><d:prop>
-      <d:displayname/><d:resourcetype/><d:getcontentlength/><d:getcontenttype/>
+      <d:displayname/><d:resourcetype/><d:getcontentlength/><d:getcontenttype/><d:getlastmodified/>
     </d:prop></d:propfind>
 """.trimIndent()
 
@@ -75,13 +75,14 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         var isDir = false
         var size = -1L
         var mime: String? = null
+        var modified = 0L
         var text = StringBuilder()
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> {
                     text = StringBuilder()
                     when (parser.name) {
-                        "response" -> { href = null; name = null; isDir = false; size = -1; mime = null }
+                        "response" -> { href = null; name = null; isDir = false; size = -1; mime = null; modified = 0 }
                         "collection" -> isDir = true
                     }
                 }
@@ -91,7 +92,8 @@ class WebDavBrowser(private val server: NasServer) : Browser {
                     "displayname" -> name = text.toString().trim().ifEmpty { null }
                     "getcontentlength" -> size = text.toString().trim().toLongOrNull() ?: -1
                     "getcontenttype" -> mime = text.toString().trim()
-                    "response" -> href?.let { out += DavItem(it, name, isDir, size, mime) }
+                    "getlastmodified" -> modified = parseHttpDate(text.toString())
+                    "response" -> href?.let { out += DavItem(it, name, isDir, size, mime, modified) }
                 }
             }
         }
@@ -147,7 +149,7 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         }
     }
 
-    private class DavItem(val href: String, val name: String?, val isDir: Boolean, val size: Long, val mime: String?) {
+    private class DavItem(val href: String, val name: String?, val isDir: Boolean, val size: Long, val mime: String?, val modified: Long) {
         // Some servers return absolute URLs in href; keep only the path.
         fun path() = if (href.startsWith("http")) href.toHttpUrl().encodedPath else href
         fun displayName() = name ?: URLDecoder.decode(path().trimEnd('/').substringAfterLast('/'), "UTF-8")
@@ -163,7 +165,7 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         val url = base.newBuilder().encodedPath(path).build()
         val lrcUrl = lrc[lrcKey(name)]?.let { base.newBuilder().encodedPath(it).build() }
         val folder = URLDecoder.decode(requestPath.trimEnd('/').substringAfterLast('/'), "UTF-8")
-        return Entry.Song(name, trackFor(url, name, size, folder).copy(lyricsFile = lrcUrl?.let { u -> { getText(u) } }, folderArt = folderArt))
+        return Entry.Song(name, trackFor(url, name, size, folder).copy(lyricsFile = lrcUrl?.let { u -> { getText(u) } }, folderArt = folderArt, modifiedMs = item.modified))
     }
 
     /** A playable track for a file on this server; also used to bring back favourites. */
@@ -179,6 +181,7 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         // Tags sit in the first few KB, so read them with small range requests.
         tagSource = { MediaDataSourceAccess(HttpRangeDataSource(client, url, auth, size, chunk = 64 * 1024)) },
         lyricsWriter = { _, text -> put(url.newBuilder().removePathSegment(url.pathSize - 1).addPathSegment(lrcName(name)).build(), text) },
+        cacheFile = { ctx -> MediaCache.file(ctx, url.toString(), name.substringAfterLast('.', "bin")) },
     )
 
     /** Uploads a small text file (a .lrc next to a song). */

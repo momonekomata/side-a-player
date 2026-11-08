@@ -20,6 +20,12 @@ object TagStore {
     // A few at a time keeps a NAS responsive while a big folder is being read.
     private val gate = Semaphore(3)
 
+    /** The file changed (retagged): its tags are read again when next wanted. */
+    fun forget(id: String) {
+        done.remove(id)
+        if (id in _tags.value) _tags.update { it - id }
+    }
+
     suspend fun load(context: Context, track: Track): Tags? {
         _tags.value[track.id]?.let { return it }
         if (track.id in done) return null

@@ -260,6 +260,8 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
 
     val songMenu by vm.songMenu.collectAsStateWithLifecycle()
     songMenu?.let { SongMenuDialog(vm, it) }
+    val groupMenu by vm.groupMenu.collectAsStateWithLifecycle()
+    groupMenu?.let { GroupMenuDialog(vm, it) }
     if (castOpen) CastDialog(onDismiss = { castOpen = false })
     if (eqOpen) EqScreen(prefs.eq, onChange = { c -> Settings.update { it.copy(eq = c) } }, onDismiss = { eqOpen = false })
     if (settingsOpen) {

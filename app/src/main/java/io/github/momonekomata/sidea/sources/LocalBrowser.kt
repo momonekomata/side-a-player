@@ -23,11 +23,12 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
         )
-        data class Row(val id: String, val name: String, val mime: String?, val size: Long)
+        data class Row(val id: String, val name: String, val mime: String?, val size: Long, val modified: Long)
         val rows = mutableListOf<Row>()
         context.contentResolver.query(children, cols, null, null, null)?.use { c ->
-            while (c.moveToNext()) rows += Row(c.getString(0), c.getString(1) ?: continue, c.getString(2), c.getLong(3))
+            while (c.moveToNext()) rows += Row(c.getString(0), c.getString(1) ?: continue, c.getString(2), c.getLong(3), if (c.isNull(4)) 0 else c.getLong(4))
         }
         val lrc = rows.filter { isLrcFile(it.name) }.associate { lrcKey(it.name) to it.id }
         val coverUri = pickFolderCover(rows.map { it.name })?.let { name ->
@@ -46,6 +47,7 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
                         { ctx -> ctx.contentResolver.openInputStream(u)!!.use { it.readBytes().toString(Charsets.UTF_8) } }
                     },
                     folderArt = folderArt,
+                    modifiedMs = r.modified,
                 ),
             )
         }.sortedForBrowsing()

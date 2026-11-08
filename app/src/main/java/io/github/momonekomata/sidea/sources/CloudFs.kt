@@ -248,7 +248,7 @@ class GoogleDriveFs(private val auth: CloudAuth) : RemoteFs {
         do {
             val url = api.toHttpUrl().newBuilder()
                 .addQueryParameter("q", q)
-                .addQueryParameter("fields", "nextPageToken,files(id,name,mimeType,size,shortcutDetails)")
+                .addQueryParameter("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime,shortcutDetails)")
                 .addQueryParameter("pageSize", "1000")
                 .addQueryParameter("supportsAllDrives", "true")
                 .addQueryParameter("includeItemsFromAllDrives", "true")
@@ -270,7 +270,7 @@ class GoogleDriveFs(private val auth: CloudAuth) : RemoteFs {
         val id = sc?.optString("targetId") ?: f.getString("id")
         val type = sc?.optString("targetMimeType") ?: f.optString("mimeType")
         if (type.startsWith("application/vnd.google-apps.") && type != folderType) return@mapNotNull null // Docs, Sheets…
-        RemoteItem(f.getString("name"), id, type == folderType, f.optString("size").toLongOrNull() ?: -1)
+        RemoteItem(f.getString("name"), id, type == folderType, f.optString("size").toLongOrNull() ?: -1, parseIsoTime(f.optString("modifiedTime")))
     }
 
     override fun read(id: String, from: Long, to: Long, sink: (ByteArray, Int) -> Boolean) =
@@ -306,13 +306,13 @@ class OneDriveFs(private val auth: CloudAuth) : RemoteFs {
 
     override fun list(folder: String): List<RemoteItem> {
         val out = ArrayList<RemoteItem>()
-        var next: String? = "$api/$folder/children?\$top=999&\$select=id,name,size,folder,file"
+        var next: String? = "$api/$folder/children?\$top=999&\$select=id,name,size,folder,file,lastModifiedDateTime"
         while (next != null) {
             val o = auth.json("Listing OneDrive") { url(next!!) }
             val items = o.optJSONArray("value") ?: JSONArray()
             for (i in 0 until items.length()) {
                 val f = items.getJSONObject(i)
-                out += RemoteItem(f.getString("name"), f.getString("id"), f.has("folder"), f.optLong("size", -1))
+                out += RemoteItem(f.getString("name"), f.getString("id"), f.has("folder"), f.optLong("size", -1), parseIsoTime(f.optString("lastModifiedDateTime")))
             }
             next = o.optString("@odata.nextLink").takeIf { it.isNotBlank() }
         }
@@ -356,7 +356,7 @@ class DropboxFs(private val auth: CloudAuth) : RemoteFs {
                 val e = entries.getJSONObject(i)
                 val tag = e.optString(".tag")
                 if (tag != "file" && tag != "folder") continue
-                out += RemoteItem(e.getString("name"), e.getString("path_display"), tag == "folder", e.optLong("size", -1))
+                out += RemoteItem(e.getString("name"), e.getString("path_display"), tag == "folder", e.optLong("size", -1), parseIsoTime(e.optString("server_modified")))
             }
             if (!o.optBoolean("has_more")) break
             o = rpc("list_folder/continue", JSONObject().put("cursor", o.getString("cursor")))

@@ -76,7 +76,7 @@ class SmbFs(private val server: NasServer) : RemoteFs {
         val (shareName, dir) = split(folder)
         share(shareName).list(dir).filter { it.fileName != "." && it.fileName != ".." && !it.fileName.startsWith("._") }.map { f ->
             val isDir = f.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L
-            RemoteItem(f.fileName, folder.trimEnd('/') + "/" + f.fileName, isDir, f.endOfFile)
+            RemoteItem(f.fileName, folder.trimEnd('/') + "/" + f.fileName, isDir, f.endOfFile, runCatching { f.lastWriteTime.toEpochMillis() }.getOrDefault(0L))
         }
     }
 

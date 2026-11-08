@@ -30,6 +30,8 @@ data class LibTrack(
     val composer: String = "",
     val label: String = "",
     val compilation: Boolean = false,
+    /** When the file last changed, as its folder listing said at the scan (0: not known). */
+    val modified: Long = 0,
 ) {
     /** Who the album is by: the album artist, else the track's artist. */
     val albumBy: String get() = albumArtist.ifBlank { artist }.ifBlank { UNKNOWN_ARTIST }
@@ -123,7 +125,19 @@ private const val BEST_FORMAT = "printf('%d%010d%03d|%s|%d|%s', codec IN ('FLAC'
 /** Focus on the favourites: the [LibFilter.list] for them. Playlists use their own ids. */
 const val FAVORITES_LIST = "fav"
 
-class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null, 3) {
+/** What the scanner remembers of a song: its size, whether its tags were read, when the file last changed. */
+data class KnownSong(val size: Long, val probed: Boolean, val modified: Long)
+
+/**
+ * Whether a song found in a scan is the one already in the Library: the same size, its tags
+ * read, and (where the listing says when files change) not changed since. Retagging seldom
+ * changes a file's size, as tag editors write into the padding left for it, so the time is what
+ * catches an edited tag. A song scanned before times were kept is read again once.
+ */
+fun KnownSong?.unchanged(size: Long, modified: Long) =
+    this != null && this.size == size && probed && (modified <= 0 || this.modified == modified)
+
+class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE tracks (
@@ -131,7 +145,7 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
                 title TEXT, artist TEXT, albumArtist TEXT, album TEXT, genre TEXT, year INTEGER, track INTEGER, disc INTEGER,
                 duration INTEGER, codec TEXT, rate INTEGER, bits INTEGER, channels INTEGER,
                 albumBy TEXT, haystack TEXT, probed INTEGER, seen INTEGER, added INTEGER,
-                composer TEXT, label TEXT, compilation INTEGER)""",
+                composer TEXT, label TEXT, compilation INTEGER, modified INTEGER)""",
         )
         createPlays(db)
         createLists(db)
@@ -151,6 +165,8 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
             createPlays(db)
         }
         if (oldVersion < 3) createLists(db)
+        // When each file last changed, so a rescan sees retagged songs (left empty: read again once).
+        if (oldVersion < 4) db.execSQL("ALTER TABLE tracks ADD COLUMN modified INTEGER")
     }
 
     /** Favourites and playlists, mirrored from where they're kept, so Focus can filter on them. */
@@ -182,11 +198,11 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
 
     // ---- writing, for the scanner ----
 
-    /** (size, whether the tags and format were read) of each song already known in [source]. */
-    fun known(source: String): Map<String, Pair<Long, Boolean>> {
-        val out = HashMap<String, Pair<Long, Boolean>>()
-        readableDatabase.rawQuery("SELECT id, size, probed FROM tracks WHERE source = ?", arrayOf(source)).use { c ->
-            while (c.moveToNext()) out[c.getString(0)] = c.getLong(1) to (c.getInt(2) != 0)
+    /** What's known of each song already in [source]. */
+    fun known(source: String): Map<String, KnownSong> {
+        val out = HashMap<String, KnownSong>()
+        readableDatabase.rawQuery("SELECT id, size, probed, modified FROM tracks WHERE source = ?", arrayOf(source)).use { c ->
+            while (c.moveToNext()) out[c.getString(0)] = KnownSong(c.getLong(1), c.getInt(2) != 0, if (c.isNull(3)) 0 else c.getLong(3))
         }
         return out
     }
@@ -221,7 +237,7 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
                     put("rate", t.sampleRate); put("bits", t.bits); put("channels", t.channels); put("albumBy", t.albumBy)
                     put("composer", t.composer); put("label", t.label); put("compilation", if (t.compilation) 1 else 0)
                     put("haystack", listOf(t.title, t.artist, t.albumArtist, t.album, t.genre, t.composer, t.label, t.file, t.folderName, t.codec, t.year?.toString().orEmpty()).joinToString(" ").lowercase())
-                    put("probed", if (probed[i]) 1 else 0); put("seen", generation)
+                    put("probed", if (probed[i]) 1 else 0); put("seen", generation); put("modified", t.modified)
                 }
                 // Keep when it was first added across rescans.
                 val added = db.rawQuery("SELECT added FROM tracks WHERE id = ?", arrayOf(t.id)).use { c -> if (c.moveToFirst()) c.getLong(0) else now }

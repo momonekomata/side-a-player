@@ -52,7 +52,7 @@ class FtpFs(private val server: NasServer) : RemoteFs {
         val files = ftp.listFiles(folder) ?: emptyArray()
         if (!FTPReply.isPositiveCompletion(ftp.replyCode) && files.isEmpty()) throw IOException("Listing $folder failed: ${ftp.replyString.trim()}")
         files.filter { it.name != "." && it.name != ".." && !it.name.startsWith("._") }
-            .map { RemoteItem(it.name, folder.trimEnd('/') + "/" + it.name, it.isDirectory, it.size) }
+            .map { RemoteItem(it.name, folder.trimEnd('/') + "/" + it.name, it.isDirectory, it.size, it.timestamp?.timeInMillis ?: 0) }
     }
 
     override fun read(id: String, from: Long, to: Long, sink: (ByteArray, Int) -> Boolean) = ftp { ftp ->

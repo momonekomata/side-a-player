@@ -19,7 +19,21 @@ data class Track(
     val folderArt: ((Context) -> ByteArray)? = null,
     /** Writes lyrics as a .lrc with the same name next to the file. Blocking; throws if it can't. */
     val lyricsWriter: ((Context, String) -> Unit)? = null,
+    /** When the file last changed (ms since 1970), as its folder listing says; 0 when it doesn't. */
+    val modifiedMs: Long = 0,
+    /** Where a downloaded copy is kept on the phone, for songs that are downloaded to play. */
+    val cacheFile: ((Context) -> java.io.File)? = null,
 )
+
+/** "Tue, 04 Nov 2025 10:12:01 GMT" (WebDAV, HTTP) → ms since 1970; 0 if it isn't one. */
+fun parseHttpDate(s: String?): Long = runCatching {
+    java.time.ZonedDateTime.parse(s!!.trim(), java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
+}.getOrDefault(0L)
+
+/** "2025-11-04T10:12:01Z" (the cloud APIs) → ms since 1970; 0 if it isn't one. */
+fun parseIsoTime(s: String?): Long = runCatching { java.time.Instant.parse(s!!.trim()).toEpochMilli() }
+    .recoverCatching { java.time.OffsetDateTime.parse(s!!.trim()).toInstant().toEpochMilli() }
+    .getOrDefault(0L)
 
 /** "Song.flac" → "Song.lrc". */
 fun lrcName(fileName: String) = fileName.substringBeforeLast('.') + ".lrc"

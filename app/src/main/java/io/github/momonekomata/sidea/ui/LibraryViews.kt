@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -282,7 +283,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                 myAlbums.chunked(3).forEachIndexed { r, row ->
                     item(key = "s:alg:$r:" + row.first().key) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            row.forEach { al -> AlbumTile(model, al, showBy = true, Modifier.weight(1f)) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
+                            row.forEach { al -> AlbumTile(model, al, showBy = true, Modifier.weight(1f), onLongClick = { albumMenu(vm, al) }) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
                             repeat(3 - row.size) { Box(Modifier.weight(1f)) }
                         }
                     }
@@ -308,7 +309,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
         }
         view.artists?.forEach { a ->
             item(key = "ar:" + a.name) {
-                JCardRow(a.name.take(1).uppercase(), a.name, "${plural(a.albums, "album")} · ${plural(a.tracks, "song")}", onClick = { model.open(LibDrill.Artist(a.name)) })
+                JCardRow(a.name.take(1).uppercase(), a.name, "${plural(a.albums, "album")} · ${plural(a.tracks, "song")}", onLongClick = { artistMenu(vm, a.name) }, onClick = { model.open(LibDrill.Artist(a.name)) })
             }
         }
         if (top is LibDrill.Artist || top is LibDrill.Genre) {
@@ -325,13 +326,13 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                 albums.chunked(3).forEachIndexed { r, row ->
                     item(key = "alg:$r:" + row.first().key) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            row.forEach { al -> AlbumTile(model, al, showBy = top !is LibDrill.Artist, Modifier.weight(1f)) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
+                            row.forEach { al -> AlbumTile(model, al, showBy = top !is LibDrill.Artist, Modifier.weight(1f), onLongClick = { albumMenu(vm, al) }) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
                             repeat(3 - row.size) { Box(Modifier.weight(1f)) }
                         }
                     }
                 }
             } else {
-                albums.forEach { al -> item(key = "al:" + al.key) { AlbumRow(model, al, showBy = top !is LibDrill.Artist) { model.open(LibDrill.Album(al.key, al.title, al.by)) } } }
+                albums.forEach { al -> item(key = "al:" + al.key) { AlbumRow(model, al, showBy = top !is LibDrill.Artist, onLongClick = { albumMenu(vm, al) }) { model.open(LibDrill.Album(al.key, al.title, al.by)) } } }
             }
         }
         view.tracks?.let { tracks ->
@@ -373,7 +374,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
         }
         view.genres?.forEach { g ->
             item(key = "g:" + g.name) {
-                JCardRow("♪", g.name, "${plural(g.albums, "album")} · ${plural(g.tracks, "song")}", onClick = { model.open(LibDrill.Genre(g.name)) })
+                JCardRow("♪", g.name, "${plural(g.albums, "album")} · ${plural(g.tracks, "song")}", onLongClick = { genreMenu(vm, g.name) }, onClick = { model.open(LibDrill.Genre(g.name)) })
             }
         }
     }
@@ -424,9 +425,9 @@ private fun HitRow(
 ) {
     fun kind(k: String, rest: String) = if (marked) "$k · $rest" else rest
     h.artist?.let { a ->
-        JCardRow(a.name.take(1).uppercase(), a.name, kind("Artist", "${plural(a.albums, "album")} · ${plural(a.tracks, "song")}"), onClick = { model.open(LibDrill.Artist(a.name)) })
+        JCardRow(a.name.take(1).uppercase(), a.name, kind("Artist", "${plural(a.albums, "album")} · ${plural(a.tracks, "song")}"), onLongClick = { artistMenu(vm, a.name) }, onClick = { model.open(LibDrill.Artist(a.name)) })
     }
-    h.album?.let { al -> AlbumRow(model, al, showBy = true) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
+    h.album?.let { al -> AlbumRow(model, al, showBy = true, onLongClick = { albumMenu(vm, al) }) { model.open(LibDrill.Album(al.key, al.title, al.by)) } }
     h.track?.let { t ->
         JCardRow(
             "", t.title,
@@ -437,7 +438,7 @@ private fun HitRow(
         )
     }
     h.genre?.let { g ->
-        JCardRow("♪", g.name, kind("Genre", "${plural(g.albums, "album")} · ${plural(g.tracks, "song")}"), onClick = { model.open(LibDrill.Genre(g.name)) })
+        JCardRow("♪", g.name, kind("Genre", "${plural(g.albums, "album")} · ${plural(g.tracks, "song")}"), onLongClick = { genreMenu(vm, g.name) }, onClick = { model.open(LibDrill.Genre(g.name)) })
     }
 }
 
@@ -521,11 +522,17 @@ private fun albumCover(model: io.github.momonekomata.sidea.library.LibraryModel,
     return cover
 }
 
+/** Long-press menus for what isn't a song: the song menu, for all of its songs. */
+private fun albumMenu(vm: MainViewModel, al: LibAlbum) = vm.openGroupMenu(al.title, al.by, album = al.key)
+private fun artistMenu(vm: MainViewModel, name: String) = vm.openGroupMenu(name, "Artist", artist = name)
+private fun genreMenu(vm: MainViewModel, name: String) = vm.openGroupMenu(name, "Genre", genre = name)
+
 /** An album in the grid: a big square cover with the title and who it's by under it. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, modifier: Modifier, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     val cover = albumCover(model, al)
-    Column(modifier.clickable(onClick = onClick)) {
+    Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(4.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
             if (cover != null) {
                 Image(cover, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
@@ -542,11 +549,12 @@ private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, 
 }
 
 /** An album in the list: its cover, title, who by, year and format. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun AlbumRow(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, onClick: () -> Unit) {
+private fun AlbumRow(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     val cover = albumCover(model, al)
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(horizontal = 18.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val c = cover

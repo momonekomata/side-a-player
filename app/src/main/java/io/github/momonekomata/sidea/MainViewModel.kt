@@ -61,6 +61,9 @@ data class BrowseState(
 /** The long-press menu for a song; [playlistId]/[index] when it was opened inside a playlist. */
 data class SongMenu(val track: io.github.momonekomata.sidea.sources.Track, val playlistId: String? = null, val index: Int = -1, val queueIndex: Int = -1)
 
+/** The long-press menu for an album, an artist or a genre: the same as a song's, for all its songs. */
+data class GroupMenu(val title: String, val subtitle: String, val tracks: List<io.github.momonekomata.sidea.sources.Track>?)
+
 data class CertPrompt(val server: NasServer, val sha256: String, val subject: String)
 
 /** Lyrics for whatever the deck is showing. [key] identifies the song they belong to. */
@@ -459,8 +462,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeSongMenu() { _songMenu.value = null }
 
+    private val _groupMenu = MutableStateFlow<GroupMenu?>(null)
+    val groupMenu = _groupMenu.asStateFlow()
+    private var groupJob: kotlinx.coroutines.Job? = null
+
+    /** The menu for an artist, an album ([album] is its key) or a genre; its songs load as it opens. */
+    fun openGroupMenu(title: String, subtitle: String, artist: String? = null, album: String? = null, genre: String? = null) {
+        _groupMenu.value = GroupMenu(title, subtitle, null)
+        groupJob?.cancel()
+        groupJob = viewModelScope.launch {
+            val songs = library.songsOf(artist = artist, album = album, genre = genre)
+            _groupMenu.update { it?.copy(tracks = songs) }
+        }
+    }
+
+    fun closeGroupMenu() {
+        groupJob?.cancel()
+        _groupMenu.value = null
+    }
+
     fun playNext(t: io.github.momonekomata.sidea.sources.Track) = Player.playNext(t)
     fun addToQueue(t: io.github.momonekomata.sidea.sources.Track) = Player.addToQueue(t)
+    fun playNext(songs: List<io.github.momonekomata.sidea.sources.Track>) = Player.playNext(songs)
+    fun addToQueue(songs: List<io.github.momonekomata.sidea.sources.Track>) = Player.addToQueue(songs)
+
+    /** Makes all of [songs] favourites, or (when they all are already) none of them. */
+    fun toggleFavorites(songs: List<io.github.momonekomata.sidea.sources.Track>) {
+        if (songs.isEmpty()) return
+        val list = _favorites.value
+        val ids = songs.map { it.id }.toSet()
+        val next = if (songs.all { s -> list.any { it.id == s.id } }) {
+            list.filterNot { it.id in ids }
+        } else {
+            songs.filter { s -> list.none { it.id == s.id } }.map(::saved) + list
+        }
+        _favorites.value = next
+        favoriteStore.save(next)
+        syncLists()
+    }
+
+    fun addToPlaylist(id: String, songs: List<io.github.momonekomata.sidea.sources.Track>) =
+        savePlaylists(_playlists.value.map { if (it.id == id) it.copy(songs = it.songs + songs.map(::saved)) else it })
+
+    fun newPlaylist(name: String, songs: List<io.github.momonekomata.sidea.sources.Track>) {
+        val p = Playlist(java.util.UUID.randomUUID().toString(), name.trim().ifEmpty { "Playlist" }, songs.map(::saved))
+        savePlaylists(_playlists.value + p)
+    }
 
     private fun savePlaylists(list: List<Playlist>) {
         _playlists.value = list
