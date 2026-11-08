@@ -45,7 +45,14 @@ sealed interface Entry {
     val name: String
     data class Folder(override val name: String, val path: String) : Entry
     data class Song(override val name: String, val track: Track) : Entry
+    /** A playlist file (.m3u, .m3u8, .pls) in the folder; [read] fetches its bytes. Blocking. */
+    data class ListFile(override val name: String, val modifiedMs: Long, val read: (Context) -> ByteArray) : Entry
 }
+
+private val PLAYLIST_EXTENSIONS = setOf("m3u", "m3u8", "pls")
+
+/** A playlist file the Library reads: M3U (and its UTF-8 .m3u8) or PLS. */
+fun isPlaylistFile(name: String) = !name.startsWith("._") && name.substringAfterLast('.', "").lowercase() in PLAYLIST_EXTENSIONS
 
 /** A browsable tree: the local music folder or a NAS share. */
 interface Browser {
@@ -102,8 +109,8 @@ fun titleFromFileName(name: String): String {
     return base.replace(Regex("^\\d{1,3}[ ._-]+"), "").ifBlank { base }
 }
 
-/** Folders first, then songs, both in natural-ish order so "2" sorts before "10". */
+/** Folders first, then songs, then playlist files, each in natural-ish order so "2" sorts before "10". */
 fun List<Entry>.sortedForBrowsing(): List<Entry> {
     val key = { e: Entry -> e.name.lowercase().replace(Regex("\\d+")) { it.value.padStart(6, '0') } }
-    return filterIsInstance<Entry.Folder>().sortedBy(key) + filterIsInstance<Entry.Song>().sortedBy(key)
+    return filterIsInstance<Entry.Folder>().sortedBy(key) + filterIsInstance<Entry.Song>().sortedBy(key) + filterIsInstance<Entry.ListFile>().sortedBy(key)
 }

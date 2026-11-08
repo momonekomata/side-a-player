@@ -9,11 +9,12 @@ import io.github.momonekomata.sidea.audio.Player
 import io.github.momonekomata.sidea.library.FAVORITES_LIST
 import io.github.momonekomata.sidea.library.Library
 import io.github.momonekomata.sidea.library.LibrarySource
+import io.github.momonekomata.sidea.library.PlaylistFiles
 import io.github.momonekomata.sidea.sources.Browser
 import io.github.momonekomata.sidea.sources.Entry
 import io.github.momonekomata.sidea.sources.Favorite
 import io.github.momonekomata.sidea.sources.Playlist
-import io.github.momonekomata.sidea.sources.PlaylistStore
+import io.github.momonekomata.sidea.sources.Playlists
 import io.github.momonekomata.sidea.sources.FtpsBrowser
 import io.github.momonekomata.sidea.sources.NasKind
 import io.github.momonekomata.sidea.sources.NasServer
@@ -115,9 +116,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _lyrics = MutableStateFlow(LyricsState())
     val lyrics = _lyrics.asStateFlow()
 
-    private val playlistStore = PlaylistStore(app)
-    private val _playlists = MutableStateFlow(playlistStore.all())
-    val playlists = _playlists.asStateFlow()
+    private val _playlists = Playlists.apply { init(app) }.all
+    val playlists = _playlists
 
     /** The Library: the one place songs are browsed. Opens its database on first use. */
     val library by lazy {
@@ -130,7 +130,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(nasServers = nasStore.all()) }
         library
         moveLocalFolderIntoLibrary()
-        syncLists()
+        // Whenever the playlists change (here, or a scan finding playlist files): Focus gets them.
+        viewModelScope.launch { _playlists.collect { syncLists() } }
         // The last queue, paused where it was, if the player has nothing (the app was closed).
         viewModelScope.launch(Dispatchers.IO) {
             Player.restore(::resolve)
@@ -510,9 +511,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun savePlaylists(list: List<Playlist>) {
-        _playlists.value = list
-        playlistStore.save(list)
-        syncLists()
+        Playlists.update { list }
     }
 
     fun addToPlaylist(id: String, t: io.github.momonekomata.sidea.sources.Track) =
@@ -530,6 +529,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun deletePlaylist(id: String) {
         // A Focus on it goes too.
         if (library.ui.value.filter.list == id) library.closeList()
+        // One read from a playlist file stays gone: the next scan doesn't bring it back.
+        _playlists.value.firstOrNull { it.id == id }?.origin?.let(Playlists::dismiss)
         savePlaylists(_playlists.value.filterNot { it.id == id })
     }
+
+    // ---- playlist files: import and export ----
+
+    /** Reads a playlist file picked on the phone (.m3u, .m3u8, .pls) into a new playlist of the Library's songs. */
+    fun importPlaylist(uri: Uri) = viewModelScope.launch {
+        val ctx = getApplication<Application>()
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                val bytes = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val name = displayName(uri) ?: "Playlist"
+                PlaylistFiles.import(name, bytes)
+            }
+        }
+        result.onSuccess { (p, missing) ->
+            if (p.songs.isEmpty()) {
+                toast("None of that playlist's ${missing} songs are in the Library")
+                return@onSuccess
+            }
+            savePlaylists(_playlists.value + p)
+            library.showList(p.id)
+            toast("“${p.name}”: ${p.songs.size} songs" + if (missing > 0) " · $missing not in the Library" else "")
+        }.onFailure { toast("Couldn't read that playlist (${friendlyError(it)})") }
+    }
+
+    /** Writes playlist [id] as an .m3u8 to [uri] (made with the system's Save dialog). */
+    fun exportPlaylist(id: String, uri: Uri) = viewModelScope.launch {
+        val p = _playlists.value.firstOrNull { it.id == id } ?: return@launch
+        val ctx = getApplication<Application>()
+        withContext(Dispatchers.IO) {
+            runCatching { ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(PlaylistFiles.export(p).toByteArray(Charsets.UTF_8)) } }
+        }.onSuccess { toast("Saved “${p.name}” (${p.songs.size} songs)") }
+            .onFailure { toast("Couldn't save it (${friendlyError(it)})") }
+    }
+
+    private fun displayName(uri: Uri): String? = runCatching {
+        getApplication<Application>().contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()
+
+    private fun toast(text: String) = android.widget.Toast.makeText(getApplication(), text, android.widget.Toast.LENGTH_LONG).show()
 }

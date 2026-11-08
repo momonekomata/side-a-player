@@ -210,6 +210,8 @@ fun JCardRow(
     onLongClick: (() -> Unit)? = null,
     /** Drawn at the end of the line, e.g. a drag handle. */
     trailing: (@Composable () -> Unit)? = null,
+    /** Drawn in place of the number, e.g. the song's cover. */
+    leading: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -217,10 +219,12 @@ fun JCardRow(
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .background(if (current) Retro.Orange.copy(alpha = 0.18f) else Retro.Cream)
-            .padding(horizontal = 18.dp, vertical = 9.dp),
+            .padding(horizontal = 18.dp, vertical = if (leading != null) 6.dp else 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
+        if (leading != null) {
+            Box(Modifier.padding(end = 12.dp)) { leading() }
+        } else Text(
             if (current) "▶" else number,
             color = if (current) Retro.Orange else Retro.InkFaint,
             fontFamily = Retro.Mono,

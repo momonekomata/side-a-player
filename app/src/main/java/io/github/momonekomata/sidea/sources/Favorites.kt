@@ -21,23 +21,51 @@ class FavoritesStore(context: Context) {
     }
 }
 
-/** A playlist of songs from Local and the NAS, in the order they were added. */
-data class Playlist(val id: String, val name: String, val songs: List<Favorite>)
+/**
+ * A playlist of songs from Local and the NAS, in the order they were added. One found in a
+ * Library folder (an .m3u beside the music) has [origin] (where the file is) and [stamp] (what
+ * the file was when last read), so a rescan updates it rather than add it again.
+ */
+data class Playlist(val id: String, val name: String, val songs: List<Favorite>, val origin: String? = null, val stamp: String? = null)
 
-class PlaylistStore(context: Context) {
-    private val prefs = context.getSharedPreferences("playlists", 0)
+/** The playlists, kept on the phone; shared by the app and the Library's scan (which finds playlist files). */
+object Playlists {
+    private var prefs: android.content.SharedPreferences? = null
+    private val _all = kotlinx.coroutines.flow.MutableStateFlow<List<Playlist>>(emptyList())
+    val all: kotlinx.coroutines.flow.StateFlow<List<Playlist>> = _all
 
-    fun all(): List<Playlist> {
-        val arr = JSONArray(prefs.getString("list", "[]"))
-        return (0 until arr.length()).map {
+    @Synchronized
+    fun init(context: Context) {
+        if (prefs != null) return
+        val p = context.applicationContext.getSharedPreferences("playlists", 0).also { prefs = it }
+        val arr = JSONArray(p.getString("list", "[]"))
+        _all.value = (0 until arr.length()).map {
             val o = arr.getJSONObject(it)
-            Playlist(o.getString("id"), o.optString("name"), o.optJSONArray("songs")?.favorites().orEmpty())
+            Playlist(
+                o.getString("id"), o.optString("name"), o.optJSONArray("songs")?.favorites().orEmpty(),
+                o.optString("origin").ifEmpty { null }, o.optString("stamp").ifEmpty { null },
+            )
         }
     }
 
-    fun save(list: List<Playlist>) {
-        val arr = JSONArray(list.map { JSONObject().put("id", it.id).put("name", it.name).put("songs", it.songs.toJson()) })
-        prefs.edit().putString("list", arr.toString()).apply()
+    /** Changes the playlists as [f] says, and keeps the result. */
+    @Synchronized
+    fun update(f: (List<Playlist>) -> List<Playlist>): List<Playlist> {
+        val next = f(_all.value)
+        _all.value = next
+        val arr = JSONArray(next.map {
+            JSONObject().put("id", it.id).put("name", it.name).put("songs", it.songs.toJson())
+                .apply { it.origin?.let { o -> put("origin", o) }; it.stamp?.let { s -> put("stamp", s) } }
+        })
+        prefs?.edit()?.putString("list", arr.toString())?.apply()
+        return next
+    }
+
+    /** Playlist files whose playlist was deleted: a rescan doesn't bring them back. */
+    fun dismissed(): Set<String> = prefs?.getStringSet("dismissed", emptySet()).orEmpty()
+
+    fun dismiss(origin: String) {
+        prefs?.edit()?.putStringSet("dismissed", dismissed() + origin)?.apply()
     }
 }
 

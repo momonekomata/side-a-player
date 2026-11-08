@@ -68,7 +68,11 @@ data class LibrarySource(
 }
 
 /** What the scanner is doing: which source, how many folders read and songs found so far. */
-data class ScanState(val running: Boolean = false, val source: String = "", val folders: Int = 0, val songs: Int = 0, val read: Int = 0, val toRead: Int = 0)
+data class ScanState(val running: Boolean = false, val source: String = "", val folders: Int = 0, val songs: Int = 0, val read: Int = 0, val toRead: Int = 0, val playlists: Int = 0) {
+    /** One line saying what it's doing, for the Library's title and the notification. */
+    fun describe() = "scanning $source · $folders folders, $songs songs" +
+        (if (toRead > 0) " · reading $read/$toRead" else "") + (if (playlists > 0) " · $playlists playlists" else "")
+}
 
 /**
  * The Library: every song under the folders you point it at, with its tags and format, in a
@@ -100,6 +104,8 @@ object Library {
         if (::db.isInitialized) return
         appContext = context.applicationContext
         db = LibraryDb(appContext)
+        // Playlist files found by a scan join these.
+        io.github.momonekomata.sidea.sources.Playlists.init(appContext)
         // Playlists and cue sheets earlier scans took for songs ("Unknown artist" albums): out.
         runCatching { db.dropNonSongs() }
         _sources.value = runCatching {
@@ -140,26 +146,48 @@ object Library {
 
     fun scanAll() = _sources.value.forEach { scan(it.id) }
 
+    private val _scanning = MutableStateFlow(false)
+    /** Whether a scan is queued or running (the notification stays while it is). */
+    val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
+
+    /** Stops the scan, and the ones waiting. What was read so far is kept; the next scan goes on from there. */
+    @Synchronized
+    fun stopScan() {
+        waiting.clear()
+        scanJob?.cancel()
+    }
+
     /** Queues a scan of [id]; one source is scanned at a time. */
     @Synchronized
     fun scan(id: String) {
         waiting += id
         if (scanJob?.isActive == true) return
+        _scanning.value = true
+        // So closing the app (or the screen going off) doesn't stop it.
+        ScanService.start(appContext)
         scanJob = scope.launch {
-            while (isActive) {
-                val next = synchronized(this@Library) { waiting.firstOrNull()?.also { waiting.remove(it) } } ?: break
-                val src = _sources.value.firstOrNull { it.id == next } ?: continue
-                try {
-                    scanSource(src)
-                    updateSource(src.id) { it.copy(lastScan = System.currentTimeMillis(), lastError = null) }
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    Log.w(TAG, "scan of ${src.name} failed", e)
-                    updateSource(src.id) { it.copy(lastError = io.github.momonekomata.sidea.sources.friendlyError(e)) }
+            try {
+                while (isActive) {
+                    val next = synchronized(this@Library) { waiting.firstOrNull()?.also { waiting.remove(it) } } ?: break
+                    val src = _sources.value.firstOrNull { it.id == next } ?: continue
+                    try {
+                        scanSource(src)
+                        updateSource(src.id) { it.copy(lastScan = System.currentTimeMillis(), lastError = null) }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        Log.w(TAG, "scan of ${src.name} failed", e)
+                        updateSource(src.id) { it.copy(lastError = io.github.momonekomata.sidea.sources.friendlyError(e)) }
+                    }
+                }
+            } finally {
+                _scan.value = ScanState()
+                _version.update { it + 1 }
+                synchronized(this@Library) {
+                    // A scan asked for just as this one ended: go on with it.
+                    val me = coroutineContext[Job]
+                    if (waiting.isNotEmpty()) scope.launch { me?.join(); synchronized(this@Library) { waiting.firstOrNull() }?.let(::scan) } else _scanning.value = false
                 }
             }
-            _scan.value = ScanState()
-            _version.update { it + 1 }
         }
     }
 
@@ -169,6 +197,7 @@ object Library {
         val known = db.known(src.id)
         val unchanged = ArrayList<String>()
         val todo = ArrayList<Triple<Entry.Song, String, String>>()
+        val lists = ArrayList<PlaylistFiles.Found>()
         var complete = true
         var folders = 0
         _scan.value = ScanState(true, src.name)
@@ -194,6 +223,7 @@ object Library {
                         val k = known[e.track.id]
                         if (k.unchanged(e.track.sizeBytes, e.track.modifiedMs)) unchanged += e.track.id else todo += Triple(e, path, name)
                     }
+                    is Entry.ListFile -> lists += PlaylistFiles.Found(path, e.name, e.modifiedMs, e.read)
                 }
             }
             _scan.update { it.copy(folders = folders, songs = unchanged.size + todo.size) }
@@ -225,6 +255,11 @@ object Library {
             _version.update { it + 1 }
         }
         if (complete) db.dropUnseen(src.id, generation)
+        // Playlist files in its folders, now that their songs are in: they join the playlists.
+        if (lists.isNotEmpty()) {
+            _scan.update { it.copy(playlists = lists.size) }
+            runCatching { PlaylistFiles.found(appContext, src, lists) }.onFailure { Log.w(TAG, "couldn't read the playlists in ${src.name}", it) }
+        }
         _version.update { it + 1 }
     }
 

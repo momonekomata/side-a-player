@@ -160,9 +160,10 @@ class WebDavBrowser(private val server: NasServer) : Browser {
         if (path.trimEnd('/') == requestPath.trimEnd('/')) return null
         val name = item.displayName()
         if (item.isDir) return Entry.Folder(name, path.trimEnd('/') + "/")
+        val url = base.newBuilder().encodedPath(path).build()
+        if (isPlaylistFile(name)) return Entry.ListFile(name, item.modified) { getBytes(url) }
         if (!isSongFile(name, item.mime)) return null
         val size = item.size
-        val url = base.newBuilder().encodedPath(path).build()
         val lrcUrl = lrc[lrcKey(name)]?.let { base.newBuilder().encodedPath(it).build() }
         val folder = URLDecoder.decode(requestPath.trimEnd('/').substringAfterLast('/'), "UTF-8")
         return Entry.Song(name, trackFor(url, name, size, folder).copy(lyricsFile = lrcUrl?.let { u -> { getText(u) } }, folderArt = folderArt, modifiedMs = item.modified))

@@ -37,6 +37,10 @@ class LocalBrowser(private val context: Context, private val treeUri: Uri) : Bro
         val folderArt: ((Context) -> ByteArray)? = coverUri?.let { u -> { ctx -> ctx.contentResolver.openInputStream(u)!!.use { it.readBytes() } } }
         rows.mapNotNull { r ->
             if (r.mime == DocumentsContract.Document.MIME_TYPE_DIR) return@mapNotNull Entry.Folder(r.name, r.id)
+            if (isPlaylistFile(r.name)) {
+                val u = DocumentsContract.buildDocumentUriUsingTree(treeUri, r.id)
+                return@mapNotNull Entry.ListFile(r.name, r.modified) { ctx -> ctx.contentResolver.openInputStream(u)!!.use { it.readBytes() } }
+            }
             if (!isSongFile(r.name, r.mime)) return@mapNotNull null
             val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, r.id)
             val lrcUri = lrc[lrcKey(r.name)]?.let { DocumentsContract.buildDocumentUriUsingTree(treeUri, it) }

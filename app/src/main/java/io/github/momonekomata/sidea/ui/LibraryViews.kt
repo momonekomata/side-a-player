@@ -101,6 +101,17 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
     var filtering by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<io.github.momonekomata.sidea.sources.Playlist?>(null) }
+    // Playlist files: one picked on the phone becomes a playlist; a playlist is saved as an .m3u8.
+    val importer = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::importPlaylist)
+    }
+    var exporting by remember { mutableStateOf<String?>(null) }
+    // octet-stream, so the Save dialog keeps ".m3u8" rather than add an extension of its own.
+    val exporter = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val id = exporting
+        if (uri != null && id != null) vm.exportPlaylist(id, uri)
+        exporting = null
+    }
     val grid by model.gridAlbums.collectAsStateWithLifecycle()
     val top = ui.stack.lastOrNull()
     val view = ui.view
@@ -132,7 +143,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
 
     val (songs, albums, artists) = ui.totals
     val subtitle = when {
-        scan.running -> "scanning ${scan.source} · ${scan.folders} folders, ${scan.songs} songs" + if (scan.toRead > 0) " · reading ${scan.read}/${scan.toRead}" else ""
+        scan.running -> scan.describe()
         else -> "${plural(songs, "song")} · ${plural(albums, "album")} · ${plural(artists, "artist")}"
     }
     // Focused on favourites or a playlist: which one, for the line above its songs.
@@ -259,8 +270,24 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
             item(key = "listline") {
                 // The list being shown: leave it, or delete a playlist.
                 JCardRow(
-                    "", listName!!, if (playlist != null) "playlist · long-press a song to take it out" else "tap ♡ on the deck, or long-press a song, to add",
-                    action = if (playlist != null) "Delete" to { deleting = playlist } else null,
+                    "", listName!!,
+                    when {
+                        playlist == null -> "tap ♡ on the deck, or long-press a song, to add"
+                        playlist.origin != null -> "from ${playlist.origin.substringAfterLast('|')} · long-press a song to take it out"
+                        else -> "playlist · long-press a song to take it out"
+                    },
+                    trailing = if (playlist != null) {
+                        {
+                            Row {
+                                listOf("Export" to { exporting = playlist.id; exporter.launch(playlist.name.replace(Regex("[\\\\/:*?\"<>|]"), "_") + ".m3u8") }, "Delete" to { deleting = playlist }).forEach { (label, run) ->
+                                    Text(
+                                        label.uppercase(), color = Retro.Orange, fontFamily = Retro.Mono, fontSize = 11.sp,
+                                        modifier = Modifier.clickable(onClick = run).padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
+                                    )
+                                }
+                            }
+                        }
+                    } else null,
                     onClick = model::closeList,
                 )
             }
@@ -363,6 +390,8 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                     JCardRow(
                         number, t.title, detail,
                         current = queue.current?.id == t.id,
+                        // Inside an album every song has its cover: the numbers say more there.
+                        leading = if (view.albumOrder) null else ({ SongCover(model, t, queue.current?.id == t.id) }),
                         // Inside a playlist the menu can take the song out of it.
                         onLongClick = {
                             val at = playlist?.songs?.indexOfFirst { it.id == t.id } ?: -1
@@ -391,6 +420,7 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
             playlists, current = focusList,
             onPick = { model.showList(it); picking = false },
             onNew = { vm.newPlaylist(it, null) },
+            onImport = { picking = false; importer.launch(arrayOf("*/*")) },
             onDismiss = { picking = false },
         )
     }
@@ -435,6 +465,7 @@ private fun HitRow(
             "", t.title,
             kind("Song", listOf(t.artist.ifBlank { t.albumBy }, t.album, formatLabel(t.codec, t.sampleRate, t.bits)).filter { it.isNotBlank() }.joinToString(" · ")),
             current = playing == t.id,
+            leading = { SongCover(model, t, playing == t.id) },
             onLongClick = { vm.openSongMenu(t) },
             onClick = { onSong(t) },
         )
@@ -451,6 +482,7 @@ private fun PlaylistPicker(
     current: String?,
     onPick: (String) -> Unit,
     onNew: (String) -> Unit,
+    onImport: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var naming by remember { mutableStateOf(false) }
@@ -477,6 +509,13 @@ private fun PlaylistPicker(
                 Row(Modifier.fillMaxWidth().clickable { naming = true }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("+", color = Retro.Orange, modifier = Modifier.width(30.dp))
                     Text("New playlist…", fontSize = 15.sp)
+                }
+                Row(Modifier.fillMaxWidth().clickable(onClick = onImport).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("⤓", color = Retro.Orange, modifier = Modifier.width(30.dp))
+                    Column {
+                        Text("Import a playlist file…", fontSize = 15.sp)
+                        Text(".m3u, .m3u8 or .pls · playlists in your music folders join by themselves", fontSize = 12.sp, color = Retro.Muted)
+                    }
                 }
             }
         },
@@ -513,15 +552,39 @@ private fun PlayRow(onPlay: () -> Unit, onShuffle: () -> Unit) {
     }
 }
 
-/** An album's cover, read the first time it's on screen. */
+/** An album's cover, read the first time it's on screen; [small] for a list row (kept on the phone). */
 @Composable
-private fun albumCover(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum): ImageBitmap? {
+private fun albumCover(model: io.github.momonekomata.sidea.library.LibraryModel, albumKey: String, small: Boolean = false): ImageBitmap? {
     val context = LocalContext.current
-    val cover by produceState<ImageBitmap?>(null, al.sampleId) {
-        val track = withContext(Dispatchers.IO) { Library.db.tracks(LibFilter(), album = al.key, limit = 1).firstOrNull()?.let(model::trackOf) }
-        value = track?.let { ArtworkStore.load(context, it)?.asImageBitmap() }
+    val cover by produceState(albumFirst[albumKey]?.takeIf { small }?.let { ArtworkStore.cachedThumb(it)?.asImageBitmap() }, albumKey, small) {
+        if (value != null) return@produceState
+        val track = withContext(Dispatchers.IO) {
+            // Every song of the album shows the album's one cover (its first song's).
+            val first = albumFirst[albumKey]?.let { Library.db.track(it) }
+                ?: Library.db.tracks(LibFilter(), album = albumKey, limit = 1).firstOrNull()?.also { albumFirst[albumKey] = it.id }
+            first?.let(model::trackOf)
+        }
+        value = track?.let { (if (small) ArtworkStore.thumb(context, it) else ArtworkStore.load(context, it))?.asImageBitmap() }
     }
     return cover
+}
+
+/** Each album's first song, whose cover stands for the album's. */
+private val albumFirst = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+/** A song's cover in a list: its album's, small. While it plays, ▶ over it. */
+@Composable
+private fun SongCover(model: io.github.momonekomata.sidea.library.LibraryModel, t: io.github.momonekomata.sidea.library.LibTrack, playing: Boolean) {
+    val cover = albumCover(model, t.albumKey, small = true)
+    Box(Modifier.size(40.dp).clip(RoundedCornerShape(3.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
+        if (cover != null) Image(cover, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
+        else Text("♪", color = Retro.InkFaint, fontSize = 16.sp)
+        if (playing) {
+            Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+                Text("▶", color = Retro.Orange, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }
 
 /** Long-press menus for what isn't a song: the song menu, for all of its songs. */
@@ -533,7 +596,7 @@ private fun genreMenu(vm: MainViewModel, name: String) = vm.openGroupMenu(name, 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, modifier: Modifier, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
-    val cover = albumCover(model, al)
+    val cover = albumCover(model, al.key)
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(4.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
             if (cover != null) {
@@ -554,7 +617,7 @@ private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun AlbumRow(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
-    val cover = albumCover(model, al)
+    val cover = albumCover(model, al.key, small = true)
     Row(
         Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(horizontal = 18.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

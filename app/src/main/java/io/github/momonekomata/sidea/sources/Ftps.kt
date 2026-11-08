@@ -65,6 +65,7 @@ class FtpsBrowser(private val context: Context, private val server: NasServer) :
                 val full = path.trimEnd('/') + "/" + f.name
                 when {
                     f.isDirectory -> Entry.Folder(f.name, full)
+                    isPlaylistFile(f.name) -> Entry.ListFile(f.name, f.timestamp?.timeInMillis ?: 0) { fetchBytes(full) }
                     isAudioFile(f.name) -> Entry.Song(
                         f.name,
                         trackFor(full, f.size).copy(

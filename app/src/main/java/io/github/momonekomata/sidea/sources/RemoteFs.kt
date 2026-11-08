@@ -101,6 +101,7 @@ class RemoteBrowser(private val context: Context, private val server: NasServer,
         items.mapNotNull { f ->
             when {
                 f.isFolder -> Entry.Folder(f.name, f.id)
+                isPlaylistFile(f.name) -> Entry.ListFile(f.name, f.modified) { fs.readAll(f.id) }
                 isAudioFile(f.name) -> Entry.Song(
                     f.name,
                     trackFor(path, f.id, f.name, f.size, folderName).copy(

@@ -135,7 +135,7 @@ private fun FolderPicker(vm: MainViewModel, state: BrowseState, modifier: Modifi
     val inLibrary = remember(sources, state.currentPath) { vm.inLibrary() }
     val ready = !state.loading && state.error == null
     val songs = state.entries.count { it is Entry.Song }
-    val folders = state.entries.size - songs
+    val folders = state.entries.count { it is Entry.Folder }
     JCard(state.currentName, if (ready) "${plural(songs, "song")} · ${plural(folders, "folder")} · ${state.browser.title}" else state.browser.title, modifier) {
         item(key = "up") {
             if (state.path.size > 1) JCardRow("‹", "Back to ${state.path[state.path.size - 2].first}", onClick = vm::up)
@@ -154,6 +154,7 @@ private fun FolderPicker(vm: MainViewModel, state: BrowseState, modifier: Modifi
                     when (e) {
                         is Entry.Folder -> item(key = "f:" + e.path) { JCardRow("▸", e.name, "folder", onClick = { vm.openFolder(e) }) }
                         is Entry.Song -> item(key = "s:" + e.track.id) { JCardRow("♪", e.name, onClick = {}) }
+                        is Entry.ListFile -> item(key = "p:" + e.name) { JCardRow("▤", e.name, "playlist · joins your playlists when the folder is scanned", onClick = {}) }
                     }
                 }
                 if (state.entries.isEmpty()) item(key = "empty") { JCardNote("No folders or music files here.") }
