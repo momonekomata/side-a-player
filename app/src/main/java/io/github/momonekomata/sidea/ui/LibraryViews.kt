@@ -143,7 +143,9 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
         focusList == FAVORITES_LIST -> "♥ Favourites"
         else -> playlist?.let { "▤ " + it.name } ?: "▤ Playlist"
     }
-    val labels: List<String> = view.artists?.map { it.name } ?: view.albums?.map { it.title } ?: view.tracks?.takeIf { !view.albumOrder && focusList == null }?.map { it.title } ?: view.genres?.map { it.name } ?: emptyList()
+    // What the letter index reads: only lists in A–Z order (not an artist's albums, newest first).
+    val labels: List<String> = view.artists?.map { it.name } ?: view.albums?.takeIf { top !is LibDrill.Artist }?.map { it.title }
+        ?: view.tracks?.takeIf { !view.albumOrder && focusList == null }?.map { it.title } ?: view.genres?.map { it.name } ?: emptyList()
     // Rows above the list itself: Back, the list's own line, and Play/Shuffle under an artist or genre.
     // A playlist gets a line above its songs, to delete it; the tab chips say what's shown.
     val showListLine = playlist != null && top == null

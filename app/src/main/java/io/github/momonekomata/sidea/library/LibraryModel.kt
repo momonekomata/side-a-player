@@ -165,16 +165,20 @@ class LibraryModel(private val scope: CoroutineScope, private val prefs: android
         // Searching from a tab looks through the whole Library; inside an artist, an album,
         // Favourites or a playlist it stays inside it.
         if (q.stack.isEmpty() && f.query.isNotBlank() && f.list == null) return LibView(search = db.searchAll(f, q.segment))
+        // A–Z lists in the order the letter index files them (LibOrder); an artist's albums stay
+        // newest first, an album's songs in track order, a list in its own order.
+        fun az(t: List<LibTrack>) = if (f.list != null) t else LibOrder.sorted(t) { it.title }
+        fun azAlbums(a: List<LibAlbum>) = LibOrder.sorted(a) { it.title }
         return when (val top = q.stack.lastOrNull()) {
             is LibDrill.Artist -> LibView(albums = db.albums(f, artist = top.name))
             is LibDrill.Album -> LibView(tracks = db.tracks(f, album = top.key), albumOrder = true)
-            is LibDrill.Genre -> LibView(albums = db.albums(f, genre = top.name))
-            is LibDrill.Source -> LibView(tracks = db.tracks(f, source = top.id))
+            is LibDrill.Genre -> LibView(albums = azAlbums(db.albums(f, genre = top.name)))
+            is LibDrill.Source -> LibView(tracks = az(db.tracks(f, source = top.id)))
             null -> when (q.segment) {
-                LibSegment.ARTISTS -> LibView(artists = db.artists(f))
-                LibSegment.ALBUMS -> LibView(albums = db.albums(f))
-                LibSegment.TRACKS -> LibView(tracks = db.tracks(f))
-                LibSegment.GENRES -> LibView(genres = db.genres(f))
+                LibSegment.ARTISTS -> LibView(artists = LibOrder.sorted(db.artists(f)) { it.name })
+                LibSegment.ALBUMS -> LibView(albums = azAlbums(db.albums(f)))
+                LibSegment.TRACKS -> LibView(tracks = az(db.tracks(f)))
+                LibSegment.GENRES -> LibView(genres = LibOrder.sorted(db.genres(f)) { it.name })
             }
         }
     }

@@ -14,10 +14,39 @@ class LetterIndexTest {
     }
 
     @Test
+    fun listsSortTheWayTheIndexFilesThem() {
+        val albums = listOf(
+            "\"PODIUM\" EPISODE 02", "#好きなんだ", "(What's the Story) Morning Glory", "Unknown album", "Abbey Road",
+            "1999", "The Bends", "Élan", "after hours", "Pablo Honey", "さくら", "...", "Wish You Were Here",
+        )
+        val sorted = io.github.momonekomata.sidea.library.LibOrder.sorted(albums) { it }
+        assertEquals(
+            listOf(
+                "...", "1999", "Abbey Road", "after hours", "The Bends", "Élan", "Pablo Honey", "\"PODIUM\" EPISODE 02",
+                "(What's the Story) Morning Glory", "Wish You Were Here", "さくら", "#好きなんだ", "Unknown album",
+            ),
+            sorted,
+        )
+        // Each letter's first entry, so tapping it lands on the right row: A is "Abbey Road" (2).
+        val index = letterIndex(sorted, firstItem = 0).toMap()
+        assertEquals(2, index['A'])
+        assertEquals(6, index['P'])
+        assertEquals(8, index['W'])
+    }
+
+    @Test
     fun initials() {
         assertEquals('B', initialOf("  the beatles"))
         assertEquals('#', initialOf("...."))
         assertEquals('漢', initialOf("東京事変"))
         assertEquals('E', initialOf("électrique"))
+        assertEquals('R', initialOf("ＲＡ:ONLY vol.1"))
+        assertEquals('#', initialOf("÷"))
+        // Mathematical bold letters, as some releases style their titles.
+        assertEquals('R', initialOf("𝗥𝗔:𝗢𝗡𝗟𝗬 vol.1"))
+        assertEquals(
+            listOf("Quiet", "𝗥𝗔:ONLY", "Silence"),
+            io.github.momonekomata.sidea.library.LibOrder.sorted(listOf("Silence", "𝗥𝗔:ONLY", "Quiet")) { it },
+        )
     }
 }

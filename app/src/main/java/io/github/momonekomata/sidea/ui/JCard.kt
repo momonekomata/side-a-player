@@ -140,31 +140,12 @@ private fun LetterIndex(letters: List<Pair<Char, Int>>, list: LazyListState, onA
 fun letterIndex(labels: List<String>, firstItem: Int): List<Pair<Char, Int>> {
     val first = LinkedHashMap<Char, Int>()
     labels.forEachIndexed { i, label -> first.getOrPut(initialOf(label)) { firstItem + i } }
-    fun rank(c: Char) = when {
-        c == '#' -> 0
-        c in 'A'..'Z' -> 1
-        else -> 2
-    }
+    val rank = io.github.momonekomata.sidea.library.LibOrder::rank
     return first.entries.sortedWith(compareBy({ rank(it.key) }, { it.key })).map { it.key to it.value }
 }
 
-internal fun initialOf(label: String): Char {
-    val text = label.trim().removePrefix("The ").removePrefix("the ").trimStart()
-    val cp = text.codePoints().filter { Character.isLetterOrDigit(it) }.findFirst().orElse(-1)
-    if (cp < 0 || Character.isDigit(cp)) return '#'
-    // Accents off: É files under E.
-    val plain = java.text.Normalizer.normalize(String(Character.toChars(cp)), java.text.Normalizer.Form.NFD)[0].uppercaseChar()
-    if (plain in 'A'..'Z') return plain
-    return when (Character.UnicodeScript.of(cp)) {
-        Character.UnicodeScript.THAI -> 'ก'
-        Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA -> 'あ'
-        Character.UnicodeScript.HAN -> '漢'
-        Character.UnicodeScript.HANGUL -> '한'
-        Character.UnicodeScript.CYRILLIC -> 'Я'
-        Character.UnicodeScript.GREEK -> 'Ω'
-        else -> '#'
-    }
-}
+/** The letter [label] files under; the Library's lists are sorted by the same rule ([io.github.momonekomata.sidea.library.LibOrder]). */
+internal fun initialOf(label: String): Char = io.github.momonekomata.sidea.library.LibOrder.initialOf(label)
 
 /** The card's paper and header, with free-form content below. */
 @Composable
