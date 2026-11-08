@@ -106,6 +106,9 @@ object Library {
         db = LibraryDb(appContext)
         // Playlist files found by a scan join these.
         io.github.momonekomata.sidea.sources.Playlists.init(appContext)
+        // And so do favourites and the history, when a scan finds songs moved.
+        io.github.momonekomata.sidea.sources.Favorites.init(appContext)
+        io.github.momonekomata.sidea.sources.PlayHistory.init(appContext)
         // When a folder's songs run out, the player asks what comes next (Settings).
         io.github.momonekomata.sidea.audio.Player.folderAfter = { last, random -> folderAfter(last, random) }
         // Playlists and cue sheets earlier scans took for songs ("Unknown artist" albums): out.
@@ -256,7 +259,25 @@ object Library {
             _scan.update { it.copy(read = it.read + batch.size) }
             _version.update { it + 1 }
         }
-        if (complete) db.dropUnseen(src.id, generation)
+        if (complete) {
+            // Songs whose folder was renamed or moved: favourites, playlists, the history and play
+            // counts follow them to their new address before the old one goes.
+            val added = todo.filter { known[it.first.track.id] == null }.map { Triple(it.first.track.id, it.first.name, it.first.track.sizeBytes) }
+            val moves = if (added.isEmpty()) emptyMap() else matchMoves(db.unseen(src.id, generation), added)
+            if (moves.isNotEmpty()) {
+                Log.i(TAG, "${moves.size} songs moved in ${src.name}")
+                runCatching { db.followPlays(moves) }
+                val newSongs = moves.values.mapNotNull { id -> db.track(id) }.associateBy { it.id }
+                io.github.momonekomata.sidea.sources.followMoves(
+                    moves.mapNotNull { (old, new) ->
+                        newSongs[new]?.let { t -> old to io.github.momonekomata.sidea.sources.Favorite(t.id, t.title, t.artist.ifBlank { t.albumArtist }, t.album, t.size) }
+                    }.toMap(),
+                )
+            }
+            db.dropUnseen(src.id, generation)
+            // What was marked as moved in this source is found again (or gone for good).
+            io.github.momonekomata.sidea.sources.MissingFiles.forget { id -> db.track(id)?.source.let { it == null || it == src.id } }
+        }
         // Playlist files in its folders, now that their songs are in: they join the playlists.
         if (lists.isNotEmpty()) {
             _scan.update { it.copy(playlists = lists.size) }

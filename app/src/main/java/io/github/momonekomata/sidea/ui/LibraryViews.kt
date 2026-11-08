@@ -157,11 +157,20 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
     // What the letter index reads: only lists in A–Z order (not an artist's albums, newest first).
     val labels: List<String> = view.artists?.map { it.name } ?: view.albums?.takeIf { top !is LibDrill.Artist }?.map { it.title }
         ?: view.tracks?.takeIf { !view.albumOrder && focusList == null }?.map { it.title } ?: view.genres?.map { it.name } ?: emptyList()
+    // Songs whose files have moved or been renamed since the last scan, by source: a line each,
+    // with a Rescan key, until a scan finds them.
+    val missing by io.github.momonekomata.sidea.sources.MissingFiles.ids.collectAsStateWithLifecycle()
+    val moved by produceState(emptyList<Pair<io.github.momonekomata.sidea.library.LibrarySource, Int>>(), missing, scan.running) {
+        value = if (missing.isEmpty() || scan.running) emptyList() else withContext(Dispatchers.IO) {
+            val bySource = missing.mapNotNull { id -> runCatching { Library.db.track(id)?.source }.getOrNull() }.groupingBy { it }.eachCount()
+            Library.sources.value.mapNotNull { s -> bySource[s.id]?.let { s to it } }
+        }
+    }
     // Rows above the list itself: Back, the list's own line, and Play/Shuffle under an artist or genre.
     // A playlist gets a line above its songs, to delete it; the tab chips say what's shown.
     val showListLine = playlist != null && top == null
     // (No Back row: the system back gesture goes up a level.)
-    val above = (if (top is LibDrill.Artist || top is LibDrill.Genre) 1 else 0) + (if (showListLine) 1 else 0)
+    val above = moved.size + (if (top is LibDrill.Artist || top is LibDrill.Genre) 1 else 0) + (if (showListLine) 1 else 0)
     val gridded = grid && view.albums != null
     val letters = remember(labels, above, gridded) {
         when {
@@ -274,6 +283,16 @@ fun LibraryCard(vm: MainViewModel, queue: QueueState, onSources: () -> Unit, mod
                 }            }
         }
     }) {
+        moved.forEach { (src, n) ->
+            item(key = "moved:" + src.id) {
+                JCardRow(
+                    "⚠", if (n == 1) "A song has moved on ${src.name}" else "$n songs have moved on ${src.name}",
+                    "moved or renamed since the last scan · Rescan finds them",
+                    action = "Rescan" to { Library.scan(src.id) },
+                    onClick = { Library.scan(src.id) },
+                )
+            }
+        }
         if (showListLine) {
             item(key = "listline") {
                 // The list being shown: leave it, or delete a playlist.
@@ -584,9 +603,15 @@ private val albumFirst = java.util.concurrent.ConcurrentHashMap<String, String>(
 @Composable
 private fun SongCover(model: io.github.momonekomata.sidea.library.LibraryModel, t: io.github.momonekomata.sidea.library.LibTrack, playing: Boolean) {
     val cover = albumCover(model, t.albumKey, small = true)
+    val missing by io.github.momonekomata.sidea.sources.MissingFiles.ids.collectAsStateWithLifecycle()
     Box(Modifier.size(40.dp).clip(RoundedCornerShape(3.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
-        if (cover != null) Image(cover, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
-        else Text("♪", color = Retro.InkFaint, fontSize = 16.sp)
+        when {
+            // Its file has moved since the last scan: no cover to read, and that's why.
+            // (Or its album's first song's, whose cover stands for the album: the folder moved.)
+            t.id in missing || albumFirst[t.albumKey] in missing -> Text("⚠", color = Retro.Orange, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            cover != null -> Image(cover, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
+            else -> Text("♪", color = Retro.InkFaint, fontSize = 16.sp)
+        }
         if (playing) {
             Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
                 Text("▶", color = Retro.Orange, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -605,9 +630,16 @@ private fun genreMenu(vm: MainViewModel, name: String) = vm.openGroupMenu(name, 
 @Composable
 private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, modifier: Modifier, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     val cover = albumCover(model, al.key)
+    val missing by io.github.momonekomata.sidea.sources.MissingFiles.ids.collectAsStateWithLifecycle()
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(4.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
-            if (cover != null) {
+            if (albumFirst[al.key] in missing) {
+                // Its folder has moved since the last scan.
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("⚠", color = Retro.Orange, fontWeight = FontWeight.Bold, fontSize = 28.sp)
+                    Text("moved · rescan", color = Retro.InkFaint, fontSize = 11.sp)
+                }
+            } else if (cover != null) {
                 Image(cover, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
             } else {
                 Text(al.title.take(1).uppercase(), color = Retro.InkFaint, fontWeight = FontWeight.Bold, fontSize = 28.sp)
@@ -626,12 +658,17 @@ private fun AlbumTile(model: io.github.momonekomata.sidea.library.LibraryModel, 
 @Composable
 private fun AlbumRow(model: io.github.momonekomata.sidea.library.LibraryModel, al: LibAlbum, showBy: Boolean, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     val cover = albumCover(model, al.key, small = true)
+    val missing by io.github.momonekomata.sidea.sources.MissingFiles.ids.collectAsStateWithLifecycle()
     Row(
         Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(horizontal = 18.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val c = cover
-        if (c != null) {
+        if (albumFirst[al.key] in missing) {
+            Box(Modifier.size(48.dp).clip(RoundedCornerShape(3.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {
+                Text("⚠", color = Retro.Orange, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            }
+        } else if (c != null) {
             Image(c, null, contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(3.dp)))
         } else {
             Box(Modifier.size(48.dp).clip(RoundedCornerShape(3.dp)).background(Retro.CreamShade), contentAlignment = Alignment.Center) {

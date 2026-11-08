@@ -15,6 +15,7 @@ import io.github.momonekomata.sidea.cast.Cast
 import kotlinx.coroutines.flow.combine
 import io.github.momonekomata.sidea.sources.Track
 import io.github.momonekomata.sidea.sources.displayTitle
+import io.github.momonekomata.sidea.sources.MissingFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -330,7 +331,12 @@ object Player {
         scope.launch { _queue.collect { agreed() } }
         scope.launch { Cast.state.collect { agreed() } }
         scope.launch {
-            combine(engine.state, Cast.state, Cast.target) { e, c, t -> if (t != null) c else e }.collect { _state.value = it }
+            combine(engine.state, Cast.state, Cast.target) { e, c, t -> if (t != null) c else e }.collect { s ->
+                // The song's file isn't where the Library found it (moved or renamed on the NAS):
+                // say that, not "HTTP 404 reading …", and mark it so the Library offers a rescan.
+                val cur = _queue.value.current
+                _state.value = if (s.error != null && cur != null && MissingFiles.reportText(cur.id, s.error)) s.copy(error = MissingFiles.MESSAGE) else s
+            }
         }
         // Whatever changes the queue (a tap, Play next, shuffle, the renderer moving on), the
         // renderer gets the right song queued after the one it plays.
@@ -703,16 +709,20 @@ object Player {
     }
 
     /**
-     * The queue ran out: with the setting on, the next folder plays on (a random one, shuffled,
-     * with shuffle on). Returns false when nothing follows, so playing stops.
+     * The queue ran out: as Settings → When a folder ends says, the next folder or one at random
+     * plays on (its songs shuffled when shuffle is on). Returns false when nothing follows, so
+     * playing stops.
      */
     private fun playNextFolder(q: QueueState): Boolean {
         val last = q.current ?: return false
         val find = folderAfter ?: return false
-        val on = if (q.shuffle) Settings.current.shuffleNextFolder else Settings.current.nextFolder
-        if (!on) return false
+        val random = when (Settings.current.folderEnd) {
+            io.github.momonekomata.sidea.FolderEnd.STOP -> return false
+            io.github.momonekomata.sidea.FolderEnd.NEXT -> false
+            io.github.momonekomata.sidea.FolderEnd.RANDOM -> true
+        }
         scope.launch {
-            val songs = runCatching { withContext(Dispatchers.IO) { find(last, q.shuffle) } }.getOrNull()
+            val songs = runCatching { withContext(Dispatchers.IO) { find(last, random) } }.getOrNull()
             // Something else was chosen meanwhile: that wins.
             if (_queue.value.current !== last) return@launch
             if (songs.isNullOrEmpty()) {

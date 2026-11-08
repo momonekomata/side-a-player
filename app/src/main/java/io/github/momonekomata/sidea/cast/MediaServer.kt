@@ -68,7 +68,9 @@ object MediaServer {
     fun mimeFor(token: String): String {
         mimes[token]?.let { return it }
         val track = songs[token] ?: return "audio/mpeg"
-        val m = runCatching { open(track).use { sniff(it) } }.getOrNull() ?: guessFromName(track.id)
+        val m = runCatching { open(track).use { sniff(it) } }
+            .onFailure { io.github.momonekomata.sidea.sources.MissingFiles.report(track.id, it) }
+            .getOrNull() ?: guessFromName(track.id)
         mimes[token] = m
         return m
     }
@@ -114,7 +116,13 @@ object MediaServer {
 
     private fun serveSong(token: String, method: String, headers: Map<String, String>, out: OutputStream) {
         val track = songs[token] ?: return status(out, 404, "Not Found")
-        open(track).use { src ->
+        val opened = try {
+            open(track)
+        } catch (e: Exception) {
+            io.github.momonekomata.sidea.sources.MissingFiles.report(track.id, e)
+            throw e
+        }
+        opened.use { src ->
             val total = src.size
             val mime = mimes.getOrPut(token) { sniff(src) }
             var start = 0L

@@ -33,12 +33,14 @@ object TagStore {
         return withContext(Dispatchers.IO) {
             gate.withPermit {
                 val ra = runCatching { open(context) }
-                    .onFailure { Log.w("SideA.Tags", "can't open ${track.id} for tags", it) }
+                    .onFailure { if (!MissingFiles.report(track.id, it)) Log.w("SideA.Tags", "can't open ${track.id} for tags", it) }
                     .getOrNull()
                     ?: return@withPermit null // not readable yet (e.g. FTPS before caching): try later
                 val tags = runCatching { ra.use { TagReader.read(it) } }
-                    .onFailure { Log.w("SideA.Tags", "bad tags in ${track.id}", it) }
+                    .onFailure { if (!MissingFiles.report(track.id, it)) Log.w("SideA.Tags", "bad tags in ${track.id}", it) }
                     .getOrNull()
+                // Gone: not "read, no tags", so it's read again once it's found.
+                if (tags == null && track.id in MissingFiles.ids.value) return@withPermit null
                 done += track.id
                 if (tags != null) _tags.update { it + (track.id to tags) }
                 tags

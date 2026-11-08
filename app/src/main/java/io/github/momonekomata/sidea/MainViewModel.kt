@@ -108,9 +108,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Cover of the song playing. */
     val nowArt = _nowArt.asStateFlow()
 
-    private val favoriteStore = io.github.momonekomata.sidea.sources.FavoritesStore(app)
-    private val _favorites = MutableStateFlow(favoriteStore.all())
-    val favorites = _favorites.asStateFlow()
+    private val _favorites = io.github.momonekomata.sidea.sources.Favorites.apply { init(app) }.all
+    val favorites = _favorites
 
     private val lyricsRepo = LyricsRepository(app)
     private val _lyrics = MutableStateFlow(LyricsState())
@@ -131,7 +130,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         library
         moveLocalFolderIntoLibrary()
         // Whenever the playlists change (here, or a scan finding playlist files): Focus gets them.
-        viewModelScope.launch { _playlists.collect { syncLists() } }
+        viewModelScope.launch { combine(_playlists, _favorites) { _, _ -> }.collect { syncLists() } }
         // The last queue, paused where it was, if the player has nothing (the app was closed).
         viewModelScope.launch(Dispatchers.IO) {
             Player.restore(::resolve)
@@ -406,9 +405,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleFavorite(t: io.github.momonekomata.sidea.sources.Track) {
         val list = _favorites.value
         val next = if (list.any { it.id == t.id }) list.filterNot { it.id == t.id } else listOf(saved(t)) + list
-        _favorites.value = next
-        favoriteStore.save(next)
-        syncLists()
+        io.github.momonekomata.sidea.sources.Favorites.update { next }
     }
 
     /** The Library's Focus filters on favourites and playlists: it gets them as they are now. */
@@ -497,9 +494,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             songs.filter { s -> list.none { it.id == s.id } }.map(::saved) + list
         }
-        _favorites.value = next
-        favoriteStore.save(next)
-        syncLists()
+        io.github.momonekomata.sidea.sources.Favorites.update { next }
     }
 
     fun addToPlaylist(id: String, songs: List<io.github.momonekomata.sidea.sources.Track>) =

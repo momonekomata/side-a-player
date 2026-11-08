@@ -5,6 +5,7 @@ import android.net.wifi.WifiManager
 import android.os.PowerManager
 import io.github.momonekomata.sidea.audio.EngineState
 import io.github.momonekomata.sidea.sources.ArtworkStore
+import io.github.momonekomata.sidea.sources.MissingFiles
 import io.github.momonekomata.sidea.sources.TagStore
 import io.github.momonekomata.sidea.sources.Track
 import kotlinx.coroutines.CoroutineScope
@@ -763,6 +764,9 @@ object Cast {
             else -> ""
         }
         castUnsupported(codec)?.let { throw CastRefused(it) }
+        // Its file isn't there any more (moved or renamed on the NAS): turned down like a format
+        // the device can't play, so whatever plays goes on.
+        if (track.id in MissingFiles.ids.value) throw CastRefused("Its file has moved or been renamed since the last scan; rescan to find it")
         val meta = JSONObject()
             .put("metadataType", 3) // MusicTrackMediaMetadata
             .put("title", i.title)

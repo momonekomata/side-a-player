@@ -52,10 +52,13 @@ object ArtworkStore {
     /** The cover's bytes (embedded, else the folder's), and whether the file could be read at all. */
     private fun readPicture(context: Context, track: Track): Pair<ByteArray?, Boolean> {
         // A null tag source result means "not readable yet" (FTPS before caching).
-        val ra = runCatching { track.tagSource?.invoke(context) }.getOrNull()
+        val ra = runCatching { track.tagSource?.invoke(context) }.onFailure { MissingFiles.report(track.id, it) }.getOrNull()
         val embedded = ra?.let { r ->
             runCatching { r.use { PictureReader.read(it)?.data } }
-                .onFailure { Log.w("SideA.Art", "bad picture in ${track.id}", it) }
+                .onFailure {
+                    // Not there any more (moved or renamed on the NAS): the Library says so.
+                    if (!MissingFiles.report(track.id, it)) Log.w("SideA.Art", "bad picture in ${track.id}", it)
+                }
                 .getOrNull()
         }
         val bytes = embedded ?: runCatching { track.folderArt?.invoke(context) }.getOrNull()
@@ -71,6 +74,8 @@ object ArtworkStore {
                 val bmp = bytes?.let { decode(it, 1024) }
                 when {
                     bmp != null -> { cache.put(track.id, bmp); _loaded.update { it + 1 } }
+                    // A file that's gone isn't one without a cover: after a rescan it may have one.
+                    track.id in MissingFiles.ids.value -> {}
                     readable -> missing += track.id
                 }
                 bmp
@@ -100,7 +105,7 @@ object ArtworkStore {
                 scaled(big, THUMB_PX)
             } else gate.withPermit {
                 val (bytes, readable) = readPicture(context, track)
-                bytes?.let { decode(it, THUMB_PX)?.let { b -> scaled(b, THUMB_PX) } }.also { if (it == null && readable) missing += track.id }
+                bytes?.let { decode(it, THUMB_PX)?.let { b -> scaled(b, THUMB_PX) } }.also { if (it == null && readable && track.id !in MissingFiles.ids.value) missing += track.id }
             } ?: return@withContext null
             thumbs.put(track.id, bmp)
             runCatching { file.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 88, it) } }

@@ -33,11 +33,16 @@ data class Prefs(
     val usbVolume: Float = 1f,
     /** How the app looks; the user picks it in Settings. */
     val theme: AppTheme = AppTheme.WALKMAN,
-    /** When the queue's last song ends (repeat off), the Library's next folder plays on. */
-    val nextFolder: Boolean = false,
-    /** The same with shuffle on: a folder picked at random plays on, shuffled. */
-    val shuffleNextFolder: Boolean = false,
+    /** What plays when the queue's last song ends (repeat off). Shuffle orders the songs inside each folder. */
+    val folderEnd: FolderEnd = FolderEnd.STOP,
 )
+
+/** Settings → When a folder ends. */
+enum class FolderEnd(val label: String, val note: String) {
+    STOP("Stop", "Playing stops after the folder's last song."),
+    NEXT("Next folder", "The folder after it in the Library plays on, in folder order. With shuffle on, each folder's songs play shuffled."),
+    RANDOM("Random folder", "A folder picked at random plays on. With shuffle on, its songs play shuffled."),
+}
 
 /** The looks to choose from in Settings → Theme. */
 enum class AppTheme(val label: String, val note: String) {
@@ -69,8 +74,14 @@ object Settings {
             // A new key, so everyone starts at 100 % (bit-perfect) once, whatever the old 30 % saved.
             usbVolume = sp.getFloat("usbVolume100", 1f),
             theme = runCatching { AppTheme.valueOf(sp.getString("theme", null) ?: "") }.getOrDefault(AppTheme.WALKMAN),
-            nextFolder = sp.getBoolean("nextFolder", false),
-            shuffleNextFolder = sp.getBoolean("shuffleNextFolder", false),
+            // From 0.4.64's two switches: next folder (without shuffle) wins, then the random one.
+            folderEnd = runCatching { FolderEnd.valueOf(sp.getString("folderEnd", null) ?: "") }.getOrElse {
+                when {
+                    sp.getBoolean("nextFolder", false) -> FolderEnd.NEXT
+                    sp.getBoolean("shuffleNextFolder", false) -> FolderEnd.RANDOM
+                    else -> FolderEnd.STOP
+                }
+            },
             eq = runCatching { sp.getString("eq", null)?.let { eqFromJson(JSONObject(it)) } }.getOrNull() ?: EqConfig(),
         )
     }
@@ -91,8 +102,7 @@ object Settings {
             .putBoolean("exclusiveUsb", p.exclusiveUsb)
             .putFloat("usbVolume100", p.usbVolume)
             .putString("theme", p.theme.name)
-            .putBoolean("nextFolder", p.nextFolder)
-            .putBoolean("shuffleNextFolder", p.shuffleNextFolder)
+            .putString("folderEnd", p.folderEnd.name)
             .putString("eq", eqToJson(p.eq).toString())
             .apply()
     }

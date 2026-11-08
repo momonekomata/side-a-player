@@ -10,15 +10,37 @@ import org.json.JSONObject
 /** A favourite song: enough to show it, and to find it again wherever it lives. */
 data class Favorite(val id: String, val title: String, val artist: String, val album: String, val sizeBytes: Long)
 
-/** Favourites, newest first, kept on the phone. */
-class FavoritesStore(context: Context) {
-    private val prefs = context.getSharedPreferences("favorites", 0)
+/** Favourites, newest first, kept on the phone; shared by the app and the Library's scan. */
+object Favorites {
+    private var prefs: android.content.SharedPreferences? = null
+    private val _all = kotlinx.coroutines.flow.MutableStateFlow<List<Favorite>>(emptyList())
+    val all: kotlinx.coroutines.flow.StateFlow<List<Favorite>> = _all
 
-    fun all(): List<Favorite> = JSONArray(prefs.getString("list", "[]")).favorites()
-
-    fun save(list: List<Favorite>) {
-        prefs.edit().putString("list", list.toJson().toString()).apply()
+    @Synchronized
+    fun init(context: Context) {
+        if (prefs != null) return
+        val p = context.applicationContext.getSharedPreferences("favorites", 0).also { prefs = it }
+        _all.value = JSONArray(p.getString("list", "[]")).favorites()
     }
+
+    @Synchronized
+    fun update(f: (List<Favorite>) -> List<Favorite>) {
+        val next = f(_all.value)
+        _all.value = next
+        prefs?.edit()?.putString("list", next.toJson().toString())?.apply()
+    }
+}
+
+/**
+ * Songs found again under a new id (their folder renamed or moved on the NAS: the file's
+ * address is its id): favourites, playlists and the history follow them. [moves] is old id → new song.
+ */
+fun followMoves(moves: Map<String, Favorite>) {
+    if (moves.isEmpty()) return
+    fun move(f: Favorite) = moves[f.id]?.let { n -> f.copy(id = n.id) } ?: f
+    Favorites.update { list -> list.map(::move) }
+    Playlists.update { list -> list.map { p -> p.copy(songs = p.songs.map(::move)) } }
+    PlayHistory.follow(moves)
 }
 
 /**
@@ -153,6 +175,14 @@ object PlayHistory {
     fun clear() {
         _items.value = emptyList()
         save(emptyList())
+    }
+
+    /** Songs found again under a new id after a rescan (see [followMoves]). */
+    fun follow(moves: Map<String, Favorite>) {
+        if (prefs == null || _items.value.none { it.song.id in moves }) return
+        val next = _items.value.map { p -> moves[p.song.id]?.let { n -> p.copy(song = p.song.copy(id = n.id)) } ?: p }
+        _items.value = next
+        save(next)
     }
 
     private fun save(list: List<Played>) {

@@ -137,6 +137,18 @@ data class KnownSong(val size: Long, val probed: Boolean, val modified: Long)
 fun KnownSong?.unchanged(size: Long, modified: Long) =
     this != null && this.size == size && probed && (modified <= 0 || this.modified == modified)
 
+/**
+ * Songs that went from one place and turned up in another in the same scan (a folder renamed or
+ * moved on the NAS: a song's id is its address): old id → new id, matched by file name (case
+ * aside) and size, only where that pair is unique on both sides.
+ */
+fun matchMoves(gone: List<Triple<String, String, Long>>, found: List<Triple<String, String, Long>>): Map<String, String> {
+    fun key(t: Triple<String, String, Long>) = t.second.lowercase() to t.third
+    val goneBy = gone.groupBy(::key).filterValues { it.size == 1 }
+    val foundBy = found.groupBy(::key).filterValues { it.size == 1 }
+    return goneBy.keys.intersect(foundBy.keys).associate { k -> goneBy.getValue(k)[0].first to foundBy.getValue(k)[0].first }
+}
+
 class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -258,6 +270,23 @@ class LibraryDb(context: Context) : SQLiteOpenHelper(context, "library.db", null
         val names = io.github.momonekomata.sidea.sources.NOT_SONG_EXTENSIONS.map { "%.$it" }
         val where = (names.map { "lower(file) LIKE ?" } + "file LIKE '._%'").joinToString(" OR ")
         return writableDatabase.delete("tracks", where, names.toTypedArray())
+    }
+
+    /** Songs of [source] the scan [generation] didn't see: (id, file name, size). */
+    fun unseen(source: String, generation: Long): List<Triple<String, String, Long>> = readableDatabase.rawQuery(
+        "SELECT id, file, size FROM tracks WHERE source = ? AND seen <> ?", arrayOf(source, generation.toString()),
+    ).use { c -> buildList { while (c.moveToNext()) add(Triple(c.getString(0), c.getString(1).orEmpty(), c.getLong(2))) } }
+
+    /** Play counts follow songs found again under a new id. */
+    fun followPlays(moves: Map<String, String>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for ((old, new) in moves) db.execSQL("UPDATE OR IGNORE plays SET id = ? WHERE id = ?", arrayOf(new, old))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     /** After a complete scan: songs of [source] that weren't seen are gone from it. */
