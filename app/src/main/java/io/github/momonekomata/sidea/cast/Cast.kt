@@ -829,7 +829,10 @@ object Cast {
             title = tags?.title?.takeIf { it.isNotBlank() } ?: track.title,
             artist = tags?.artist?.takeIf { it.isNotBlank() } ?: track.artist,
             album = tags?.album?.takeIf { it.isNotBlank() } ?: track.album,
-            art = if (ArtworkStore.cached(track) != null) MediaServer.artUrl(token, local) else null,
+            // Songs are queued on the device ahead of time, before the phone has read their
+            // covers: offer the picture unless the song is known to have none, and the server
+            // reads it when the device asks.
+            art = if (!ArtworkStore.knownMissing(track)) MediaServer.artUrl(token, local) else null,
         )
     }
 

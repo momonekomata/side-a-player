@@ -39,6 +39,9 @@ object ArtworkStore {
 
     fun cached(track: Track): Bitmap? = cache.get(track.id)
 
+    /** Looked at, and it has no picture (as far as can be told: see [load]). */
+    fun knownMissing(track: Track): Boolean = track.id in missing
+
     fun cachedThumb(id: String): Bitmap? = thumbs.get(id)
 
     /** The file changed (a new cover embedded, say): its picture is read again when next wanted. */

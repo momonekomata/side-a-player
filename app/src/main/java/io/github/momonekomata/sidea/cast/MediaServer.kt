@@ -202,7 +202,10 @@ object MediaServer {
 
     private fun serveArt(token: String, method: String, out: OutputStream) {
         val track = songs[token] ?: return status(out, 404, "Not Found")
-        val bmp = ArtworkStore.cached(track) ?: return status(out, 404, "Not Found")
+        // Not read on the phone yet (a song queued ahead): read it now, for the device.
+        val bmp = ArtworkStore.cached(track)
+            ?: runCatching { runBlocking { ArtworkStore.load(appContext, track) } }.getOrNull()
+            ?: return status(out, 404, "Not Found")
         val jpg = ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
         out.write("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpg.size}\r\nConnection: close\r\n\r\n".toByteArray())
         if (method != "HEAD") out.write(jpg)
