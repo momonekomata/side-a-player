@@ -9,8 +9,13 @@ data class LyricLine(val timeMs: Long, val text: String, val words: List<WordTim
 
 data class WordTime(val charStart: Int, val timeMs: Long)
 
-/** Lyrics ready to show. Unsynced lyrics have every timeMs at -1. */
-data class Lyrics(val lines: List<LyricLine>, val synced: Boolean, val source: String) {
+/**
+ * Lyrics ready to show. Unsynced lyrics have every timeMs at -1. [alternative] is the other one
+ * of the song's own lyrics and timed ones found online, when there are both, to switch to.
+ */
+data class Lyrics(val lines: List<LyricLine>, val synced: Boolean, val source: String, val alternative: Lyrics? = null) {
+    /** The song's own (its tags or .lrc), not found online. */
+    val own get() = source == "file tags" || source == ".lrc file"
     /** Index of the line being sung at [ms], or -1 before the first one. */
     fun lineAt(ms: Long): Int {
         if (!synced) return -1

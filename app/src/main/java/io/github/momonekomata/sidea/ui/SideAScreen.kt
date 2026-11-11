@@ -178,6 +178,7 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
         showLyrics = showLyrics,
         onToggleLyrics = { showLyrics = !showLyrics },
         onRetryLyrics = vm::retryLyrics,
+        onSwitchLyrics = vm::switchLyrics,
         tint = tint,
         onArtist = current?.let { t -> { vm.showArtist(t); toLibrary++ } },
         onAlbum = current?.let { t -> { vm.showAlbum(t); toLibrary++ } },

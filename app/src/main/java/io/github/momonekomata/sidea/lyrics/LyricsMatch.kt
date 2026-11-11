@@ -32,4 +32,33 @@ object LyricsMatch {
             cleanTitle(title) to artist.trim(),
             cleanTitle(title) to primaryArtist(artist),
         ).filter { it.first.isNotBlank() }.distinct()
+
+    private val nonWord = Regex("[^\\p{L}\\p{N}]+")
+
+    /**
+     * What [sameWords] compares: the distinct words, case and punctuation aside; for writing
+     * without spaces between words (Japanese, Chinese, Thai: "words" come out as whole phrases),
+     * pairs of neighbouring letters instead.
+     */
+    private fun tokens(lines: List<String>): Set<String> {
+        val words = lines.joinToString(" ").lowercase().split(nonWord).filter { it.isNotEmpty() }
+        if (words.isEmpty()) return emptySet()
+        val letters = words.joinToString("")
+        if (letters.length.toDouble() / words.size > 8) return (0 until letters.length - 1).map { letters.substring(it, it + 2) }.toSet()
+        return words.toSet()
+    }
+
+    /**
+     * Whether two sets of lyrics are the same song's words, more or less: other spellings, a
+     * missing chorus, timings or none. The same song scores near 1; different songs, even by the
+     * same singer, around 0.3 (they share "the", "you", "I"…), and the wrong song's lyrics (a
+     * tagging mistake) are no match.
+     */
+    fun sameWords(a: List<String>, b: List<String>): Boolean {
+        val x = tokens(a)
+        val y = tokens(b)
+        if (x.isEmpty() || y.isEmpty()) return false
+        val shared = x.count { it in y }
+        return 2.0 * shared / (x.size + y.size) >= 0.6
+    }
 }

@@ -48,10 +48,10 @@ private interface LyricsProvider {
 }
 
 /**
- * Finds lyrics in this order: the file's tags, a .lrc next to it (timed ones first if both have
- * some), and only when the song has none of its own, the online sources that are switched on:
- * LRCLIB (open, timed lyrics), Musixmatch (official API with your key), and lyrics.ovh (open,
- * plain lyrics). Online results, including "not found", are cached on the phone.
+ * Finds lyrics: the song's own (its tags, a .lrc next to it; timed ones first) and, unless those
+ * are timed, the online sources that are switched on: LRCLIB (open, timed lyrics), Musixmatch
+ * (official API with your key), and lyrics.ovh (open, plain lyrics). Its own plain lyrics and
+ * timed ones online: see [pick]. Online results, including "not found", are cached on the phone.
  */
 class LyricsRepository(context: Context) {
     private val dir = File(context.filesDir, "lyrics").apply { mkdirs() }
@@ -60,21 +60,52 @@ class LyricsRepository(context: Context) {
         .readTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    /** [force] ignores a remembered "not found", for the Retry button. */
-    suspend fun find(q: LyricsQuery, online: Boolean, sources: LyricsSources = LyricsSources(), force: Boolean = false): Lyrics? = withContext(Dispatchers.IO) {
+    /**
+     * [force] ignores a remembered "not found", for the Retry button. [prefer] is the choice
+     * made for this song between its own plain lyrics and timed ones found online ("own" or
+     * "online"); null decides by itself (see [pick]).
+     */
+    suspend fun find(q: LyricsQuery, online: Boolean, sources: LyricsSources = LyricsSources(), force: Boolean = false, prefer: String? = null): Lyrics? = withContext(Dispatchers.IO) {
         val tags = q.embedded?.let { Lrc.parse(it, "file tags") }
         val file = runCatching { q.sidecar?.invoke() }.getOrNull()?.let { Lrc.parse(it, ".lrc file") }
-        // The song's own lyrics (its tags or its .lrc) always win over anything found online, timed
-        // or not: they're the ones you put there. Between the two, timed ones first.
+        // The song's own lyrics (its tags or its .lrc), timed ones first.
         val local = listOfNotNull(tags, file).let { l -> l.firstOrNull { it.synced } ?: l.firstOrNull() }
-        if (local != null) return@withContext local
-        if (!online || q.title.isBlank()) return@withContext null
+        if (!online || q.title.isBlank()) return@withContext local
+        // Even beside its own timed lyrics, the online ones are looked at (once; they're kept on
+        // the phone): a file can carry another song's lyrics, and then there's a switch to put
+        // it right.
+        val found = lookUp(q, sources, force, wantTimed = local != null) ?: return@withContext local
+        if (local == null) return@withContext found
+        pick(local, found, prefer)
+    }
+
+    /**
+     * The song's own lyrics, or the timed ones found online for it. The same words: its own when
+     * they're timed already, else the online ones (the same lyrics, now in time with the song).
+     * Different words (the wrong song online, lyrics you wrote yourself, or a file tagged with
+     * another song's): its own, with the online ones to switch to. [prefer] is a choice made with
+     * that switch, and overrides all this.
+     */
+    private fun pick(own: Lyrics, online: Lyrics, prefer: String?): Lyrics {
+        val same = LyricsMatch.sameWords(own.lines.map { it.text }, online.lines.map { it.text })
+        // Its own timed lyrics, and online the same: nothing to choose between.
+        if (same && own.synced && prefer == null) return own
+        val useOnline = when (prefer) {
+            "online" -> true
+            "own" -> false
+            else -> same
+        }
+        return if (useOnline) online.copy(alternative = own) else own.copy(alternative = online)
+    }
+
+    /** Lyrics from the online sources (or what they gave before), timed ones only if [wantTimed]. */
+    private fun lookUp(q: LyricsQuery, sources: LyricsSources, force: Boolean, wantTimed: Boolean): Lyrics? {
         val cache = File(dir, sha1(q.key) + ".json")
         val legacy = File(dir, sha1(q.key) + ".lrc")
         // A miss depends on which sources were asked; switching one on asks again.
         val miss = File(dir, sha1(q.key + sources.signature) + ".none")
-        readCache(cache, legacy)?.let { return@withContext it }
-        if (!force && miss.exists() && System.currentTimeMillis() - miss.lastModified() < MISS_TTL_MS) return@withContext null
+        readCache(cache, legacy)?.let { if (!wantTimed || it.synced) return it }
+        if (!force && miss.exists() && System.currentTimeMillis() - miss.lastModified() < MISS_TTL_MS) return null
 
         var trouble = false
         for (p in providers(sources)) {
@@ -86,14 +117,16 @@ class LyricsRepository(context: Context) {
                 null
             } ?: continue
             val parsed = Lrc.parse(text, p.name) ?: continue
+            // Plain lyrics are no use beside the song's own plain ones: the next source may have timed.
+            if (wantTimed && !parsed.synced) continue
             cache.writeText(JSONObject().put("source", p.name).put("text", text).toString())
             miss.delete()
-            return@withContext parsed
+            return parsed
         }
         // Only remember a miss for complete metadata and a clean run; apps often send the
         // artist a moment later, and network trouble isn't "not found".
         if (!trouble && q.artist.isNotBlank() && q.durationMs > 0) miss.writeText("")
-        null
+        return null
     }
 
     private fun readCache(cache: File, legacy: File): Lyrics? {

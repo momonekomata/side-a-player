@@ -99,6 +99,8 @@ data class DeckModel(
     val showLyrics: Boolean = false,
     val onToggleLyrics: () -> Unit = {},
     val onRetryLyrics: () -> Unit = {},
+    /** Shows the other of the song's own lyrics and timed ones found online (see [LyricsSwitch]). */
+    val onSwitchLyrics: () -> Unit = {},
     /** Null hides the heart (streaming songs are favourited in their own apps). */
     val favorite: Boolean? = null,
     val onFavorite: () -> Unit = {},
@@ -560,7 +562,7 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
     ) {
         Crossfade(model.showLyrics, animationSpec = androidx.compose.animation.core.tween(DECK_GLIDE_MS), label = "art-lyrics") { lyricsSide ->
             if (lyricsSide) {
-                LyricsSquare(model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize())
+                LyricsSquare(model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize(), model.onSwitchLyrics)
             } else {
                 val art = model.art
                 if (art != null) {

@@ -58,7 +58,7 @@ import io.github.momonekomata.sidea.Settings
  * untimed ones just scroll. With none, it says why and offers Retry.
  */
 @Composable
-fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry: () -> Unit, onSeek: (Long) -> Unit, modifier: Modifier) {
+fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry: () -> Unit, onSeek: (Long) -> Unit, modifier: Modifier, onSwitch: () -> Unit = {}) {
     val lyrics = state.lyrics
     Box(modifier.background(Color(0xFF151515))) {
         if (lyrics == null) {
@@ -158,14 +158,33 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry
                 ReadingChip("Romaji", prefs.romaji) { Settings.update { it.copy(romaji = !it.romaji) } }
             }
         }
-        Text(
-            "lyrics · ${lyrics.source}",
-            color = Retro.Muted,
-            fontFamily = Retro.Mono,
-            fontSize = 9.sp,
-            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-        )
+        Column(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalAlignment = Alignment.End) {
+            Text("lyrics · ${lyrics.source}", color = Retro.Muted, fontFamily = Retro.Mono, fontSize = 9.sp)
+            LyricsSwitch(lyrics, onSwitch, Modifier.padding(top = 4.dp))
+        }
     }
+}
+
+/**
+ * When the song has its own plain lyrics and timed ones were found online for it: a key to show
+ * the other. (Shown are the timed ones when they're the same words, its own when they aren't; a
+ * file tagged with another song's lyrics is put right here.)
+ */
+@Composable
+internal fun LyricsSwitch(lyrics: io.github.momonekomata.sidea.lyrics.Lyrics, onSwitch: () -> Unit, modifier: Modifier = Modifier) {
+    val other = lyrics.alternative ?: return
+    Text(
+        if (other.own) "⇄ THE FILE'S OWN" else "⇄ TIMED · ${other.source.uppercase()}",
+        color = Color.White,
+        fontFamily = Retro.Mono,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Retro.Orange.copy(alpha = 0.85f))
+            .clickable(onClick = onSwitch)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
 }
 
 /** How long after a scroll the lyrics wait before following the song again. */

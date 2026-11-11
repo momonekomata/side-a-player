@@ -239,6 +239,7 @@ internal fun LyricsFlow(model: DeckModel, modifier: Modifier) {
             }
             item { Spacer(Modifier.height(half)) }
         }
+        LyricsSwitch(l, model.onSwitchLyrics, Modifier.align(Alignment.TopEnd))
     }
 }
 
@@ -281,7 +282,7 @@ private fun TapeWindow(model: DeckModel, modifier: Modifier, onFullScreen: (() -
             ) {
                 Crossfade(model.showLyrics, label = "tape-lyrics") { lyricsSide ->
                     if (lyricsSide) {
-                        LyricsSquare(model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize())
+                        LyricsSquare(model.lyrics, model.positionMs, model.playing, model.onRetryLyrics, model.onSeek, Modifier.fillMaxSize(), model.onSwitchLyrics)
                     } else {
                         TapeOnly(model, if (lineOnTape) lyricLine(model) else null, Modifier.fillMaxSize())
                     }

@@ -112,6 +112,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val favorites = _favorites
 
     private val lyricsRepo = LyricsRepository(app)
+    /** The choice made for a song between its own plain lyrics and timed ones found online, kept between runs. */
+    private val lyricsChoices = app.getSharedPreferences("lyrics_choice", 0)
     private val _lyrics = MutableStateFlow(LyricsState())
     val lyrics = _lyrics.asStateFlow()
 
@@ -191,9 +193,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyrics.value = LyricsState(key = playing.key, loading = true, song = song)
         val p = Settings.current
         val sources = LyricsSources(lrclib = p.lrclib, musixmatchKey = p.musixmatchKey, lyricsOvh = p.lyricsOvh)
-        val found = lyricsRepo.find(q, online = p.onlineLyrics, sources = sources, force = force)
+        val found = lyricsRepo.find(q, online = p.onlineLyrics, sources = sources, force = force, prefer = lyricsChoice(playing))
         if (current?.key == playing.key) _lyrics.value = LyricsState(key = playing.key, lyrics = found, missed = found == null, song = song)
         if (found != null && playing is Playing.Local) saveLyrics(playing.track, found, q)
+    }
+
+    private fun lyricsChoice(p: Playing): String? = (p as? Playing.Local)?.let { lyricsChoices.getString(it.track.id, null) }
+
+    /**
+     * The switch on the lyrics: from the song's own to the timed ones found online, or back. The
+     * choice is kept for the song; timed ones chosen are saved beside it like any found online.
+     */
+    fun switchLyrics() {
+        val s = _lyrics.value
+        val now = s.lyrics ?: return
+        val other = now.alternative ?: return
+        val shown = other.copy(alternative = now.copy(alternative = null))
+        _lyrics.value = s.copy(lyrics = shown)
+        val playing = current as? Playing.Local ?: return
+        lyricsChoices.edit().putString(playing.track.id, if (shown.own) "own" else "online").apply()
+        if (!shown.own) viewModelScope.launch { saveLyrics(playing.track, shown, query(playing)) }
     }
 
     private val lyricsSaved = mutableSetOf<String>()
