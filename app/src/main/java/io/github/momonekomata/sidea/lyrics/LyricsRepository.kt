@@ -88,8 +88,9 @@ class LyricsRepository(context: Context) {
      */
     private fun pick(own: Lyrics, online: Lyrics, prefer: String?): Lyrics {
         val same = LyricsMatch.sameWords(own.lines.map { it.text }, online.lines.map { it.text })
-        // Its own timed lyrics, and online the same: nothing to choose between.
-        if (same && own.synced && prefer == null) return own
+        // Its own timed lyrics, and online the same: nothing to choose between (a choice of "own"
+        // made back when they differed, say before a wrong .lrc was replaced, changes nothing).
+        if (same && own.synced && prefer != "online") return own
         val useOnline = when (prefer) {
             "online" -> true
             "own" -> false
