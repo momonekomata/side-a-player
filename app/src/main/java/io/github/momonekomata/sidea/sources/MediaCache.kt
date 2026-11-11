@@ -66,9 +66,12 @@ class GrowingFileDataSource(
     private val lock = Object()
     private var written = 0L
     private var done = false
-    private var failure: Throwable? = null
+    @Volatile private var failure: Throwable? = null
     @Volatile var closed = false
         private set
+
+    /** The download failed (reads past what it got will fail too). */
+    val failed get() = failure != null
     @Volatile private var startedNs = 0L
     private val partial = File(file.path + ".part")
     private val reader: RandomAccessFile
@@ -230,9 +233,12 @@ class GrowingFileDataSource(
             if (written <= position) return -1
         }
         val n = minOf(size.toLong(), written - position).toInt()
-        // The reader's file handle survives the rename on Linux, so this stays valid.
-        reader.seek(position)
-        return reader.read(buffer, offset, n)
+        // The reader's file handle survives the rename on Linux, so this stays valid. One read at
+        // a time: when casting, several requests from the device read the same song at once.
+        return synchronized(reader) {
+            reader.seek(position)
+            reader.read(buffer, offset, n)
+        }
     }
 
     /** How far the download should get before playback goes on from [want]. Holds [lock]. */

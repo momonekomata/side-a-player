@@ -725,7 +725,18 @@ object Cast {
 
     // ---- the song as the device gets it ----
 
-    private fun localFor(d: Device) = Lan.localFor(d.host) ?: Lan.networks().firstOrNull()?.address ?: throw java.io.IOException("The phone has no network the device is on")
+    private fun localFor(d: Device): java.net.InetAddress = servedAs() ?: Lan.localFor(d.host) ?: Lan.networks().firstOrNull()?.address ?: throw java.io.IOException("The phone has no network the device is on")
+
+    /**
+     * For testing against a real device from the emulator, whose own address the device can't
+     * reach: `adb shell setprop debug.walkdeck.serve <the PC's address>` makes the device fetch
+     * songs from the PC, where a relay passes them on to the emulator (scripts/relay.py). Only
+     * adb can set a debug.* property, so on a phone this is never set.
+     */
+    private fun servedAs(): java.net.InetAddress? = runCatching {
+        val v = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.walkdeck.serve") as String
+        v.takeIf { it.isNotBlank() }?.let { java.net.InetAddress.getByName(it) }
+    }.getOrNull()
 
     private data class Info(val token: String, val url: String, val mime: String, val title: String, val artist: String, val album: String, val art: String?)
 

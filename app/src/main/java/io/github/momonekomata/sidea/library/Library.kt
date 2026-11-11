@@ -111,6 +111,8 @@ object Library {
         io.github.momonekomata.sidea.sources.PlayHistory.init(appContext)
         // When a folder's songs run out, the player asks what comes next (Settings).
         io.github.momonekomata.sidea.audio.Player.folderAfter = { last, random -> folderAfter(last, random) }
+        // Casting: a song's type and codec from what the scan read, without opening the file.
+        io.github.momonekomata.sidea.cast.MediaServer.knownCodec = { t -> runCatching { db.track(t.id)?.codec }.getOrNull()?.takeIf { it.isNotBlank() } }
         // And for a queue picked in the Library, what comes after it there.
         io.github.momonekomata.sidea.audio.Player.playOn = { place, random -> playOn(place, random) }
         // Playlists and cue sheets earlier scans took for songs ("Unknown artist" albums): out.

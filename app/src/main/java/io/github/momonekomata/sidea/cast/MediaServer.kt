@@ -44,7 +44,12 @@ object MediaServer {
         thread(name = "cast-http-accept", isDaemon = true) {
             while (!s.isClosed) {
                 val c = runCatching { s.accept() }.getOrNull() ?: continue
-                pool.execute { runCatching { c.use { serve(it) } } }
+                pool.execute {
+                    runCatching { c.use { serve(it) } }.onFailure { e ->
+                        // A device that gets nothing back gives up on the song: worth a line in the log.
+                        if (e !is java.net.SocketException) android.util.Log.w("WALKDECK.Cast", "serving ${c.inetAddress?.hostAddress} failed", e)
+                    }
+                }
             }
         }
     }
@@ -52,6 +57,11 @@ object MediaServer {
     fun stop() {
         runCatching { server?.close() }
         server = null
+        // Casting's over: the songs held open for the device (and their downloads) go.
+        synchronized(opened) {
+            opened.values.forEach { runCatching { it.bytes.close() } }
+            opened.clear()
+        }
     }
 
     /** The song's token in URLs: stable for the song, so a renderer can come back for more. */
@@ -64,11 +74,31 @@ object MediaServer {
     fun songUrl(token: String, host: InetAddress) = "http://${host.hostAddress}:$port/song/$token"
     fun artUrl(token: String, host: InetAddress) = "http://${host.hostAddress}:$port/art/$token.jpg"
 
-    /** The song's MIME type, from its first bytes (opening it if it hasn't been yet). */
+    /**
+     * The song's codec as the Library knows it ("FLAC", "ALAC", "AAC"…), when it does: set by the
+     * Library. Then neither the type nor the codec needs the file opened, which for a song on a
+     * NAS means waiting for its download's turn (one at a time, after the song playing) and held
+     * up every command to the device meanwhile.
+     */
+    @Volatile var knownCodec: ((Track) -> String?)? = null
+
+    private fun mimeOfCodec(codec: String, id: String) = when (codec.uppercase()) {
+        "FLAC" -> "audio/flac"
+        "ALAC", "AAC", "M4A" -> "audio/mp4"
+        "MP3" -> "audio/mpeg"
+        "VORBIS", "OPUS" -> "audio/ogg"
+        "WAV" -> "audio/wav"
+        "AIFF" -> "audio/aiff"
+        "DSD" -> if (id.substringAfterLast('.', "").equals("dff", ignoreCase = true)) "audio/dff" else "audio/dsf"
+        else -> null
+    }
+
+    /** The song's MIME type: from the Library, else from its first bytes (opening it if it hasn't been yet). */
     fun mimeFor(token: String): String {
         mimes[token]?.let { return it }
         val track = songs[token] ?: return "audio/mpeg"
-        val m = runCatching { open(track).use { sniff(it) } }
+        knownCodec?.invoke(track)?.let { c -> mimeOfCodec(c, track.id) }?.let { mimes[token] = it; return it }
+        val m = runCatching { open(token, track).use { sniff(it) } }
             .onFailure { io.github.momonekomata.sidea.sources.MissingFiles.report(track.id, it) }
             .getOrNull() ?: guessFromName(track.id)
         mimes[token] = m
@@ -81,8 +111,9 @@ object MediaServer {
     fun codecFor(token: String): String {
         codecs[token]?.let { return it }
         val track = songs[token] ?: return ""
+        knownCodec?.invoke(track)?.takeIf { it.isNotBlank() }?.let { codecs[token] = it.uppercase(); return it.uppercase() }
         val c = runCatching {
-            open(track).use { b ->
+            open(token, track).use { b ->
                 val ra = object : io.github.momonekomata.sidea.sources.RandomAccess {
                     override val size get() = b.size
                     override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int) = b.readAt(position, buffer, offset, length)
@@ -117,7 +148,7 @@ object MediaServer {
     private fun serveSong(token: String, method: String, headers: Map<String, String>, out: OutputStream) {
         val track = songs[token] ?: return status(out, 404, "Not Found")
         val opened = try {
-            open(track)
+            open(token, track)
         } catch (e: Exception) {
             io.github.momonekomata.sidea.sources.MissingFiles.report(track.id, e)
             throw e
@@ -205,9 +236,77 @@ object MediaServer {
     interface Bytes : Closeable {
         val size: Long
         fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int): Int
+        /** Its download failed: no use keeping it for the next request. */
+        val broken: Boolean get() = false
     }
 
-    private fun open(track: Track): Bytes = when (val src = runBlocking { track.opener(appContext) }) {
+    /** A song opened once and shared by every request for it (and the type sniff), with how many are reading. */
+    private class Shared(val bytes: Closing) {
+        var users = 0
+        var lastUsed = System.currentTimeMillis()
+    }
+
+    private val opened = HashMap<String, Shared>()
+
+    /**
+     * [track] for reading, shared: a device asks for a song several times (from the start, the
+     * end for its index, again after a seek), and opening it afresh each time started a new
+     * download of a NAS song over the one another request was still reading, so a request got
+     * cut off or nothing at all. Close what's returned when done; the song stays open a while
+     * for the next request.
+     */
+    private fun open(token: String, track: Track): Bytes {
+        val shared = synchronized(opened) {
+            // Songs nobody is reading and nobody has read for a while (the device moved on) are
+            // let go, and the oldest of those beyond the last few.
+            val now = System.currentTimeMillis()
+            val idle = opened.entries.filter { (k, s) -> k != token && s.users == 0 }.sortedBy { it.value.lastUsed }
+            var excess = opened.size - KEEP
+            for ((k, s) in idle) {
+                if (excess > 0 || now - s.lastUsed > IDLE_MS) {
+                    runCatching { s.bytes.close() }
+                    opened.remove(k)
+                    excess--
+                }
+            }
+            // One whose download failed (the NAS dropped out) is opened afresh once nobody's on it.
+            opened[token]?.let { s ->
+                if (s.users == 0 && s.bytes.broken) {
+                    runCatching { s.bytes.close() }
+                    opened.remove(token)
+                }
+            }
+            opened[token]?.takeIf { !it.bytes.isClosed }
+        } ?: run {
+            val fresh = Shared(Closing(openRaw(track)))
+            synchronized(opened) {
+                // Another request opened it meanwhile: use that one.
+                opened[token]?.let { runCatching { fresh.bytes.close() }; it } ?: fresh.also { opened[token] = it }
+            }
+        }
+        synchronized(opened) { shared.users++; shared.lastUsed = System.currentTimeMillis() }
+        return object : Bytes {
+            override val size get() = shared.bytes.size
+            override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int) = shared.bytes.readAt(position, buffer, offset, length)
+            override fun close() = synchronized(opened) { shared.users--; shared.lastUsed = System.currentTimeMillis() }
+        }
+    }
+
+    /** Closes once; says whether it has been. */
+    private class Closing(private val inner: Bytes) : Bytes by inner {
+        @Volatile var isClosed = false
+            private set
+        override fun close() {
+            if (isClosed) return
+            isClosed = true
+            inner.close()
+        }
+    }
+
+    private const val IDLE_MS = 3 * 60_000L
+    private const val KEEP = 4
+
+    private fun openRaw(track: Track): Bytes = when (val src = runBlocking { track.opener(appContext) }) {
         is PlayableSource.File -> {
             val f = RandomAccessFile(src.path, "r")
             channelBytes(f.channel, f)
@@ -221,6 +320,7 @@ object MediaServer {
             override val size get() = src.dataSource.size
             override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int) = src.dataSource.readAt(position, buffer, offset, length)
             override fun close() = src.dataSource.close()
+            override val broken get() = (src.dataSource as? io.github.momonekomata.sidea.sources.GrowingFileDataSource)?.failed == true
         }
     }
 

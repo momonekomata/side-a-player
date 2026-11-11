@@ -325,6 +325,8 @@ object Player {
             val q = _queue.value
             if (Cast.active && q.current != null && q.current === Cast.playingTrack) {
                 castQueue = q
+                // A run of songs stepped over ends with one that plays: one note for the lot.
+                if (refusedInARow > 1) toast("Skipped $refusedInARow songs: ${skippedWhy.replaceFirstChar { it.lowercase() }}")
                 refusedInARow = 0
             }
         }
@@ -352,8 +354,16 @@ object Player {
      */
     private var lastStep = 0
     private var stepAuto = false
-    /** Songs stepped over in a row because the device can't play them: a queue of nothing but those stops. */
+    /**
+     * Songs stepped over in a row because the device can't play them. It isn't reset when Play
+     * on starts the next album, so it's no use measured against one queue's length (that
+     * stopped everything at the second album of ALAC); [MAX_REFUSED] in a row only guards
+     * against going round for ever (repeat on, nothing playable).
+     */
     private var refusedInARow = 0
+    private const val MAX_REFUSED = 300
+    /** Why the songs of the current run were stepped over, for the one note about them. */
+    private var skippedWhy = ""
 
     /**
      * The Cast device can't play [track] (ALAC on a Chromecast, say). Chosen while another song
@@ -378,9 +388,11 @@ object Player {
                 _queue.value = back
                 toast("“$title” wasn't played: ${why.replaceFirstChar { it.lowercase() }}")
             }
-            lastStep != 0 && refusedInARow < q.tracks.size && (lastStep > 0 || before != null) -> {
+            lastStep != 0 && refusedInARow < MAX_REFUSED && (lastStep > 0 || before != null) -> {
                 refusedInARow++
-                toast("Skipped “$title”: ${why.replaceFirstChar { it.lowercase() }}")
+                skippedWhy = why
+                // The first says which; a longer run gets one note when something plays.
+                if (refusedInARow == 1) toast("Skipped “$title”: ${why.replaceFirstChar { it.lowercase() }}")
                 if (lastStep > 0) {
                     next(auto = stepAuto)
                 } else {
