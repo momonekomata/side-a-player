@@ -103,6 +103,20 @@ class CastSession(private val host: Inet4Address, private val port: Int) {
         private const val SENDER = "sender-walkdeck"
         /** Longer than a few missed heartbeats (one each way every 5 s). */
         const val READ_TIMEOUT_MS = 20_000
+
+        /**
+         * Whether [host]'s port 8009 speaks TLS, as a Cast device's does: tells one that doesn't
+         * name itself on its setup page from another server listening on 8009 (a Java app's AJP).
+         */
+        fun speaksTls(host: Inet4Address, timeoutMs: Int = 2000): Boolean = runCatching {
+            val raw = java.net.Socket()
+            Lan.localFor(host)?.let { raw.bind(InetSocketAddress(it, 0)) }
+            raw.connect(InetSocketAddress(host, 8009), timeoutMs)
+            raw.soTimeout = timeoutMs
+            val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(TrustAll), SecureRandom()) }
+            (tls.socketFactory.createSocket(raw, host.hostAddress, 8009, true) as SSLSocket).use { it.startHandshake() }
+            true
+        }.getOrDefault(false)
     }
 
     private var socket: SSLSocket? = null

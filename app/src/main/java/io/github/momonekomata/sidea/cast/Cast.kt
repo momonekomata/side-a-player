@@ -157,11 +157,17 @@ object Cast {
                 }
                 val nets = Lan.networks()
                 val casts = async { runCatching { Mdns.search(timeoutMs = 3500, extra = extra) }.getOrDefault(emptyList()) }
+                // Not every Cast device answers the mDNS question as it's asked here (an Android TV
+                // box, some Nest speakers don't): knock on every address's Cast port as well.
+                val knocked = async { runCatching { castPortsOpen(nets) }.getOrDefault(emptyList()) }
                 urls += Lan.search(timeoutMs = 3500, extra = extra)
                 val renderers = urls.mapNotNull { runCatching { describe(it) }.getOrNull() }
                 val found = casts.await().map { Device(it.name, "cast://${it.address.hostAddress}:${it.port}", it.address, kind = Kind.GOOGLE_CAST, port = it.port, model = it.model, id = it.id) }.toMutableList()
-                // A Cast device typed in that didn't answer mDNS: ask it directly.
-                extra.filter { a -> found.none { it.host == a } && renderers.none { it.host == a } }.forEach { a -> probeCast(a)?.let { found += it } }
+                // A Cast device typed in, or found by its port, that didn't answer mDNS: ask it directly.
+                // One found by knocking must name itself on its setup page too: other servers (a
+                // NAS's Java apps) listen on 8009 as well. One typed in is taken at its word.
+                (extra + knocked.await()).distinct().filter { a -> found.none { it.host == a } && renderers.none { it.host == a } }
+                    .map { a -> async { probeCast(a, named = a !in extra) } }.forEach { p -> p.await()?.let { found += it } }
                 _devices.value = (renderers + found + listOfNotNull(_target.value)).distinctBy { it.key }.sortedBy { it.name.lowercase() }
                 _searchNote.value = if (nets.isEmpty()) {
                     "The phone isn't on any Wi-Fi or hotspot network right now."
@@ -184,8 +190,46 @@ object Cast {
         return Device(d.name, location, host, d)
     }
 
+    /**
+     * The addresses on the phone's home-sized networks (a /24 or smaller, as a home Wi-Fi or a
+     * hotspot is) whose Cast port (8009) takes a connection: a few at a time in parallel, each
+     * given well under a second, so a whole /24 takes about three.
+     */
+    private fun castPortsOpen(nets: List<Lan.Net>): List<Inet4Address> {
+        val hosts: List<Pair<Lan.Net?, Inet4Address>> = nets.filter { it.prefix >= 24 }.flatMap { net -> net.hosts().map { net to it } } + testSweep()
+        if (hosts.isEmpty()) return emptyList()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(64) { r -> Thread(r, "cast-knock").apply { isDaemon = true } }
+        try {
+            val tries = hosts.map { (net, ip) ->
+                pool.submit<Inet4Address?> {
+                    runCatching {
+                        Socket().use { s ->
+                            net?.let { s.bind(InetSocketAddress(it.address, 0)) }
+                            s.connect(InetSocketAddress(ip, 8009), 700)
+                        }
+                        ip
+                    }.getOrNull()
+                }
+            }
+            return tries.mapNotNull { runCatching { it.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull() }
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    /**
+     * For testing from the emulator, whose own network has no devices: `adb shell setprop
+     * debug.walkdeck.sweep 192.168.1.0` knocks on that /24 too (through the emulator's NAT).
+     * Only adb can set it.
+     */
+    private fun testSweep(): List<Pair<Lan.Net?, Inet4Address>> = runCatching {
+        val v = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.walkdeck.sweep") as String
+        val base = v.trim().takeIf { it.isNotEmpty() }?.substringBeforeLast('.') ?: return@runCatching emptyList()
+        (1..254).map { null to (InetAddress.getByName("$base.$it") as Inet4Address) }
+    }.getOrDefault(emptyList())
+
     /** A Cast device at [a]: its port 8009 answers, and its setup page (if it has one) names it. */
-    private fun probeCast(a: Inet4Address): Device? {
+    private fun probeCast(a: Inet4Address, named: Boolean = false): Device? {
         val open = runCatching {
             Socket().use { s ->
                 Lan.localFor(a)?.let { s.bind(InetSocketAddress(it, 0)) }
@@ -197,6 +241,9 @@ object Cast {
             val r = Lan.http(URL("http://${a.hostAddress}:8008/setup/eureka_info?params=name,device_info"), timeoutMs = 2500)
             if (r.code == 200) JSONObject(String(r.body, Charsets.UTF_8)) else null
         }.getOrNull()
+        // Found by knocking with no name to give: a Cast device all the same if 8009 speaks TLS
+        // (newer ones keep their setup page to themselves); another server's 8009 doesn't.
+        if (named && info?.optString("name").isNullOrBlank() && !CastSession.speaksTls(a)) return null
         val name = info?.optString("name")?.takeIf { it.isNotBlank() } ?: "Cast device ${a.hostAddress}"
         val model = info?.optJSONObject("device_info")?.optString("model_name").orEmpty()
         return Device(name, "cast://${a.hostAddress}:8009", a, kind = Kind.GOOGLE_CAST, port = 8009, model = model, id = a.hostAddress)
