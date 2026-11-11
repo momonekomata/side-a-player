@@ -434,9 +434,18 @@ object Player {
         }
     }
 
-    fun playQueue(tracks: List<Track>, index: Int) = startQueue(tracks, index)
+    /**
+     * Plays [tracks] from [index]. [place] is where in the Library they were picked (the
+     * Library's own, opaque here): when they run out, what comes after them there plays on.
+     * Songs from anywhere else have none, and the folder after the last one's plays on instead.
+     */
+    fun playQueue(tracks: List<Track>, index: Int, place: Any? = null) = startQueue(tracks, index, place = place)
 
-    private fun startQueue(tracks: List<Track>, index: Int, step: Int = 0, auto: Boolean = false) {
+    /** Where in the Library the queue was picked (see [playQueue]). */
+    private var place: Any? = null
+
+    private fun startQueue(tracks: List<Track>, index: Int, step: Int = 0, auto: Boolean = false, place: Any? = null) {
+        this.place = place
         val q = _queue.value
         var next = QueueState(tracks, index, shuffle = false, repeat = q.repeat, original = tracks)
         if (q.shuffle) next = shuffled(next)
@@ -491,6 +500,8 @@ object Player {
 
     private fun edit(change: (QueueState) -> QueueState) {
         val q = _queue.value
+        // A queue started this way wasn't picked anywhere in the Library.
+        if (q.current == null) place = null
         _queue.value = change(q)
         if (q.current == null) startCurrent() else engine.upNextChanged()
     }
@@ -694,6 +705,12 @@ object Player {
      */
     var folderAfter: (suspend (last: Track, random: Boolean) -> List<Track>?)? = null
 
+    /**
+     * For a queue picked in the Library: what comes after it where it was picked (the next
+     * artist, album, genre or songs), with its own place; null at the end of that list. Set by the Library.
+     */
+    var playOn: (suspend (place: Any, random: Boolean) -> Pair<List<Track>, Any>?)? = null
+
     fun next(auto: Boolean = false) {
         val q = _queue.value
         val i = q.nextIndex(auto)
@@ -709,29 +726,38 @@ object Player {
     }
 
     /**
-     * The queue ran out: as Settings → When a folder ends says, the next folder or one at random
-     * plays on (its songs shuffled when shuffle is on). Returns false when nothing follows, so
-     * playing stops.
+     * The queue ran out: as Settings → When the queue ends says, what comes next in the Library
+     * where the queue was picked (or, for songs from elsewhere, the next folder), or something at
+     * random, plays on; its songs shuffled when shuffle is on. Returns false when nothing follows,
+     * so playing stops.
      */
     private fun playNextFolder(q: QueueState): Boolean {
         val last = q.current ?: return false
-        val find = folderAfter ?: return false
         val random = when (Settings.current.folderEnd) {
             io.github.momonekomata.sidea.FolderEnd.STOP -> return false
             io.github.momonekomata.sidea.FolderEnd.NEXT -> false
             io.github.momonekomata.sidea.FolderEnd.RANDOM -> true
         }
+        val from = place
+        val inLibrary = playOn
+        val inFolders = folderAfter
+        if (from == null && inFolders == null || from != null && inLibrary == null) return false
         scope.launch {
-            val songs = runCatching { withContext(Dispatchers.IO) { find(last, random) } }.getOrNull()
+            val found: Pair<List<Track>, Any?>? = runCatching {
+                withContext(Dispatchers.IO) {
+                    if (from != null) inLibrary!!(from, random) else inFolders!!(last, random)?.let { it to null }
+                }
+            }.getOrNull()
             // Something else was chosen meanwhile: that wins.
             if (_queue.value.current !== last) return@launch
+            val songs = found?.first
             if (songs.isNullOrEmpty()) {
                 if (Cast.active) Cast.stopRemote() else engine.stop()
                 abandonFocus()
                 return@launch
             }
             // Reached by itself: a first song the Cast device can't play is stepped over.
-            startQueue(songs, if (q.shuffle) songs.indices.random() else 0, step = 1, auto = true)
+            startQueue(songs, if (q.shuffle) songs.indices.random() else 0, step = 1, auto = true, place = found.second)
         }
         return true
     }

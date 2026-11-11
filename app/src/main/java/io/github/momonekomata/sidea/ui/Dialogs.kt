@@ -241,7 +241,7 @@ fun SettingsDialog(prefs: Prefs, onChange: (Prefs) -> Unit, onSources: () -> Uni
                 LabeledSwitch("Gapless playback", prefs.gapless) { onChange(prefs.copy(gapless = it)) }
                 Note("Opens the next song early and joins it to the current one with no gap, when both share a sample rate.")
                 // What follows a folder: one key per choice, like the theme's.
-                Text("When a folder ends", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("When the queue ends", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     io.github.momonekomata.sidea.FolderEnd.entries.forEach { e ->

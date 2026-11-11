@@ -111,6 +111,8 @@ object Library {
         io.github.momonekomata.sidea.sources.PlayHistory.init(appContext)
         // When a folder's songs run out, the player asks what comes next (Settings).
         io.github.momonekomata.sidea.audio.Player.folderAfter = { last, random -> folderAfter(last, random) }
+        // And for a queue picked in the Library, what comes after it there.
+        io.github.momonekomata.sidea.audio.Player.playOn = { place, random -> playOn(place, random) }
         // Playlists and cue sheets earlier scans took for songs ("Unknown artist" albums): out.
         runCatching { db.dropNonSongs() }
         _sources.value = runCatching {
@@ -381,6 +383,21 @@ object Library {
             sorted.getOrNull(sorted.indexOf(t.folder) + 1)
         } ?: return null
         return db.folderTracks(t.source, next).mapNotNull(::trackOf).ifEmpty { null }
+    }
+
+    /** What plays after a queue picked at [place] (a [LibPlace]) runs out, with its own place; null at the end of that list. */
+    fun playOn(place: Any, random: Boolean): Pair<List<Track>, Any>? {
+        if (!::db.isInitialized || place !is LibPlace) return null
+        // An artist or album of nothing playable (its source gone) is passed over.
+        var at: LibPlace = place
+        val shelf = DbShelf(db)
+        repeat(20) {
+            val (songs, next) = PlayOn.next(shelf, at, random) ?: return null
+            val tracks = songs.mapNotNull(::trackOf)
+            if (tracks.isNotEmpty()) return tracks to next
+            at = next
+        }
+        return null
     }
 
     /** Folders as a file browser lists them: by each folder name along the path, "2" before "10". */

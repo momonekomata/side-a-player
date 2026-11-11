@@ -37,11 +37,20 @@ data class Prefs(
     val folderEnd: FolderEnd = FolderEnd.STOP,
 )
 
-/** Settings → When a folder ends. */
+/** Settings → When the queue ends. */
 enum class FolderEnd(val label: String, val note: String) {
-    STOP("Stop", "Playing stops after the folder's last song."),
-    NEXT("Next folder", "The folder after it in the Library plays on, in folder order. With shuffle on, each folder's songs play shuffled."),
-    RANDOM("Random folder", "A folder picked at random plays on. With shuffle on, its songs play shuffled."),
+    STOP("Stop", "Playing stops after the last song in the queue."),
+    NEXT(
+        "Play on",
+        "What comes after it where you picked it in the Library plays on: an artist's next album, then the next artist; " +
+            "the next album in Albums; a genre's next album, then the next genre; the songs after it in Tracks or a playlist. " +
+            "Songs played from elsewhere go on with the next folder. With shuffle on, each one's songs play shuffled.",
+    ),
+    RANDOM(
+        "Random",
+        "An artist, album or genre picked at random from the tab you played from plays on (songs from elsewhere: a random folder). " +
+            "With shuffle on, its songs play shuffled.",
+    ),
 }
 
 /** The looks to choose from in Settings → Theme. */

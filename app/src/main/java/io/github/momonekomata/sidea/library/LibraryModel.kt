@@ -225,12 +225,24 @@ class LibraryModel(private val scope: CoroutineScope, private val prefs: android
         val window = list.subList(from, minOf(list.size, from + 1000))
         val tracks = withContext(Dispatchers.IO) { window.mapNotNull(Library::trackOf) }
         if (tracks.isEmpty()) return@launch
+        // Where it was picked, for what plays when it runs out (Settings → When a folder ends).
+        val place = here(window.lastOrNull()?.id)
         if (shuffle) {
-            Player.playQueue(tracks.shuffled(), 0)
+            Player.playQueue(tracks.shuffled(), 0, place)
         } else {
             val want = list.getOrNull(index)?.id
-            Player.playQueue(tracks, tracks.indexOfFirst { it.id == want }.coerceAtLeast(0))
+            Player.playQueue(tracks, tracks.indexOfFirst { it.id == want }.coerceAtLeast(0), place)
         }
+    }
+
+    /**
+     * The list on the card now, as a place to go on from: not a search's results (they're in
+     * order of how well they match, not the Library's), and not the search words themselves.
+     */
+    private fun here(windowEnd: String?): LibPlace? {
+        val u = _ui.value
+        if (u.view.search != null) return null
+        return LibPlace(u.segment, u.filter.copy(query = ""), u.stack, windowEnd)
     }
 
     /** Every song by [artist], or in [genre], in album order, for Play from an artist or genre. */
