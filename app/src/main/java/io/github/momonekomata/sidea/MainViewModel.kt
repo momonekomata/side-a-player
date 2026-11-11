@@ -460,6 +460,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeSongMenu() { _songMenu.value = null }
 
+    // ---- from Now Playing to the Library ----
+
+    /**
+     * The song's artist's page in the Library: the one who sings it if they have a page (albums
+     * under their name), else the album's artist (a guest on someone else's album, a compilation).
+     */
+    fun showArtist(t: io.github.momonekomata.sidea.sources.Track) = viewModelScope.launch {
+        val name = withContext(Dispatchers.IO) {
+            val lt = Library.db.track(t.id) ?: return@withContext null
+            listOf(lt.artist, lt.albumBy).filter { it.isNotBlank() }.distinct()
+                .firstOrNull { a -> Library.db.albums(io.github.momonekomata.sidea.library.LibFilter(), artist = a).isNotEmpty() }
+        }
+        if (name == null) return@launch toast("This song isn't in the Library")
+        library.goTo(io.github.momonekomata.sidea.library.LibSegment.ARTISTS, io.github.momonekomata.sidea.library.LibDrill.Artist(name))
+    }
+
+    /** The song's album's page in the Library. */
+    fun showAlbum(t: io.github.momonekomata.sidea.sources.Track) = viewModelScope.launch {
+        val lt = withContext(Dispatchers.IO) { Library.db.track(t.id) } ?: return@launch toast("This song isn't in the Library")
+        library.goTo(
+            io.github.momonekomata.sidea.library.LibSegment.ALBUMS,
+            io.github.momonekomata.sidea.library.LibDrill.Album(lt.albumKey, lt.album.ifBlank { io.github.momonekomata.sidea.library.UNKNOWN_ALBUM }, lt.albumBy),
+        )
+    }
+
     private val _groupMenu = MutableStateFlow<GroupMenu?>(null)
     val groupMenu = _groupMenu.asStateFlow()
     private var groupJob: kotlinx.coroutines.Job? = null

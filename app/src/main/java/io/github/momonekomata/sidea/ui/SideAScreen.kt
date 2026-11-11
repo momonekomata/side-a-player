@@ -169,12 +169,18 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     val castTarget by io.github.momonekomata.sidea.cast.Cast.target.collectAsStateWithLifecycle()
     var castOpen by remember { mutableStateOf(false) }
     val local = localDeck(queue, engine, parked, tags, prefs.eq, localImage, favorites.map { it.id }.toSet(), vm::toggleFavorite)
+    // The artist or album tapped on Now Playing: its page opens in the Library, and the Library
+    // comes to the front (the full player closes; sideways, the pager turns to it).
+    var toLibrary by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val current = queue.current
     val deck = local.copy(
         lyrics = lyrics,
         showLyrics = showLyrics,
         onToggleLyrics = { showLyrics = !showLyrics },
         onRetryLyrics = vm::retryLyrics,
         tint = tint,
+        onArtist = current?.let { t -> { vm.showArtist(t); toLibrary++ } },
+        onAlbum = current?.let { t -> { vm.showAlbum(t); toLibrary++ } },
     ).let { d ->
         // Casting: the deck says where the music is playing, not the phone's output path.
         val c = castTarget ?: return@let d
@@ -215,8 +221,14 @@ fun SideAScreen(vm: MainViewModel, pickLibraryFolder: () -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val phone = LocalConfiguration.current.screenWidthDp < 600
     BackHandler(enabled = expanded && phone && !tapeFull) { expanded = false }
+    LaunchedEffect(toLibrary) {
+        if (toLibrary == 0) return@LaunchedEffect
+        expanded = false
+        tapeFull = false
+        showLyrics = false
+    }
     if (landscape && !tapeFull) {
-        LandscapeLayout(deck, prefs.theme, library, queuePage, headerIcons)
+        LandscapeLayout(deck, prefs.theme, library, queuePage, headerIcons, toLibrary)
     } else if (tapeFull) {
         val close = if (landscape) "‹ LIBRARY" else "✕ CLOSE"
         if (prefs.theme == io.github.momonekomata.sidea.AppTheme.STEREO) {
@@ -531,6 +543,8 @@ private fun localDeck(
     return DeckModel(
         title = t?.displayTitle(tags).orEmpty(),
         subtitle = listOf(t?.displayArtist(tags), t?.displayAlbum(tags)).filter { !it.isNullOrBlank() }.joinToString(" · "),
+        artist = t?.displayArtist(tags).orEmpty(),
+        album = t?.displayAlbum(tags).orEmpty(),
         positionMs = parked?.positionMs ?: engine.positionMs,
         durationMs = parked?.durationMs?.takeIf { it > 0 } ?: engine.durationMs,
         playing = engine.isPlaying,
@@ -580,8 +594,11 @@ private fun LandscapeLayout(
     library: @Composable (Modifier) -> Unit,
     queuePage: @Composable (Modifier) -> Unit,
     headerIcons: @Composable () -> Unit,
+    /** Goes up when Now Playing sends you to the Library: the pager turns to it. */
+    toLibrary: Int = 0,
 ) {
     val pager = rememberPagerState(initialPage = 0) { 3 }
+    LaunchedEffect(toLibrary) { if (toLibrary > 0) pager.animateScrollToPage(2) }
     HorizontalPager(pager, Modifier.fillMaxSize().anodizedBlue()) { page ->
         when (page) {
             0 -> if (theme == io.github.momonekomata.sidea.AppTheme.STEREO) {
@@ -630,7 +647,7 @@ private fun LandscapeNowPlaying(deck: DeckModel, headerIcons: @Composable () -> 
                 }
                 Column(Modifier.width(infoW).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
                     Text(deck.title.ifBlank { "Nothing playing" }, color = ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (deck.subtitle.isNotBlank()) Text(deck.subtitle, color = muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    ArtistAlbumLine(deck, muted, 13.sp, maxLines = 2)
                     val path = deck.path
                     if (path != null) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -203,6 +203,9 @@ class LibraryModel(private val scope: CoroutineScope, private val prefs: android
     fun closeList() = set { it.copy(filter = it.filter.copy(list = null)) }
     fun open(d: LibDrill) = set { it.copy(stack = it.stack + d) }
 
+    /** Straight to [d]'s page from the [s] tab (from Now Playing): no search or list in the way. */
+    fun goTo(s: LibSegment, d: LibDrill) = set { it.copy(segment = s, stack = listOf(d), filter = it.filter.copy(query = "", list = null)) }
+
     /** False at the top, so Back can leave the card. */
     fun back(): Boolean {
         if (_ui.value.stack.isEmpty()) return false

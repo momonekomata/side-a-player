@@ -54,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawBehind
@@ -113,7 +114,51 @@ data class DeckModel(
     val onSeek: (Long) -> Unit,
     /** The cover's colour, for the faceplate; null leaves it silver. */
     val tint: Color? = null,
+    /** The two halves of [subtitle], each a link when its callback is set. */
+    val artist: String = "",
+    val album: String = "",
+    /** Opens the artist's page in the Library; null when the song isn't in it. */
+    val onArtist: (() -> Unit)? = null,
+    /** Opens the album's page in the Library; null when the song isn't in it. */
+    val onAlbum: (() -> Unit)? = null,
 )
+
+/**
+ * "Artist · Album" under the song's title, each a link to its page in the Library (underlined,
+ * orange while pressed) when the deck knows where; plain [DeckModel.subtitle] otherwise.
+ */
+@Composable
+internal fun ArtistAlbumLine(
+    model: DeckModel, color: Color, fontSize: androidx.compose.ui.unit.TextUnit, modifier: Modifier = Modifier, maxLines: Int = 1,
+    style: androidx.compose.ui.text.TextStyle = androidx.compose.material3.LocalTextStyle.current,
+) {
+    if (model.subtitle.isBlank()) return
+    val linked = (model.onArtist != null && model.artist.isNotBlank()) || (model.onAlbum != null && model.album.isNotBlank())
+    if (!linked) {
+        Text(model.subtitle, color = color, fontSize = fontSize, maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = modifier, style = style)
+        return
+    }
+    val text = androidx.compose.ui.text.buildAnnotatedString {
+        fun part(s: String, go: (() -> Unit)?) {
+            if (go == null) {
+                append(s)
+                return
+            }
+            val link = androidx.compose.ui.text.LinkAnnotation.Clickable(
+                tag = s,
+                styles = androidx.compose.ui.text.TextLinkStyles(
+                    style = androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline),
+                    pressedStyle = androidx.compose.ui.text.SpanStyle(color = Retro.Orange, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline),
+                ),
+            ) { go() }
+            withLink(link) { append(s) }
+        }
+        if (model.artist.isNotBlank()) part(model.artist, model.onArtist)
+        if (model.artist.isNotBlank() && model.album.isNotBlank()) append(" · ")
+        if (model.album.isNotBlank()) part(model.album, model.onAlbum)
+    }
+    Text(text, color = color, fontSize = fontSize, maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = modifier, style = style)
+}
 
 /** What's printed on the faceplate: dark on silver, light on a cover's colour. */
 internal class DeckInk(val main: Color, val muted: Color)
@@ -415,9 +460,7 @@ private fun SongInfo(model: DeckModel, ink: DeckInk, compact: Boolean, onPath: (
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (model.subtitle.isNotBlank()) {
-                Text(model.subtitle, color = ink.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            ArtistAlbumLine(model, ink.muted, 12.sp)
         }
         model.favorite?.let { fav ->
             IconButton(onClick = model.onFavorite, modifier = Modifier.size(40.dp)) {

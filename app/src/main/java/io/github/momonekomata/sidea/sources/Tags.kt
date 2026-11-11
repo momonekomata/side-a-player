@@ -59,6 +59,9 @@ private val ID3V1_GENRES = listOf(
  * only touches the few kilobytes the tags live in, which matters over a NAS.
  */
 object TagReader {
+    /** An LRC time stamp ("[01:23.45]"): lyrics with these are timed. */
+    private val TIMED = Regex("\\[\\d{1,3}:\\d{2}(?:[.:]\\d{1,3})?]")
+
     fun read(ra: RandomAccess): Tags? {
         val head = ra.readUpTo(0, 12)
         if (head.size < 12) return null
@@ -110,7 +113,9 @@ object TagReader {
             album = fields["ALBUM"],
             albumArtist = fields["ALBUMARTIST"] ?: fields["ALBUM ARTIST"],
             trackNumber = fields["TRACKNUMBER"]?.substringBefore('/')?.trim()?.toIntOrNull(),
-            lyrics = fields["LYRICS"] ?: fields["UNSYNCEDLYRICS"] ?: fields["SYNCEDLYRICS"],
+            // A file can carry plain and timed lyrics both: the timed ones, whichever field has them.
+            lyrics = listOfNotNull(fields["SYNCEDLYRICS"], fields["LYRICS"], fields["UNSYNCEDLYRICS"]).filter { it.isNotBlank() }
+                .let { all -> all.firstOrNull { TIMED.containsMatchIn(it) } ?: all.firstOrNull() },
             genre = fields["GENRE"]?.split(';')?.first()?.trim()?.takeIf { it.isNotEmpty() },
             year = yearOf(fields["DATE"] ?: fields["YEAR"] ?: fields["ORIGINALDATE"]),
             discNumber = numberOf(fields["DISCNUMBER"]),

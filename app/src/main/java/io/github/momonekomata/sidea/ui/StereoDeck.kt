@@ -110,9 +110,7 @@ fun StereoFullScreen(model: DeckModel, closeLabel: String, onClose: () -> Unit) 
                             model.title.ifBlank { "Nothing playing" }, color = Retro.OnShell, fontSize = 22.sp, fontWeight = FontWeight.Bold,
                             maxLines = 2, overflow = TextOverflow.Ellipsis,
                         )
-                        if (model.subtitle.isNotBlank()) {
-                            Text(model.subtitle, color = Retro.Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-                        }
+                        ArtistAlbumLine(model, Retro.Muted, 14.sp, Modifier.padding(top = 4.dp))
                         Spacer(Modifier.height(12.dp))
                         // The whole lyrics straight on the body, scrolling with the song.
                         LyricsFlow(model, Modifier.weight(1f).fillMaxWidth().padding(bottom = 10.dp))
@@ -315,9 +313,7 @@ private fun TapeWindowStereo(model: DeckModel, modifier: Modifier) {
                     model.title.ifBlank { "Nothing playing" }, color = Retro.OnMetal, fontWeight = FontWeight.Bold,
                     fontSize = (lw.value * 0.085f).coerceIn(9f, 14f).sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = (lw.value * 0.1f).coerceIn(11f, 17f).sp,
                 )
-                if (model.subtitle.isNotBlank()) {
-                    Text(model.subtitle, color = Retro.OnMetalMuted, fontSize = (lw.value * 0.065f).coerceIn(8f, 11f).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+                ArtistAlbumLine(model, Retro.OnMetalMuted, (lw.value * 0.065f).coerceIn(8f, 11f).sp)
                 Text(
                     formatTime(model.positionMs) + " / " + (if (model.durationMs > 0) formatTime(model.durationMs) else "--:--"),
                     color = Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = (lw.value * 0.065f).coerceIn(8f, 11f).sp, maxLines = 1,

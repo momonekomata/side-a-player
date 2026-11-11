@@ -366,9 +366,7 @@ private fun TitleBlock(model: DeckModel, compact: Boolean) {
             fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         Box(Modifier.padding(vertical = 4.dp).fillMaxWidth(0.62f).height(1.dp).background(Retro.Muted.copy(alpha = 0.6f)))
-        if (model.subtitle.isNotBlank()) {
-            Text(model.subtitle, color = Retro.Muted, fontSize = if (compact) 12.sp else 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        ArtistAlbumLine(model, Retro.Muted, if (compact) 12.sp else 13.sp)
     }
 }
 
