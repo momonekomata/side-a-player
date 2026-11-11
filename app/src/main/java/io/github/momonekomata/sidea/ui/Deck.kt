@@ -302,18 +302,27 @@ private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, on
 /** How long the deck takes to glide between the cover and the lyrics. */
 internal const val DECK_GLIDE_MS = 380
 
-/** A small square key with an emoji on it (🎵 lyrics, 🖼 cover). */
+/**
+ * Just the emoji (🎵 lyrics, 🖼 cover) in the corner, no key behind it: a soft shadow keeps it
+ * readable over a light cover, and the tap area stays finger-sized.
+ */
 @Composable
 internal fun EmojiKey(emoji: String, label: String, onClick: () -> Unit) {
     Box(
         Modifier
             .size(34.dp)
-            .keyFace()
+            .clip(CircleShape)
             .clickable(onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        Text(emoji, fontSize = 16.sp)
+        Text(
+            emoji,
+            style = androidx.compose.ui.text.TextStyle(
+                fontSize = 18.sp,
+                shadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(alpha = 0.5f), androidx.compose.ui.geometry.Offset(0f, 2f), 6f),
+            ),
+        )
     }
 }
 
