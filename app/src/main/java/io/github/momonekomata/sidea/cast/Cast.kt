@@ -169,11 +169,16 @@ object Cast {
                 (extra + knocked.await()).distinct().filter { a -> found.none { it.host == a } && renderers.none { it.host == a } }
                     .map { a -> async { probeCast(a, named = a !in extra) } }.forEach { p -> p.await()?.let { found += it } }
                 _devices.value = (renderers + found + listOfNotNull(_target.value)).distinctBy { it.key }.sortedBy { it.name.lowercase() }
-                _searchNote.value = if (nets.isEmpty()) {
+                val notes = ArrayList<String>()
+                notes += if (nets.isEmpty()) {
                     "The phone isn't on any Wi-Fi or hotspot network right now."
                 } else {
                     "Looked on " + nets.joinToString(" and ") { "${it.kind} ${it.address.hostAddress}/${it.prefix}" } + "."
                 }
+                // A typed address that didn't turn up: say what happened when the phone tried it.
+                extra.filter { a -> _devices.value.none { it.host == a } }.forEach { a -> notes += "${a.hostAddress}: ${knock(a)}" }
+                if (vpnOn()) notes += "A VPN is on. It can keep the phone from reaching devices at home: let it bypass the local network, or pause it while casting."
+                _searchNote.value = notes.joinToString("\n")
             } finally {
                 lock?.release()
                 _searching.value = false
@@ -227,6 +232,31 @@ object Cast {
         val base = v.trim().takeIf { it.isNotEmpty() }?.substringBeforeLast('.') ?: return@runCatching emptyList()
         (1..254).map { null to (InetAddress.getByName("$base.$it") as Inet4Address) }
     }.getOrDefault(emptyList())
+
+    /** What happens when the phone knocks on [a]'s Cast port, in words: why a typed address didn't show. */
+    private fun knock(a: Inet4Address): String {
+        val local = Lan.localFor(a)
+        val started = System.currentTimeMillis()
+        val failure = runCatching {
+            Socket().use { s ->
+                local?.let { s.bind(InetSocketAddress(it, 0)) }
+                s.connect(InetSocketAddress(a, 8009), 3000)
+            }
+        }.exceptionOrNull()
+        val onNet = if (local == null) " It isn't on the phone's Wi-Fi network." else ""
+        return when (failure) {
+            null -> "its Cast port (8009) answers, but it didn't say it's a Cast device."
+            is java.net.SocketTimeoutException -> "no answer on the Cast port (8009) in ${(System.currentTimeMillis() - started) / 1000} s: it's off or asleep, or the router keeps Wi-Fi devices apart (AP / client isolation, a guest network).$onNet"
+            is java.net.ConnectException -> "the Cast port (8009) is closed or unreachable (${failure.message}).$onNet"
+            else -> "couldn't reach it (${failure.message ?: failure.javaClass.simpleName}).$onNet"
+        }
+    }
+
+    /** Whether the phone's traffic goes through a VPN right now. */
+    private fun vpnOn(): Boolean = runCatching {
+        val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java)
+        cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+    }.getOrDefault(false)
 
     /** A Cast device at [a]: its port 8009 answers, and its setup page (if it has one) names it. */
     private fun probeCast(a: Inet4Address, named: Boolean = false): Device? {

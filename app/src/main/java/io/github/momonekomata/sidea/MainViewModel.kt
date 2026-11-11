@@ -75,6 +75,8 @@ data class LyricsState(
     /** Looked up and found nothing; [song] says what was looked for. */
     val missed: Boolean = false,
     val song: String = "",
+    /** Why nothing was found, when it's more than "the sources have none" (no connection…). */
+    val why: String = "",
 )
 
 /** The song lyrics are wanted for, reduced to what identifies it. */
@@ -193,8 +195,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyrics.value = LyricsState(key = playing.key, loading = true, song = song)
         val p = Settings.current
         val sources = LyricsSources(lrclib = p.lrclib, musixmatchKey = p.musixmatchKey, lyricsOvh = p.lyricsOvh)
-        val found = lyricsRepo.find(q, online = p.onlineLyrics, sources = sources, force = force, prefer = lyricsChoice(playing))
-        if (current?.key == playing.key) _lyrics.value = LyricsState(key = playing.key, lyrics = found, missed = found == null, song = song)
+        var why = ""
+        val found = lyricsRepo.find(q, online = p.onlineLyrics, sources = sources, force = force, prefer = lyricsChoice(playing)) { why = it }
+        if (current?.key == playing.key) _lyrics.value = LyricsState(key = playing.key, lyrics = found, missed = found == null, song = song, why = why)
         if (found != null && playing is Playing.Local) saveLyrics(playing.track, found, q)
     }
 

@@ -74,6 +74,9 @@ fun LyricsSquare(state: LyricsState, positionMs: Long, playing: Boolean, onRetry
                     else -> "No lyrics found for ${state.song}"
                 }
                 Text(text, color = Retro.Muted, fontSize = 14.sp, textAlign = TextAlign.Center)
+                if (state.why.isNotBlank() && !state.loading) {
+                    Text(state.why, color = Retro.Muted.copy(alpha = 0.75f), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
+                }
                 // Retry looks online again, so it's only offered when that's switched on.
                 if (state.missed && Settings.current.onlineLyrics) TextButton(onClick = onRetry) { Text("Retry", color = Retro.Orange) }
             }

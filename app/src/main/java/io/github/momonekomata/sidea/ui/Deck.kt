@@ -283,7 +283,8 @@ private fun FullBleedDeck(model: DeckModel, ink: DeckInk, modifier: Modifier, on
                     // or lyrics above are doing, so the key never moves.
                     val hint = when {
                         model.showLyrics -> "🖼"
-                        model.lyrics.lyrics != null || model.lyrics.loading -> "🎵"
+                        // Also when the lookup failed for a reason worth reading (no connection…).
+                        model.lyrics.lyrics != null || model.lyrics.loading || model.lyrics.why.isNotBlank() -> "🎵"
                         else -> null
                     }
                     if (hint != null) {

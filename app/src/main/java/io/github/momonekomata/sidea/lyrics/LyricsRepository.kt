@@ -65,7 +65,7 @@ class LyricsRepository(context: Context) {
      * made for this song between its own plain lyrics and timed ones found online ("own" or
      * "online"); null decides by itself (see [pick]).
      */
-    suspend fun find(q: LyricsQuery, online: Boolean, sources: LyricsSources = LyricsSources(), force: Boolean = false, prefer: String? = null): Lyrics? = withContext(Dispatchers.IO) {
+    suspend fun find(q: LyricsQuery, online: Boolean, sources: LyricsSources = LyricsSources(), force: Boolean = false, prefer: String? = null, why: (String) -> Unit = {}): Lyrics? = withContext(Dispatchers.IO) {
         val tags = q.embedded?.let { Lrc.parse(it, "file tags") }
         val file = runCatching { q.sidecar?.invoke() }.getOrNull()?.let { Lrc.parse(it, ".lrc file") }
         // The song's own lyrics (its tags or its .lrc), timed ones first.
@@ -74,7 +74,7 @@ class LyricsRepository(context: Context) {
         // Even beside its own timed lyrics, the online ones are looked at (once; they're kept on
         // the phone): a file can carry another song's lyrics, and then there's a switch to put
         // it right.
-        val found = lookUp(q, sources, force, wantTimed = local != null) ?: return@withContext local
+        val found = lookUp(q, sources, force, wantTimed = local != null, why) ?: return@withContext local
         if (local == null) return@withContext found
         pick(local, found, prefer)
     }
@@ -98,22 +98,35 @@ class LyricsRepository(context: Context) {
         return if (useOnline) online.copy(alternative = own) else own.copy(alternative = online)
     }
 
-    /** Lyrics from the online sources (or what they gave before), timed ones only if [wantTimed]. */
-    private fun lookUp(q: LyricsQuery, sources: LyricsSources, force: Boolean, wantTimed: Boolean): Lyrics? {
+    /**
+     * Lyrics from the online sources (or what they gave before), timed ones only if [wantTimed].
+     * When there are none, [why] hears the reason if it's more than "they have none".
+     */
+    private fun lookUp(q: LyricsQuery, sources: LyricsSources, force: Boolean, wantTimed: Boolean, why: (String) -> Unit): Lyrics? {
         val cache = File(dir, sha1(q.key) + ".json")
         val legacy = File(dir, sha1(q.key) + ".lrc")
         // A miss depends on which sources were asked; switching one on asks again.
         val miss = File(dir, sha1(q.key + sources.signature) + ".none")
         readCache(cache, legacy)?.let { if (!wantTimed || it.synced) return it }
-        if (!force && miss.exists() && System.currentTimeMillis() - miss.lastModified() < MISS_TTL_MS) return null
+        val providers = providers(sources)
+        if (providers.isEmpty()) {
+            why("Every online lyrics source is switched off in Settings → Lyrics.")
+            return null
+        }
+        if (!force && miss.exists() && System.currentTimeMillis() - miss.lastModified() < MISS_TTL_MS) {
+            why("Nothing was found for it earlier today. Retry asks again.")
+            return null
+        }
 
         var trouble = false
-        for (p in providers(sources)) {
+        val problems = ArrayList<String>()
+        for (p in providers) {
             val text = try {
                 p.find(q)
             } catch (e: Exception) {
                 Log.w(TAG, "${p.name} lookup failed", e)
                 trouble = true
+                problems += "${p.name}: ${reason(e)}"
                 null
             } ?: continue
             val parsed = Lrc.parse(text, p.name) ?: continue
@@ -126,7 +139,17 @@ class LyricsRepository(context: Context) {
         // Only remember a miss for complete metadata and a clean run; apps often send the
         // artist a moment later, and network trouble isn't "not found".
         if (!trouble && q.artist.isNotBlank() && q.durationMs > 0) miss.writeText("")
+        if (problems.isNotEmpty()) why("Couldn't ask " + problems.joinToString("; ") + ".")
         return null
+    }
+
+    /** An error as a person would put it: no connection, a name that won't resolve, a timeout. */
+    private fun reason(e: Exception): String = when (e) {
+        is java.net.UnknownHostException -> "the phone can't find its address (no internet, or a Private DNS / ad blocker stops it)"
+        is java.net.SocketTimeoutException -> "no answer in time"
+        is java.net.ConnectException -> "no connection (${e.message})"
+        is javax.net.ssl.SSLException -> "secure connection failed (${e.message})"
+        else -> e.message ?: e.javaClass.simpleName
     }
 
     private fun readCache(cache: File, legacy: File): Lyrics? {
@@ -171,7 +194,27 @@ private class Lrclib(private val client: OkHttpClient) : LyricsProvider {
     override val name = "LRCLIB"
     private val base = "https://lrclib.net/".toHttpUrl()
 
+    // One request failing (a 400 for an odd title, a dropped connection) mustn't skip the rest;
+    // only when every request failed is it trouble rather than "not there".
+    private var failure: Exception? = null
+    private var answered = false
+
+    private fun ask(url: HttpUrl): String? = try {
+        client.getText(url).also { answered = true }
+    } catch (e: Exception) {
+        if (failure == null) failure = e
+        null
+    }
+
     override fun find(q: LyricsQuery): String? {
+        failure = null
+        answered = false
+        lookFor(q)?.let { return it }
+        if (!answered) failure?.let { throw it }
+        return null
+    }
+
+    private fun lookFor(q: LyricsQuery): String? {
         val seconds = q.durationMs / 1000
         for ((i, v) in LyricsMatch.variants(q.title, q.artist).withIndex()) {
             val (title, artist) = v
@@ -185,7 +228,7 @@ private class Lrclib(private val client: OkHttpClient) : LyricsProvider {
                     if (seconds > 0) addQueryParameter("duration", seconds.toString())
                 }
                 .build()
-            client.getText(get)?.let { body -> pick(JSONObject(body))?.let { return it } }
+            ask(get)?.let { body -> pick(JSONObject(body))?.let { return it } }
         }
         val title = LyricsMatch.cleanTitle(q.title)
         val artist = LyricsMatch.primaryArtist(q.artist)
@@ -195,7 +238,7 @@ private class Lrclib(private val client: OkHttpClient) : LyricsProvider {
             base.newBuilder().addPathSegments("api/search").addQueryParameter("q", "$artist $title".trim()).build(),
         )
         for (url in searches) {
-            val results = client.getText(url)?.let { JSONArray(it) } ?: continue
+            val results = ask(url)?.let { JSONArray(it) } ?: continue
             val candidates = (0 until results.length()).map { results.getJSONObject(it) }
                 .filter { seconds == 0L || abs(it.optDouble("duration", 0.0) - seconds) <= 3 }
                 .sortedByDescending { !it.isNull("syncedLyrics") }
