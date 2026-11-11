@@ -45,6 +45,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawBehind
@@ -308,10 +310,7 @@ private fun PianoTransport(model: DeckModel, bottomInset: Dp) {
                     )
                 }
             } else {
-                PianoText(m, "−10", "Back 10 seconds", bottomInset) { model.onSkip(-10_000) }
-                PianoText(m, "−5", "Back 5 seconds", bottomInset) { model.onSkip(-5_000) }
-                PianoText(m, "+5", "Forward 5 seconds", bottomInset) { model.onSkip(5_000) }
-                PianoText(m, "+10", "Forward 10 seconds", bottomInset) { model.onSkip(10_000) }
+                for (step in listOf(-10_000L, -5_000L, 5_000L, 10_000L)) PianoWind(m, step, bottomInset, model.onSkip)
             }
         }
     }
@@ -334,11 +333,47 @@ internal fun PianoKey(
     }
 }
 
+/**
+ * ◀◀ / ▶▶ (two triangles) or ◀◀◀ / ▶▶▶ (three) for the wind keys: more triangles, the bigger the
+ * jump. Drawn, so both sizes match and no font is needed for them.
+ */
 @Composable
-internal fun PianoText(modifier: Modifier, text: String, label: String, bottomInset: Dp = 0.dp, onClick: () -> Unit) {
-    KeyBox(modifier.semantics { contentDescription = label }, onClick = onClick) { _ ->
+internal fun WindMark(forward: Boolean, triangles: Int, tint: Color, height: Dp, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier.size(width = height * 0.62f * triangles, height = height)) {
+        val w = size.width / triangles
+        val h = size.height
+        for (i in 0 until triangles) {
+            val x = i * w
+            val p = androidx.compose.ui.graphics.Path().apply {
+                if (forward) {
+                    moveTo(x, 0f); lineTo(x + w, h / 2); lineTo(x, h)
+                } else {
+                    moveTo(x + w, 0f); lineTo(x, h / 2); lineTo(x + w, h)
+                }
+                close()
+            }
+            drawPath(p, tint)
+        }
+    }
+}
+
+/** A wind key's jump: ±5 s with two triangles, ±10 s with three. */
+internal fun windTriangles(stepMs: Long) = if (kotlin.math.abs(stepMs) >= 10_000) 3 else 2
+
+/**
+ * A tall wind key, like a deck's: a tap jumps [stepMs] (back when negative), holding it winds,
+ * the same jump again every quarter second until it's let go.
+ */
+@Composable
+internal fun PianoWind(modifier: Modifier, stepMs: Long, bottomInset: Dp = 0.dp, onSkip: (Long) -> Unit) {
+    val label = (if (stepMs < 0) "Back " else "Forward ") + "${kotlin.math.abs(stepMs) / 1000} seconds (hold to wind)"
+    KeyBox(modifier.semantics { contentDescription = label }, onHold = { onSkip(stepMs) }, onClick = { onSkip(stepMs) }) { _ ->
         PianoFace(false) {
-            Text(text, color = Retro.OnMetal, fontFamily = Retro.Mono, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopCenter).padding(top = 22.dp))
+            WindMark(stepMs > 0, windTriangles(stepMs), Retro.OnMetal, 18.dp, Modifier.align(Alignment.TopCenter).padding(top = 20.dp))
+            Text(
+                "${kotlin.math.abs(stepMs) / 1000} SEC", color = Retro.OnMetalMuted, fontFamily = Retro.Mono, fontSize = 9.sp, maxLines = 1,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 8.dp + bottomInset),
+            )
         }
     }
 }
@@ -521,24 +556,23 @@ private fun ArtSquare(model: DeckModel, modifier: Modifier, shape: Shape = Round
     }
 }
 
-/** −10 −5 +5 +10 seconds (with shuffle and repeat at the ends when the deck is compact). */
+/** ◀◀◀ ◀◀ ▶▶ ▶▶▶: 10 and 5 seconds back and forward (with shuffle and repeat at the ends when compact). */
 @Composable
 private fun SkipRow(model: DeckModel, k: Dp, compact: Boolean) {
     KeyStrip {
         if (compact) ShuffleKey(model, k)
-        TextKey("−10", "Back 10 seconds", k) { model.onSkip(-10_000) }
-        TextKey("−5", "Back 5 seconds", k) { model.onSkip(-5_000) }
-        TextKey("+5", "Forward 5 seconds", k) { model.onSkip(5_000) }
-        TextKey("+10", "Forward 10 seconds", k) { model.onSkip(10_000) }
+        for (step in listOf(-10_000L, -5_000L, 5_000L, 10_000L)) WindKey(step, k, model.onSkip)
         if (compact) RepeatKey(model, k)
     }
 }
 
-/** A square key with its value printed on it. */
+/** A square wind key: a tap jumps [stepMs], holding it winds (see [PianoWind]). */
 @Composable
-private fun TextKey(text: String, label: String, k: Dp, onClick: () -> Unit) {
-    SquareKey(k, onClick = onClick, modifier = Modifier.semantics { contentDescription = label }) { _ ->
-        Text(text, color = Retro.OnMetal, fontFamily = Retro.Mono, fontSize = if (k < 44.dp) 11.sp else 13.sp, fontWeight = FontWeight.Bold)
+internal fun WindKey(stepMs: Long, k: Dp, onSkip: (Long) -> Unit, turn: Float = 0f) {
+    val label = (if (stepMs < 0) "Back " else "Forward ") + "${kotlin.math.abs(stepMs) / 1000} seconds (hold to wind)"
+    SquareKey(k, onHold = { onSkip(stepMs) }, onClick = { onSkip(stepMs) }, modifier = Modifier.semantics { contentDescription = label }) { _ ->
+        // [turn]: the Stereo lying sideways turns its symbols upright.
+        WindMark(stepMs > 0, windTriangles(stepMs), Retro.OnMetal, if (k < 44.dp) 11.dp else 13.dp, Modifier.rotate(turn))
     }
 }
 
@@ -558,19 +592,56 @@ internal fun StatusLine(text: String, color: Color) {
     }
 }
 
+/**
+ * A seek bar's hand: the finger's spot while dragging, then the spot it was let go at until the
+ * player reports being there. Without that the bar showed, for a frame, the song's old spot (the
+ * player's answer arrives a moment after the finger lifts) and flicked back and forth.
+ */
+@androidx.compose.runtime.Stable
+internal class SeekHand {
+    var dragging by mutableStateOf<Float?>(null)
+    var landing by mutableStateOf<Float?>(null)
+
+    /** Where the bar is drawn, [actual] being where the song is (0..1 of [durationMs]). */
+    fun shown(actual: Float, durationMs: Long): Float {
+        dragging?.let { return it }
+        val l = landing ?: return actual
+        // Close enough (the player got there): follow the song again.
+        return if (kotlin.math.abs(l - actual) * durationMs.coerceAtLeast(1) < 1500) actual else l
+    }
+
+    /** The finger lifted: seek to where it was, and keep the bar there. */
+    fun release(durationMs: Long, onSeek: (Long) -> Unit) {
+        val f = dragging ?: return
+        landing = f
+        dragging = null
+        onSeek((f * durationMs).toLong())
+    }
+}
+
+@Composable
+internal fun rememberSeekHand(): SeekHand {
+    val hand = remember { SeekHand() }
+    // Let the spot go after a moment whatever happens (a seek the player clamped, an error).
+    LaunchedEffect(hand.landing) {
+        if (hand.landing != null) {
+            kotlinx.coroutines.delay(1500)
+            hand.landing = null
+        }
+    }
+    return hand
+}
+
 @Composable
 private fun SeekBar(model: DeckModel, ink: DeckInk) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
+    val hand = rememberSeekHand()
     val duration = model.durationMs.coerceAtLeast(1)
-    val value = dragging ?: (model.positionMs.toFloat() / duration).coerceIn(0f, 1f)
+    val value = hand.shown((model.positionMs.toFloat() / duration).coerceIn(0f, 1f), duration)
     Column {
         Slider(
             value = value,
-            onValueChange = { dragging = it },
-            onValueChangeFinished = {
-                dragging?.let { model.onSeek((it * duration).toLong()) }
-                dragging = null
-            },
+            onValueChange = { hand.dragging = it },
+            onValueChangeFinished = { hand.release(duration, model.onSeek) },
             enabled = model.durationMs > 0,
             colors = SliderDefaults.colors(
                 thumbColor = Retro.Orange,

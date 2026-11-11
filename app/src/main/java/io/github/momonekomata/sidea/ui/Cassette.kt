@@ -292,9 +292,9 @@ private fun Cassette(model: DeckModel, modifier: Modifier, keys: Boolean = true,
             val key = (h * 0.12f).coerceAtLeast(34.dp)
             KeyStrip(gap = (key * 0.1f).coerceIn(3.dp, 6.dp)) {
                 LabelKey(Icons.Filled.SkipPrevious, "Previous", key, onClick = model.onPrevious)
-                LabelKey(Icons.Filled.FastRewind, "Rewind 10 seconds", key) { model.onSkip(-10_000) }
+                WindKey(-10_000, key, model.onSkip)
                 LabelKey(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", key, orange = true, latched = model.playing, onClick = model.onToggle)
-                LabelKey(Icons.Filled.FastForward, "Skip 10 seconds", key) { model.onSkip(10_000) }
+                WindKey(10_000, key, model.onSkip)
                 LabelKey(Icons.Filled.SkipNext, "Next", key, onClick = model.onNext)
             }
         }

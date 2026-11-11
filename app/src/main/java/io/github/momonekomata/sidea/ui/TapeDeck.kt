@@ -437,10 +437,10 @@ private fun Times(model: DeckModel, color: Color) {
  */
 @Composable
 private fun TapeScale(model: DeckModel, ink: Color) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
+    val hand = rememberSeekHand()
     val duration by rememberUpdatedState(model.durationMs)
     val seek by rememberUpdatedState(model.onSeek)
-    val value = dragging ?: if (model.durationMs > 0) (model.positionMs.toFloat() / model.durationMs).coerceIn(0f, 1f) else 0f
+    val value = if (model.durationMs > 0) hand.shown((model.positionMs.toFloat() / model.durationMs).coerceIn(0f, 1f), model.durationMs) else 0f
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val digit = androidx.compose.ui.text.TextStyle(color = ink, fontFamily = Retro.Mono, fontSize = 8.sp)
     Canvas(
@@ -453,18 +453,18 @@ private fun TapeScale(model: DeckModel, ink: Color) {
                     val down = awaitFirstDown()
                     if (duration <= 0) return@awaitEachGesture
                     var f = (down.position.x / size.width).coerceIn(0f, 1f)
-                    dragging = f
+                    hand.dragging = f
                     down.consume()
                     while (true) {
                         val e = awaitPointerEvent()
                         val c = e.changes.firstOrNull { it.id == down.id } ?: break
                         if (!c.pressed) break
                         f = (c.position.x / size.width).coerceIn(0f, 1f)
-                        dragging = f
+                        hand.dragging = f
                         c.consume()
                     }
-                    seek((f * duration).toLong())
-                    dragging = null
+                    hand.dragging = f
+                    hand.release(duration, seek)
                 }
             },
     ) {
@@ -515,10 +515,7 @@ private fun PianoPager(model: DeckModel) {
                 )
                 PianoKey(m, Icons.Filled.SkipNext, "Next", "NEXT", onHold = { model.onSkip(5_000) }, onClick = model.onNext)
             } else {
-                PianoText(m, "−10", "Back 10 seconds") { model.onSkip(-10_000) }
-                PianoText(m, "−5", "Back 5 seconds") { model.onSkip(-5_000) }
-                PianoText(m, "+5", "Forward 5 seconds") { model.onSkip(5_000) }
-                PianoText(m, "+10", "Forward 10 seconds") { model.onSkip(10_000) }
+                for (step in listOf(-10_000L, -5_000L, 5_000L, 10_000L)) PianoWind(m, step, onSkip = model.onSkip)
             }
         }
     }

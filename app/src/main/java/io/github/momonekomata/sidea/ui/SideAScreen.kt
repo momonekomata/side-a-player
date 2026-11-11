@@ -657,14 +657,14 @@ private fun LandscapeNowPlaying(deck: DeckModel, headerIcons: @Composable () -> 
 /** A slim seek line and the times, printed light, for the landscape Now Playing. */
 @Composable
 private fun LandscapeSeek(deck: DeckModel) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
+    val hand = rememberSeekHand()
     val duration = deck.durationMs.coerceAtLeast(1)
-    val value = dragging ?: (deck.positionMs.toFloat() / duration).coerceIn(0f, 1f)
+    val value = hand.shown((deck.positionMs.toFloat() / duration).coerceIn(0f, 1f), duration)
     Column {
         androidx.compose.material3.Slider(
             value = value,
-            onValueChange = { dragging = it },
-            onValueChangeFinished = { dragging?.let { deck.onSeek((it * duration).toLong()) }; dragging = null },
+            onValueChange = { hand.dragging = it },
+            onValueChangeFinished = { hand.release(duration, deck.onSeek) },
             enabled = deck.durationMs > 0,
             colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Retro.Orange, activeTrackColor = Retro.Orange, inactiveTrackColor = Color.White.copy(alpha = 0.3f)),
         )

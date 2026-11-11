@@ -402,12 +402,12 @@ private fun SilverSide(model: DeckModel, modifier: Modifier, w: Dp) {
     ) {
         model.shuffle?.let { on -> SideKey(Icons.Filled.Shuffle, "Shuffle", k, led = on, onClick = model.onShuffle) }
         SideKey(Icons.Filled.SkipPrevious, "Previous", k, onHold = { model.onSkip(-5_000) }, onClick = model.onPrevious)
-        SideKey(Icons.Filled.FastRewind, "Back 10 seconds", k) { model.onSkip(-10_000) }
+        WindKey(-10_000, k, model.onSkip, turn = LocalIconTurn.current)
         // PLAY, in the row with the others at the middle: the orange key, held down while playing.
         SquareKey(k * 1.12f, orange = true, latched = model.playing, onClick = model.onToggle) { _ ->
             Icon(if (model.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play or pause", tint = Color.White, modifier = Modifier.size(k * 0.55f).rotate(LocalIconTurn.current))
         }
-        SideKey(Icons.Filled.FastForward, "Forward 10 seconds", k) { model.onSkip(10_000) }
+        WindKey(10_000, k, model.onSkip, turn = LocalIconTurn.current)
         SideKey(Icons.Filled.SkipNext, "Next", k, onHold = { model.onSkip(5_000) }, onClick = model.onNext)
         model.repeat?.let { r ->
             SideKey(if (r == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, "Repeat", k, led = r != RepeatMode.OFF, onClick = model.onRepeat)
