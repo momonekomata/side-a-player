@@ -505,7 +505,7 @@ private fun SongInfo(model: DeckModel, ink: DeckInk, compact: Boolean, onPath: (
  * The transport keys; swipe them left for −10 −5 +5 +10. Two dots show which is up.
  */
 @Composable
-internal fun TransportPager(model: DeckModel, compact: Boolean) {
+internal fun TransportPager(model: DeckModel, compact: Boolean, stretch: Boolean = false) {
     val keySize = if (compact) 44.dp else 54.dp
     val pager = rememberPagerState { 2 }
     // The keys plus the strip around them.
@@ -516,7 +516,10 @@ internal fun TransportPager(model: DeckModel, compact: Boolean) {
             else 4 + (if (compact && model.shuffle != null) 1 else 0) + (if (compact && model.repeat != null) 1 else 0)
             val fit = (maxWidth - 12.dp - 5.dp * (n - 1)) / n
             val k = minOf(keySize, fit)
-            if (page == 0) TransportRow(model, k, compact) else SkipRow(model, k, compact)
+            // [stretch]: the keys keep their height and widen until the strip spans the row.
+            androidx.compose.runtime.CompositionLocalProvider(LocalKeyWidth provides if (stretch) maxOf(fit, k) else null) {
+                if (page == 0) TransportRow(model, k, compact) else SkipRow(model, k, compact)
+            }
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
@@ -739,7 +742,10 @@ internal fun DeckKey(
 internal fun SquareKey(
     k: Dp, modifier: Modifier = Modifier, orange: Boolean = false, latched: Boolean = false, led: Boolean? = null,
     onHold: (() -> Unit)? = null, onClick: () -> Unit, content: @Composable (down: Boolean) -> Unit,
-) = KeyBox(modifier.size(k), orange, latched, led, onHold, onClick, content)
+) = KeyBox(modifier.size(LocalKeyWidth.current ?: k, k), orange, latched, led, onHold, onClick, content)
+
+/** A wider key than it is tall, for a strip stretched across a row (see [TransportPager]). */
+internal val LocalKeyWidth = androidx.compose.runtime.compositionLocalOf<Dp?> { null }
 
 /** A key of any size [modifier] gives it, pressed and held as [SquareKey]. */
 @Composable

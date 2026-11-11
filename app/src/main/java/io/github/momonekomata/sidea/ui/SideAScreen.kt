@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -636,31 +637,38 @@ private fun LandscapeNowPlaying(deck: DeckModel, headerIcons: @Composable () -> 
     var showPath by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().brushedMetal(tint).windowInsetsPadding(WindowInsets.displayCutout)) {
         BoxWithConstraints(Modifier.fillMaxSize().padding(16.dp)) {
-            val cover = minOf(maxHeight, maxWidth * 0.3f)
-            val infoW = maxWidth * 0.3f
+            // The cover beside the song on top, as tall as the room the controls leave; the seek
+            // bar and the keys under both, the whole width of the two.
+            val sideW = maxWidth * 0.6f + 16.dp
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.size(cover).shadow(6.dp, RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp)).background(Color(0xFF111111))) {
-                    val art = deck.art
-                    if (art != null) Image(art, "Cover", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    else Box(Modifier.fillMaxSize().background(Retro.Shell), contentAlignment = Alignment.Center) {
-                        Text("A", color = Retro.Orange, fontSize = 64.sp, fontWeight = FontWeight.Black)
-                    }
-                }
-                Column(Modifier.width(infoW).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
-                    Text(deck.title.ifBlank { "Nothing playing" }, color = ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    ArtistAlbumLine(deck, muted, 13.sp, maxLines = 2)
-                    val path = deck.path
-                    if (path != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            QualityBadge(path.quality) { showPath = true }
+                Column(Modifier.width(sideW).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Box(
+                            Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true)
+                                .shadow(6.dp, RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp)).background(Color(0xFF111111)),
+                        ) {
+                            val art = deck.art
+                            if (art != null) Image(art, "Cover", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            else Box(Modifier.fillMaxSize().background(Retro.Shell), contentAlignment = Alignment.Center) {
+                                Text("A", color = Retro.Orange, fontSize = 64.sp, fontWeight = FontWeight.Black)
+                            }
                         }
-                        Text(deck.status.lines().first(), color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false)
-                    } else {
-                        Text(deck.status.lines().first(), color = muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
+                            Text(deck.title.ifBlank { "Nothing playing" }, color = ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            ArtistAlbumLine(deck, muted, 13.sp, maxLines = 2)
+                            val path = deck.path
+                            if (path != null) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    QualityBadge(path.quality) { showPath = true }
+                                }
+                                Text(deck.status.lines().first(), color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false)
+                            } else {
+                                Text(deck.status.lines().first(), color = muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                     }
-                    Spacer(Modifier.height(4.dp))
                     LandscapeSeek(deck)
-                    TransportPager(deck, compact = false)
+                    TransportPager(deck, compact = false, stretch = true)
                 }
                 // Below the EQ and Settings buttons in the corner.
                 LyricsFlow(deck, Modifier.weight(1f).fillMaxHeight().padding(top = 40.dp))
