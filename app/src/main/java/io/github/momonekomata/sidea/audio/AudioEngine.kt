@@ -128,7 +128,13 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
     }
 
     fun seekTo(ms: Long) {
-        session?.seekUs?.set(ms * 1000)
+        val s = session
+        if (s != null) {
+            s.seekUs.set(ms * 1000)
+            // Paused, the decoder sleeps: wake it to move there now, so Play starts from there
+            // and the slider and counter stay where they were put.
+            synchronized(s.lock) { s.lock.notifyAll() }
+        }
         _state.update { it.copy(positionMs = ms) }
     }
 
@@ -200,6 +206,9 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
 
         @Synchronized
         fun positionUs(): Long? {
+            // A seek not yet carried out is where the song is, as far as anyone looking is concerned:
+            // the old spot would pull the slider back, and a held rewind would keep starting from it.
+            seekUs.get().takeIf { it >= 0 }?.let { return it }
             val t = sink ?: return null
             val h = head(t)
             next?.let { seg ->
@@ -253,10 +262,11 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                 var decodedUs = startUs
 
                 while (!cancelled) {
-                    synchronized(lock) { while (paused && !cancelled) lock.wait() }
+                    // Paused, sleep until Play, a seek or the end.
+                    synchronized(lock) { while (paused && !cancelled && seekUs.get() < 0) lock.wait() }
                     if (cancelled) break
 
-                    val seek = seekUs.getAndSet(-1)
+                    val seek = seekUs.get()
                     if (seek >= 0) {
                         // A seek always lands in the song on screen, which is the one being decoded
                         // unless a hand-over is still queued in the track buffer; drop that.
@@ -267,6 +277,16 @@ class AudioEngine(context: Context, private val callbacks: EngineCallbacks) {
                         flushHead = head(t)
                         written = 0
                         rebase = true
+                        // The position is the seek's until the first sample from there sets it exactly.
+                        synchronized(this) {
+                            baseUs = seek
+                            headAtBase = flushHead
+                        }
+                        // Taken only now, so nobody looking in between sees the old spot. A newer seek
+                        // (a held rewind's next step) stays to be done next time round.
+                        seekUs.compareAndSet(seek, -1)
+                        // Paused: done; back to sleep until Play (or the next seek).
+                        if (paused) continue
                     }
 
                     val d = dec!!
